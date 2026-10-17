@@ -614,20 +614,7 @@ public class MusicPlayerActivity extends AppCompatActivity {
                     == PackageManager.PERMISSION_GRANTED;
         }
     }
-
-    private void requestAudioPermission() {
-        if (Build.VERSION.SDK_INT >= 33) {
-            ActivityCompat.requestPermissions(this,
-                    new String[]{
-                            "android.permission.READ_MEDIA_AUDIO",
-                            "android.permission.POST_NOTIFICATIONS"
-                    }, REQ_AUDIO);
-        } else {
-            ActivityCompat.requestPermissions(this,
-                    new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, REQ_AUDIO);
-        }
-    }
-
+    
     @Override
     public void onRequestPermissionsResult(int requestCode,
                                            @NonNull String[] permissions,
@@ -650,6 +637,7 @@ public class MusicPlayerActivity extends AppCompatActivity {
                     .show();
         }
     }
+
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
@@ -797,6 +785,21 @@ public class MusicPlayerActivity extends AppCompatActivity {
         visibleTracks.addAll(base);
         adapter.notifyDataSetChanged();
         updateEmptyState();
+    }
+
+    private void requestAudioPermission() {
+        List<String> perms = new ArrayList<>();
+        if (Build.VERSION.SDK_INT >= 33) {
+            perms.add("android.permission.READ_MEDIA_AUDIO");
+            perms.add("android.permission.POST_NOTIFICATIONS");
+        } else {
+            perms.add(Manifest.permission.READ_EXTERNAL_STORAGE);
+        }
+        if (Build.VERSION.SDK_INT >= 31) {
+            perms.add("android.permission.BLUETOOTH_CONNECT");
+        }
+        ActivityCompat.requestPermissions(this,
+                perms.toArray(new String[0]), REQ_AUDIO);
     }
 
     private void showSortMenu(View anchor) {
