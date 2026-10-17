@@ -60,6 +60,7 @@ import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 
 import vaddempudi.gnanesh.syntaxcli.filemanager.FileLog;
 import vaddempudi.gnanesh.syntaxcli.R;
+import android.os.PowerManager;
 
 public class MusicPlayerActivity extends AppCompatActivity {
 
@@ -70,6 +71,9 @@ public class MusicPlayerActivity extends AppCompatActivity {
     private static final int NOW_PLAY = 0xFFFFFF00;
 
     private String pendingIncomingPath = null;
+    private static final int REQ_AUDIO = 3001;
+    private static final int REQ_BATTERY_OPT = 3002;
+    private static final String KEY_BATTERY_PROMPTED = "battery_opt_prompted";
 
 
     private boolean launchedForIncomingFile = false;
@@ -106,7 +110,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
     public static volatile boolean everOpened = false;
 
     // ---------- Permission ----------
-    private static final int REQ_AUDIO = 3001;
 
     // ---------- Data ----------
     public static class Track {
@@ -146,6 +149,49 @@ public class MusicPlayerActivity extends AppCompatActivity {
                     .apply();
         } catch (Exception ignored) { }
     }
+
+    private boolean isIgnoringBatteryOptimizations() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true;
+        try {
+            PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+            return pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());
+        } catch (Exception e) {
+            return true;
+        }
+    }
+
+    private void maybeRequestBatteryOptimizationExemption() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
+        if (isIgnoringBatteryOptimizations()) return;
+
+        android.content.SharedPreferences p =
+                getSharedPreferences(PREFS, MODE_PRIVATE);
+        if (p.getBoolean(KEY_BATTERY_PROMPTED, false)) return;
+        p.edit().putBoolean(KEY_BATTERY_PROMPTED, true).apply();
+
+        blackDialog()
+                .setTitle("Allow background playback")
+                .setMessage("Android may stop music when the screen is off.\n\n" +
+                        "Tap \"Allow\" and choose \"Unrestricted\" for this app " +
+                        "so playback keeps running in the background.")
+                .setPositiveButton("Allow", (d, w) -> {
+                    try {
+                        Intent i = new Intent(
+                                Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                        i.setData(Uri.parse("package:" + getPackageName()));
+                        startActivityForResult(i, REQ_BATTERY_OPT);
+                    } catch (Exception e) {
+                        try {
+                            Intent fallback = new Intent(
+                                    Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+                            startActivity(fallback);
+                        } catch (Exception ignored) { }
+                    }
+                })
+                .setNegativeButton("Later", null)
+                .show();
+    }
+
 
     private void loadPlaylist() {
         try {
@@ -233,9 +279,12 @@ public class MusicPlayerActivity extends AppCompatActivity {
 
         // ★ ADD: check for external intent FIRST
         handleIncomingIntent(getIntent());
-
-        if (hasAudioPermission()) loadTracks();
-        else requestAudioPermission();
+        if (hasAudioPermission()) {
+            loadTracks();
+            maybeRequestBatteryOptimizationExemption();
+        } else {
+            requestAudioPermission();
+        }
     }
 
     @Override
@@ -621,6 +670,7 @@ public class MusicPlayerActivity extends AppCompatActivity {
         if (requestCode != REQ_AUDIO) return;
         if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
             loadTracks();
+            maybeRequestBatteryOptimizationExemption();
         } else {
             blackDialog()
                     .setTitle("Permission required")
@@ -636,6 +686,20 @@ public class MusicPlayerActivity extends AppCompatActivity {
         }
     }
 
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_BATTERY_OPT) {
+            if (isIgnoringBatteryOptimizations()) {
+                Toast.makeText(this, "Background playback enabled",
+                        Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(this,
+                        "Still restricted — music may stop when the screen is off",
+                        Toast.LENGTH_LONG).show();
+            }
+        }
+    }
     // ============================================================
     // MediaStore query
     // ============================================================
