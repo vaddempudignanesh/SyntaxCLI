@@ -23,18 +23,18 @@ public class NativeEngine {
     private final AtomicBoolean finished = new AtomicBoolean(false);
     private final DownloadProgressListener listener;
 
-    // ── Raw byte counter, incremented by every worker ────────────────
     private final AtomicLong rawBytesThisTick = new AtomicLong(0);
-
-    // ── EWMA-smoothed speed ──────────────────────────────────────────
     private static final double ALPHA = 0.25;
     private volatile double smoothedSpeed = 0.0;
 
-    // ── Timing ───────────────────────────────────────────────────────
     private long startTimeMs = 0L;
-    private long accumulatedMs = 0L;   // elapsed across previous resume sessions
+    private long accumulatedMs = 0L;
 
     private Thread tickerThread;
+
+    // Throttle state-file writes to avoid CPU/IO overhead
+    private long lastStateSaveMs = 0L;
+    private static final long STATE_SAVE_INTERVAL_MS = 3000L;
 
     public interface DownloadProgressListener {
         void onProgress(long totalDownloaded, long totalSize, long bytesPerSec,
@@ -49,7 +49,6 @@ public class NativeEngine {
         this.taskInfo = taskInfo;
         this.stateFilePath = taskInfo.savePath + ".state";
         this.listener = listener;
-        // Carry over any elapsed time saved across sessions.
         this.accumulatedMs = taskInfo.elapsedMs;
     }
 
@@ -67,8 +66,9 @@ public class NativeEngine {
         rawBytesThisTick.set(0);
         smoothedSpeed = 0.0;
         startTimeMs = System.currentTimeMillis();
+        lastStateSaveMs = startTimeMs;
 
-        executor = Executors.newFixedThreadPool(taskInfo.threadCount);
+        executor = Executors.newFixedThreadPool(Math.max(1, taskInfo.threadCount));
 
         try { listener.onStarted(taskInfo.totalSize); } catch (Exception ignored) {}
 
@@ -90,11 +90,23 @@ public class NativeEngine {
                 long sessionMs = System.currentTimeMillis() - startTimeMs;
                 long totalElapsed = accumulatedMs + sessionMs;
                 taskInfo.elapsedMs = totalElapsed;
-                try { taskInfo.saveState(stateFilePath); } catch (Exception ignored) {}
 
                 if (paused.get()) {
+                    try { taskInfo.saveState(stateFilePath); } catch (Exception ignored) {}
                     listener.onPaused();
                 } else if (!finished.getAndSet(true)) {
+                    // Verify file was actually written
+                    File f = new File(taskInfo.savePath);
+                    if (!f.exists() || f.length() == 0) {
+                        listener.onError("Download produced empty file");
+                        return;
+                    }
+                    // If known size and mismatch, error
+                    if (taskInfo.totalSize > 0 && f.length() < taskInfo.totalSize) {
+                        listener.onError("Incomplete download: "
+                                + f.length() + "/" + taskInfo.totalSize);
+                        return;
+                    }
                     File stateFile = new File(stateFilePath);
                     if (stateFile.exists()) stateFile.delete();
                     listener.onComplete(totalElapsed);
@@ -126,33 +138,36 @@ public class NativeEngine {
             smoothedSpeed = ALPHA * instantSpeed + (1.0 - ALPHA) * smoothedSpeed;
 
             long reported = (long) smoothedSpeed;
-            if (reported < 1024 && deltaBytes == 0) reported = 0;
+            if (reported < 512 && deltaBytes == 0) reported = 0;
 
-            // ── Timing ───────────────────────────────────────────────
             long sessionElapsed = now - startTimeMs;
             long totalElapsed = accumulatedMs + sessionElapsed;
 
             long downloaded = taskInfo.totalDownloaded();
-            long remaining = Math.max(0, taskInfo.totalSize - downloaded);
+            long remaining = taskInfo.totalSize > 0
+                    ? Math.max(0, taskInfo.totalSize - downloaded) : 0;
             long etaMs = 0L;
             if (reported > 0 && remaining > 0) {
                 etaMs = (long) ((remaining * 1000.0) / reported);
             }
 
             try {
-                listener.onProgress(downloaded, taskInfo.totalSize,
+                listener.onProgress(downloaded,
+                        taskInfo.totalSize > 0 ? taskInfo.totalSize : downloaded,
                         reported, totalElapsed, etaMs);
             } catch (Exception ignored) {}
 
-            // Persist running elapsed time in the state file.
-            taskInfo.elapsedMs = totalElapsed;
-            try { taskInfo.saveState(stateFilePath); } catch (Exception ignored) {}
+            // Throttle state-file writes — this was a major CPU/IO hog
+            if (now - lastStateSaveMs >= STATE_SAVE_INTERVAL_MS) {
+                lastStateSaveMs = now;
+                taskInfo.elapsedMs = totalElapsed;
+                try { taskInfo.saveState(stateFilePath); } catch (Exception ignored) {}
+            }
         }
     }
 
     public void pause() {
         if (paused.getAndSet(true)) return;
-        // Capture elapsed time before tearing down.
         long sessionMs = System.currentTimeMillis() - startTimeMs;
         taskInfo.elapsedMs = accumulatedMs + sessionMs;
         if (tickerThread != null) tickerThread.interrupt();
@@ -182,35 +197,107 @@ public class NativeEngine {
                         + taskInfo.downloadedBytes[threadId];
                 long end = taskInfo.endBytes[threadId];
 
-                if (actualStart > end) return;
+                if (actualStart > end && end != Long.MAX_VALUE - 1) return;
 
                 URL url = new URL(taskInfo.url);
                 connection = (HttpURLConnection) url.openConnection();
-                connection.setConnectTimeout(15000);
+                connection.setConnectTimeout(20000);
                 connection.setReadTimeout(30000);
-                connection.setRequestProperty("Range",
-                        "bytes=" + actualStart + "-" + end);
+                connection.setInstanceFollowRedirects(true);
+
+                // Build Range header
+                String rangeHeader;
+                if (end == Long.MAX_VALUE - 1) {
+                    rangeHeader = "bytes=" + actualStart + "-";
+                } else {
+                    rangeHeader = "bytes=" + actualStart + "-" + end;
+                }
+                connection.setRequestProperty("Range", rangeHeader);
+
+                // Apply all stored headers
                 if (taskInfo.userAgent != null && !taskInfo.userAgent.isEmpty()) {
                     connection.setRequestProperty("User-Agent", taskInfo.userAgent);
                 }
                 if (taskInfo.referer != null && !taskInfo.referer.isEmpty()) {
                     connection.setRequestProperty("Referer", taskInfo.referer);
                 }
+                if (taskInfo.cookies != null && !taskInfo.cookies.isEmpty()) {
+                    connection.setRequestProperty("Cookie", taskInfo.cookies);
+                }
+                connection.setRequestProperty("Accept", "*/*");
+                connection.setRequestProperty("Accept-Language", "en-US,en;q=0.9");
+
+                if (taskInfo.extraHeaders != null && !taskInfo.extraHeaders.isEmpty()) {
+                    for (String line : taskInfo.extraHeaders.split("\n")) {
+                        int colon = line.indexOf(':');
+                        if (colon > 0) {
+                            connection.setRequestProperty(
+                                    line.substring(0, colon).trim(),
+                                    line.substring(colon + 1).trim());
+                        }
+                    }
+                }
+
                 connection.connect();
 
                 int code = connection.getResponseCode();
+
+                // Handle redirects manually for non-following servers
+                int redirects = 0;
+                while ((code == HttpURLConnection.HTTP_MOVED_PERM
+                        || code == HttpURLConnection.HTTP_MOVED_TEMP
+                        || code == 307 || code == 308) && redirects < 5) {
+                    redirects++;
+                    String loc = connection.getHeaderField("Location");
+                    if (loc == null || loc.isEmpty()) break;
+                    if (!loc.startsWith("http")) {
+                        loc = new URL(url, loc).toString();
+                    }
+                    connection.disconnect();
+                    url = new URL(loc);
+                    connection = (HttpURLConnection) url.openConnection();
+                    connection.setConnectTimeout(20000);
+                    connection.setReadTimeout(30000);
+                    connection.setRequestProperty("Range", rangeHeader);
+                    if (taskInfo.userAgent != null)
+                        connection.setRequestProperty("User-Agent", taskInfo.userAgent);
+                    if (taskInfo.referer != null)
+                        connection.setRequestProperty("Referer", taskInfo.referer);
+                    if (taskInfo.cookies != null)
+                        connection.setRequestProperty("Cookie", taskInfo.cookies);
+                    connection.connect();
+                    code = connection.getResponseCode();
+                }
+
+                // Accept 200 (server ignored Range) or 206 (partial)
                 if (code != HttpURLConnection.HTTP_PARTIAL
                         && code != HttpURLConnection.HTTP_OK) {
                     if (!paused.get()) listener.onError("HTTP " + code);
                     return;
                 }
 
-                in = new BufferedInputStream(connection.getInputStream(), 131072);
+                // If server ignored Range on a multi-thread download, bail
+                // to single-thread fallback handled by the caller.
+                if (code == HttpURLConnection.HTTP_OK && taskInfo.threadCount > 1
+                        && actualStart > 0) {
+                    // This thread can't continue — tell engine to fall back
+                    if (!paused.get()) listener.onError("Server does not support resume");
+                    return;
+                }
+
+                in = new BufferedInputStream(connection.getInputStream(), 65536);
                 File targetFile = new File(taskInfo.savePath);
                 fileAccessor = new RandomAccessFile(targetFile, "rw");
-                fileAccessor.seek(actualStart);
 
-                byte[] buffer = new byte[131072];
+                if (code == HttpURLConnection.HTTP_OK && taskInfo.threadCount == 1) {
+                    // Fresh start — truncate file
+                    fileAccessor.setLength(0);
+                    fileAccessor.seek(0);
+                } else {
+                    fileAccessor.seek(actualStart);
+                }
+
+                byte[] buffer = new byte[65536];
                 int bytesRead;
                 while (!paused.get() && !Thread.currentThread().isInterrupted()
                         && (bytesRead = in.read(buffer)) != -1) {

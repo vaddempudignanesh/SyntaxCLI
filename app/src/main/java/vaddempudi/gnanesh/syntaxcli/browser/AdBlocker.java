@@ -74,7 +74,7 @@ public final class AdBlocker {
             return;
         }
 
-        Log.i(TAG, "Loaded " + count + " ad hosts in "
+        Log.d(TAG, "Loaded " + count + " ad hosts in "
                 + (System.currentTimeMillis() - start) + " ms");
     }
 

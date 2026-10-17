@@ -9,20 +9,21 @@ import java.io.ObjectOutputStream;
 import java.io.Serializable;
 
 public class DownloadTaskInfo implements Serializable {
-    private static final long serialVersionUID = 2L;   // bumped for the new field
+    private static final long serialVersionUID = 3L;
 
     public String gid;
     public String url;
     public String savePath;
     public String userAgent;
     public String referer;
+    public String cookies;
+    public String extraHeaders;
+    public String mimeType;
     public long totalSize;
     public int threadCount;
     public long[] startBytes;
     public long[] endBytes;
     public long[] downloadedBytes;
-
-    // ★ NEW: cumulative active download time across all resume sessions
     public long elapsedMs = 0L;
 
     public DownloadTaskInfo(String gid, String url, String savePath,

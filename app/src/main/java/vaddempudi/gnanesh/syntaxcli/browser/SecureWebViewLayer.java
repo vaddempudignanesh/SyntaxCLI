@@ -327,7 +327,7 @@ public final class SecureWebViewLayer {
         public synchronized void noteBlocked(String host) {
             long now = System.currentTimeMillis();
             if (!host.equals(lastBlockedHost) || now - lastBlockedAt > 3000L) {
-                Log.d(TAG, "Blocked hijack redirect → " + host);
+                // REMOVED: Log.d — this fired on every ad redirect
                 lastBlockedHost = host;
                 lastBlockedAt = now;
             }

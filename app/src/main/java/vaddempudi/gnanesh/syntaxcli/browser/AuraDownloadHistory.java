@@ -171,18 +171,21 @@ public class AuraDownloadHistory {
         flush();
     }
     private void dispatchControl(String action, String gid) {
+        Intent i = new Intent(appCtx, AuraDownloadService.class);
+        i.setAction(ACTION_CONTROL);
+        i.putExtra(EXTRA_ACTION, action);
+        i.putExtra(EXTRA_GID, gid);
         try {
-            Intent i = new Intent(appCtx, AuraDownloadService.class);
-            i.setAction(ACTION_CONTROL);
-            i.putExtra(EXTRA_ACTION, action);
-            i.putExtra(EXTRA_GID, gid);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 appCtx.startForegroundService(i);
             } else {
                 appCtx.startService(i);
             }
         } catch (Exception e) {
-            android.util.Log.e("AuraDL", "dispatchControl failed", e);
+            try { appCtx.startService(i); }
+            catch (Exception e2) {
+                android.util.Log.e("AuraDL", "dispatchControl failed", e2);
+            }
         }
     }
 

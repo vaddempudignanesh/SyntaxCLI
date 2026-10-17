@@ -1467,24 +1467,44 @@ public class AuraBrowserActivity extends AppCompatActivity {
             startBlobDownload(url, contentDisposition, mimeType);
             return;
         }
+
         try {
+            // Capture cookies and headers from the current WebView
+            String cookies = null;
+            String referer = "";
+            String extraHeaders = null;
+
+            Tab t = currentTab();
+            if (t != null && t.webView != null) {
+                referer = t.webView.getUrl();
+                try {
+                    cookies = CookieManager.getInstance().getCookie(url);
+                } catch (Exception ignored) {}
+
+                // Build extra headers that mimic a real browser
+                StringBuilder headers = new StringBuilder();
+                headers.append("Accept: */*\n");
+                headers.append("Accept-Language: en-US,en;q=0.9\n");
+                headers.append("Sec-Fetch-Dest: empty\n");
+                headers.append("Sec-Fetch-Mode: cors\n");
+                headers.append("Sec-Fetch-Site: cross-site\n");
+                extraHeaders = headers.toString();
+            }
+
             Intent svc = new Intent(this, AuraDownloadService.class);
             svc.putExtra(AuraDownloadService.EXTRA_DOWNLOAD_URL, url);
             svc.putExtra(AuraDownloadService.EXTRA_USER_AGENT, userAgent);
             svc.putExtra(AuraDownloadService.EXTRA_CONTENT_DISPOSITION, contentDisposition);
             svc.putExtra(AuraDownloadService.EXTRA_MIME_TYPE, mimeType);
-            svc.putExtra(AuraDownloadService.EXTRA_REFERER,
-                    currentTabWebView() != null ? currentTabWebView().getUrl() : "");
+            svc.putExtra(AuraDownloadService.EXTRA_REFERER, referer);
+            svc.putExtra(AuraDownloadService.EXTRA_COOKIES, cookies);
+            svc.putExtra(AuraDownloadService.EXTRA_EXTRA_HEADERS, extraHeaders);
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 ContextCompat.startForegroundService(this, svc);
             } else {
                 startService(svc);
             }
-
-            runOnUiThread(() -> {
-                if (downloadPanelDialog != null && downloadPanelDialog.isShowing()) return;
-            });
 
         } catch (Exception e) {
             Log.e("AuraBrowser", "Failed to start download service", e);
@@ -1684,14 +1704,14 @@ public class AuraBrowserActivity extends AppCompatActivity {
                         try {
                             renderDownloadList(list, dialog, arr);
                         } catch (Exception e) {
-                            Log.e("AuraBrowser", "renderDownloadList failed", e);
+                            // Silent — don't log every frame
                         }
                     });
-                    Thread.sleep(300);
+                    Thread.sleep(600);   // was 300ms — halved CPU
                 } catch (InterruptedException ie) {
                     break;
                 } catch (Exception e) {
-                    Log.e("AuraBrowser", "poll error", e);
+                    // Silent
                 }
             }
         }, "aura-poll");
@@ -2141,6 +2161,11 @@ public class AuraBrowserActivity extends AppCompatActivity {
                 Uri u = request.getUrl();
                 String urlStr = u == null ? null : u.toString();
                 if (urlStr == null) return false;
+
+                // Don't intercept blob: — handled by download listener
+                if (urlStr.startsWith("blob:")) {
+                    return false;
+                }
 
                 if (isDownloadableUrl(urlStr)) {
                     startNativeDownload(urlStr, view.getSettings().getUserAgentString(),
