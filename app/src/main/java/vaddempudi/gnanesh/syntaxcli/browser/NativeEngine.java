@@ -276,23 +276,35 @@ public class NativeEngine {
                     return;
                 }
 
-                // If server ignored Range on a multi-thread download, bail
-                // to single-thread fallback handled by the caller.
+
                 if (code == HttpURLConnection.HTTP_OK && taskInfo.threadCount > 1
                         && actualStart > 0) {
-                    // This thread can't continue — tell engine to fall back
                     if (!paused.get()) listener.onError("Server does not support resume");
                     return;
                 }
-
                 in = new BufferedInputStream(connection.getInputStream(), 65536);
                 File targetFile = new File(taskInfo.savePath);
-                fileAccessor = new RandomAccessFile(targetFile, "rw");
-
+                try {
+                    fileAccessor = new RandomAccessFile(targetFile, "rw");
+                } catch (Exception ioEx) {
+                    if (!paused.get()) {
+                        listener.onError("Cannot write file: " + ioEx.getMessage());
+                    }
+                    return;
+                }
                 if (code == HttpURLConnection.HTTP_OK && taskInfo.threadCount == 1) {
-                    // Fresh start — truncate file
-                    fileAccessor.setLength(0);
-                    fileAccessor.seek(0);
+                    // ★ Only truncate on a truly FRESH download.
+                    if (taskInfo.totalDownloaded() == 0 && taskInfo.elapsedMs == 0L) {
+                        fileAccessor.setLength(0);
+                        fileAccessor.seek(0);
+                    } else {
+                        // Resume not supported by server — fail rather than
+                        // wiping the user's partial file.
+                        if (!paused.get()) {
+                            listener.onError("Server does not support resume");
+                        }
+                        return;
+                    }
                 } else {
                     fileAccessor.seek(actualStart);
                 }
@@ -307,7 +319,7 @@ public class NativeEngine {
                 }
             } catch (Exception e) {
                 if (!paused.get() && !Thread.currentThread().isInterrupted()) {
-                    Log.e(TAG, "Worker " + threadId + " error: " + e.getMessage());
+                    Log.d(TAG, "Worker " + threadId + " error: " + e.getMessage());
                     listener.onError(e.getMessage() == null ? "Network error" : e.getMessage());
                 }
             } finally {

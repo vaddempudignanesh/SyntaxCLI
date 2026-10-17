@@ -19,6 +19,8 @@ public class AuraDownloadHistory {
 
     private static final String PREFS = "aura_downloads";
     private static final String KEY   = "tasks";
+    private final java.util.concurrent.atomic.AtomicLong seqGen =
+            new java.util.concurrent.atomic.AtomicLong(0);
 
     // ★ True global singleton: static final lock ensures only one instance
     //   exists, no matter which Context asks for it first.
@@ -60,20 +62,27 @@ public class AuraDownloadHistory {
         try {
             String raw = prefs.getString(KEY, "[]");
             JSONArray arr = new JSONArray(raw);
+            long maxSeq = 0;
             for (int i = 0; i < arr.length(); i++) {
                 JSONObject o = arr.getJSONObject(i);
                 String gid = o.optString("gid");
                 if (gid.isEmpty()) continue;
                 String s = o.optString("status", "");
-                // Any active/waiting task from a previous session becomes
-                // "paused" — we don't know if the process is still alive.
                 if ("active".equals(s) || "waiting".equals(s)) {
                     o.put("status", "paused");
                     o.put("downloadSpeed", "0");
                     o.put("etaMs", 0);
                 }
+                long seq = o.optLong("__seq", 0);
+                if (seq == 0) {
+                    seq = ++maxSeq;
+                    o.put("__seq", seq);
+                } else if (seq > maxSeq) {
+                    maxSeq = seq;
+                }
                 tasks.put(gid, o);
             }
+            seqGen.set(maxSeq);
         } catch (Exception ignored) {}
     }
 
@@ -85,6 +94,15 @@ public class AuraDownloadHistory {
     public void upsert(JSONObject job) {
         String gid = job.optString("gid");
         if (gid.isEmpty()) return;
+
+        // ★ Preserve original creation order so listAll() can sort stably.
+        JSONObject prev = tasks.get(gid);
+        if (prev != null && prev.has("__seq")) {
+            try { job.put("__seq", prev.optLong("__seq")); } catch (Exception ignored) {}
+        } else {
+            try { job.put("__seq", seqGen.incrementAndGet()); } catch (Exception ignored) {}
+        }
+
         tasks.put(gid, job);
 
         long now = System.currentTimeMillis();
@@ -132,12 +150,18 @@ public class AuraDownloadHistory {
     }
 
     public JSONArray listAll() {
-        // Pull anything new from disk before returning, so the panel is
-        // never empty when the service has been writing to prefs.
         reloadFromDisk();
 
+        java.util.List<JSONObject> list = new java.util.ArrayList<>(tasks.values());
+        // Newest (highest seq) first
+        java.util.Collections.sort(list, (a, b) -> {
+            long sa = a.optLong("__seq", 0);
+            long sb = b.optLong("__seq", 0);
+            return Long.compare(sb, sa);
+        });
+
         JSONArray arr = new JSONArray();
-        for (JSONObject o : tasks.values()) arr.put(o);
+        for (JSONObject o : list) arr.put(o);
         return arr;
     }
 
