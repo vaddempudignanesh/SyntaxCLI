@@ -64,7 +64,6 @@ import android.os.PowerManager;
 
 public class MusicPlayerActivity extends AppCompatActivity {
 
-    // ---------- Colors ----------
     private static final int BG       = 0xFF000000;
     private static final int GREEN    = 0xFF00FF00;
     private static final int DIM      = 0xFF00AA00;
@@ -74,7 +73,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
     private static final int REQ_AUDIO = 3001;
     private static final int REQ_BATTERY_OPT = 3002;
     private static final String KEY_BATTERY_PROMPTED = "battery_opt_prompted";
-
 
     private boolean launchedForIncomingFile = false;
 
@@ -88,17 +86,14 @@ public class MusicPlayerActivity extends AppCompatActivity {
     public static final String CMD_OPEN_PLAYLIST   = "open_playlist";
     public static final String CMD_START_LAST      = "start_last";
 
-    /** Last track the user played, so the home screen "play" button can resume. */
     private static long lastPlayedId = -1;
     private static String lastPlayedTitle = "";
 
-    // ---------- View states ----------
     private static final int VIEW_LIBRARY  = 0;
     private static final int VIEW_PLAYLIST = 1;
     private static final int VIEW_PICKER   = 2;
     private int viewState = VIEW_LIBRARY;
 
-    // ---------- Sort modes ----------
     private static final int SORT_LATEST = 0;
     private static final int SORT_OLDEST = 1;
     private static final int SORT_AZ     = 2;
@@ -106,12 +101,8 @@ public class MusicPlayerActivity extends AppCompatActivity {
     private int sortMode = SORT_LATEST;
 
     public static volatile boolean alive = false;
-    /** True once the activity has been created at least once in this process. */
     public static volatile boolean everOpened = false;
 
-    // ---------- Permission ----------
-
-    // ---------- Data ----------
     public static class Track {
         long id;
         String title;
@@ -160,14 +151,15 @@ public class MusicPlayerActivity extends AppCompatActivity {
         }
     }
 
+    @Override
+    protected void onResume() {
+        super.onResume();
+        maybeRequestBatteryOptimizationExemption();
+    }
+
     private void maybeRequestBatteryOptimizationExemption() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
         if (isIgnoringBatteryOptimizations()) return;
-
-        android.content.SharedPreferences p =
-                getSharedPreferences(PREFS, MODE_PRIVATE);
-        if (p.getBoolean(KEY_BATTERY_PROMPTED, false)) return;
-        p.edit().putBoolean(KEY_BATTERY_PROMPTED, true).apply();
 
         blackDialog()
                 .setTitle("Allow background playback")
@@ -192,7 +184,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 .show();
     }
 
-
     private void loadPlaylist() {
         try {
             android.content.SharedPreferences p =
@@ -210,11 +201,9 @@ public class MusicPlayerActivity extends AppCompatActivity {
         } catch (Exception ignored) { }
     }
 
-    // Search
     private boolean searchOpen = false;
     private String  searchQuery = "";
 
-    // ---------- Views ----------
     private RecyclerView recycler;
     private TrackAdapter adapter;
     private LinearLayout topBar;
@@ -226,7 +215,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
     private ImageView    btnSearch;
     private ImageView    btnSort;
     private Button       btnAdd;
-    // Bottom bar
     private LinearLayout bottomBar;
     private TextView     tvNowPlaying;
     private ImageView    btnPrev;
@@ -235,7 +223,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
     private SeekBar      seekBar;
     private boolean      isPaused = false;
 
-    // ---------- Player ----------
     private MediaPlayer player;
     private int playingIndex = -1;
     private final Handler ui = new Handler(Looper.getMainLooper());
@@ -255,10 +242,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
         }
     };
 
-    // ============================================================
-    // Lifecycle
-    // ============================================================
-
     private boolean pendingStartLast = false;
 
     @Override
@@ -277,11 +260,9 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 && getIntent().getBooleanExtra("start_hidden", false);
         if (startHidden) pendingStartLast = true;
 
-        // ★ ADD: check for external intent FIRST
         handleIncomingIntent(getIntent());
         if (hasAudioPermission()) {
             loadTracks();
-            maybeRequestBatteryOptimizationExemption();
         } else {
             requestAudioPermission();
         }
@@ -324,16 +305,11 @@ public class MusicPlayerActivity extends AppCompatActivity {
         }
     }
 
-    // ============================================================
-    // UI
-    // ============================================================
-
     private void buildUi() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(BG);
 
-        // ---------- Top bar ----------
         topBar = new LinearLayout(this);
         topBar.setOrientation(LinearLayout.HORIZONTAL);
         topBar.setBackgroundColor(BG);
@@ -358,7 +334,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
         titleLp.leftMargin = dp(12);
         topBar.addView(tvTitle, titleLp);
 
-        // Search icon (magnifier)
         btnSearch = new ImageView(this);
         btnSearch.setImageResource(R.drawable.ic_search_black_24);
         btnSearch.setColorFilter(GREEN);
@@ -375,7 +350,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        // ---------- Search row (hidden until magnifier is tapped) ----------
         searchRow = new LinearLayout(this);
         searchRow.setOrientation(LinearLayout.HORIZONTAL);
         searchRow.setBackgroundColor(BG);
@@ -406,7 +380,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        // ---------- List ----------
         recycler = new RecyclerView(this);
         recycler.setBackgroundColor(BG);
         recycler.setLayoutManager(new LinearLayoutManager(this));
@@ -416,7 +389,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
         root.addView(recycler, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
-        // ---------- Empty label ----------
         emptyLabel = new TextView(this);
         emptyLabel.setTextColor(DIM);
         emptyLabel.setTextSize(13);
@@ -429,7 +401,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
         emptyLp.topMargin = dp(24);
         root.addView(emptyLabel, emptyLp);
 
-        // ---------- ADD button ----------
         btnAdd = new Button(this);
         btnAdd.setText("ADD");
         btnAdd.setTextColor(GREEN);
@@ -447,14 +418,12 @@ public class MusicPlayerActivity extends AppCompatActivity {
         addLp.bottomMargin = dp(6);
         root.addView(btnAdd, addLp);
 
-        // ---------- Bottom bar ----------
         bottomBar = new LinearLayout(this);
         bottomBar.setOrientation(LinearLayout.VERTICAL);
         bottomBar.setBackgroundColor(BG);
         bottomBar.setPadding(dp(12), dp(6), dp(12), dp(6));
         bottomBar.setVisibility(View.GONE);
 
-        // Row 1: prev | now playing | next
         LinearLayout navRow = new LinearLayout(this);
         navRow.setOrientation(LinearLayout.HORIZONTAL);
         navRow.setGravity(Gravity.CENTER_VERTICAL);
@@ -466,7 +435,7 @@ public class MusicPlayerActivity extends AppCompatActivity {
         navRow.addView(btnPrev, new LinearLayout.LayoutParams(dp(36), dp(36)));
 
         btnPlayPause = new ImageView(this);
-        btnPlayPause.setImageResource(R.drawable.ic_pause);   // see note below
+        btnPlayPause.setImageResource(R.drawable.ic_pause);
         btnPlayPause.setColorFilter(GREEN);
         btnPlayPause.setOnClickListener(v -> togglePlayPause());
         LinearLayout.LayoutParams ppLp =
@@ -498,7 +467,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        // Row 2: seekbar
         seekBar = new SeekBar(this);
         seekBar.setProgressTintList(android.content.res.ColorStateList.valueOf(GREEN));
         seekBar.setThumbTintList(android.content.res.ColorStateList.valueOf(GREEN));
@@ -524,6 +492,7 @@ public class MusicPlayerActivity extends AppCompatActivity {
 
         setContentView(root);
     }
+
     private void togglePlayPause() {
         if (player == null) return;
         try {
@@ -546,6 +515,7 @@ public class MusicPlayerActivity extends AppCompatActivity {
                     .sendBroadcast(new Intent("vaddempudi.gnanesh.syntaxcli.MUSIC_STATE_CHANGED"));
         } catch (Exception ignored) { }
     }
+
     private void toggleSearch() {
         if (searchOpen) closeSearch();
         else openSearch();
@@ -633,10 +603,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
         updateToolbar();
     }
 
-    // ============================================================
-    // Permissions
-    // ============================================================
-
     private boolean hasAudioPermission() {
         if (Build.VERSION.SDK_INT >= 33) {
             return ContextCompat.checkSelfPermission(this,
@@ -670,7 +636,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
         if (requestCode != REQ_AUDIO) return;
         if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
             loadTracks();
-            maybeRequestBatteryOptimizationExemption();
         } else {
             blackDialog()
                     .setTitle("Permission required")
@@ -700,9 +665,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
             }
         }
     }
-    // ============================================================
-    // MediaStore query
-    // ============================================================
 
     private void loadTracks() {
         io.execute(() -> {
@@ -775,10 +737,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
         });
     }
 
-    // ============================================================
-    // Refresh + sort
-    // ============================================================
-
     private void refreshList() {
         List<Track> base;
         if (viewState == VIEW_PLAYLIST) {
@@ -794,7 +752,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
             base = new ArrayList<>(allTracks);
         }
 
-        // Apply search filter
         if (!searchQuery.isEmpty()) {
             List<Track> filtered = new ArrayList<>();
             for (Track t : base) {
@@ -863,15 +820,10 @@ public class MusicPlayerActivity extends AppCompatActivity {
         popup.show();
     }
 
-    /** Public getters used by the home-screen widget. */
     public static long getLastPlayedId() { return lastPlayedId; }
     public static String getLastPlayedTitle() { return lastPlayedTitle; }
     public static boolean isCurrentlyPlaying() { return !isPausedStatic; }
     private static boolean isPausedStatic = false;
-
-    // ============================================================
-    // Playback
-    // ============================================================
 
     private void playTrack(int index) {
         if (index < 0 || index >= visibleTracks.size()) return;
@@ -914,9 +866,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
             });
             player.prepareAsync();
 
-            // Start the foreground service so playback survives screen lock
-            // and app-switching. The service shows a low-priority notification
-            // (mandatory for any foreground service on modern Android).
             try {
                 Intent svc = new Intent(this, MusicPlaybackService.class);
                 if (Build.VERSION.SDK_INT >= 26) {
@@ -925,6 +874,14 @@ public class MusicPlayerActivity extends AppCompatActivity {
                     startService(svc);
                 }
             } catch (Exception ignored) { }
+
+            ui.postDelayed(() -> {
+                try {
+                    Intent upd = new Intent(
+                            MusicPlaybackService.ACTION_UPDATE_NOTIFICATION);
+                    LocalBroadcastManager.getInstance(this).sendBroadcast(upd);
+                } catch (Exception ignored) { }
+            }, 250);
         } catch (Exception e) {
             FileLog.e("MusicPlayer: play failed", e);
             Toast.makeText(this, "Cannot play: " + e.getMessage(),
@@ -970,7 +927,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
                     if (player != null && !player.isPlaying() && isPaused) {
                         togglePlayPause();
                     } else if (player == null) {
-                        // Resume last or start first
                         int idx = indexOfLastPlayed();
                         if (idx >= 0) playTrack(idx);
                         else if (!visibleTracks.isEmpty()) playTrack(0);
@@ -1009,9 +965,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
         }
         return -1;
     }
-    // ============================================================
-    // Row actions
-    // ============================================================
 
     private void showTrackActions(View anchor, Track track) {
         ContextThemeWrapper w = new ContextThemeWrapper(this, R.style.PopupMenu_Black);
@@ -1127,17 +1080,10 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 .show();
     }
 
-    // ============================================================
-    // Adapter
-    // ============================================================
-
     private class TrackAdapter extends RecyclerView.Adapter<TrackAdapter.VH> {
 
         @NonNull @Override
         public VH onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
-            // Outer row = horizontal LinearLayout.
-            // Column 1: checkbox + text column (weighted, width=0).
-            // Column 2: three-dots with EXACT width computed from screen size.
             LinearLayout row = new LinearLayout(MusicPlayerActivity.this);
             row.setOrientation(LinearLayout.HORIZONTAL);
             row.setGravity(Gravity.CENTER_VERTICAL);
@@ -1147,7 +1093,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
                     ViewGroup.LayoutParams.WRAP_CONTENT));
             row.setPadding(dp(12), dp(6), 0, dp(6));
 
-            // Column 1 — checkbox + text
             ImageView check = new ImageView(MusicPlayerActivity.this);
             check.setColorFilter(GREEN);
             check.setVisibility(View.GONE);
@@ -1176,11 +1121,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
             sub.setEllipsize(android.text.TextUtils.TruncateAt.END);
             textCol.addView(sub);
 
-            // Column 2 — three dots, fixed width from screen width math.
-            // Nothing is added after this in the row, so it lands at the
-            // row's right edge. The row itself is MATCH_PARENT width, and the
-            // text column has weight=1f + width=0, which guarantees the dots
-            // sit flush against the row's right border regardless of text.
             ImageView dots = new ImageView(MusicPlayerActivity.this);
             dots.setImageResource(R.drawable.ic_more_vert);
             dots.setColorFilter(GREEN);
@@ -1188,8 +1128,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
             int dotsWidth = dp(40);
             LinearLayout.LayoutParams dotsLp =
                     new LinearLayout.LayoutParams(dotsWidth, dotsWidth);
-            // No rightMargin — the row's right padding is 0, so this lands
-            // exactly at the screen's right edge.
             row.addView(dots, dotsLp);
 
             return new VH(row, check, title, sub, dots);
@@ -1219,8 +1157,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
                     && playingIndex < visibleTracks.size()
                     && visibleTracks.get(playingIndex) == t;
 
-            // Pure black background always. When playing, add a green
-            // outline stroke — no fill, no tint.
             if (isPlaying) {
                 GradientDrawable border = new GradientDrawable();
                 border.setColor(BG);
@@ -1266,9 +1202,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
         }
     }
 
-    /** File path passed in via ACTION_VIEW / ACTION_SEND, to auto-play after load. */
-
-
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
@@ -1303,7 +1236,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
         maybeAutoPlayIncoming();
     }
 
-    /** file:// → direct path. content:// → _data column, else copy to cache. */
     private String resolveIncomingPath(Uri uri) {
         if (uri == null) return null;
         String scheme = uri.getScheme();
@@ -1311,7 +1243,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
         if ("file".equalsIgnoreCase(scheme)) return uri.getPath();
 
         if ("content".equalsIgnoreCase(scheme)) {
-            // 1) MediaStore _data
             Cursor c = null;
             try {
                 c = getContentResolver().query(uri,
@@ -1327,7 +1258,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
             } catch (Exception ignored) {
             } finally { if (c != null) c.close(); }
 
-            // 2) Copy stream into our cache so MediaPlayer has a real file
             try {
                 String name = null;
                 Cursor c2 = null;
@@ -1362,18 +1292,14 @@ public class MusicPlayerActivity extends AppCompatActivity {
         return null;
     }
 
-    /** Called after tracks load. If a pending path exists, insert it into the
-     *  visible list and start playback immediately. */
     private void maybeAutoPlayIncoming() {
         if (pendingIncomingPath == null) return;
         if (visibleTracks == null) return;
-        // If tracks haven't loaded yet, loadTracks()'s post-handler will call us.
         if (allTracks.isEmpty()) return;
 
         String target = pendingIncomingPath;
         pendingIncomingPath = null;
 
-        // If it's already in the library, play that entry.
         for (int i = 0; i < visibleTracks.size(); i++) {
             Track t = visibleTracks.get(i);
             if (t.path != null && t.path.equals(target)) {
@@ -1382,22 +1308,20 @@ public class MusicPlayerActivity extends AppCompatActivity {
             }
         }
 
-        // Otherwise synthesize a Track and play it directly.
         File f = new File(target);
         if (!f.exists()) return;
 
         Track t = new Track();
-        t.id = -1;                          // not from MediaStore
+        t.id = -1;
         t.title = f.getName();
         t.artist = "";
         t.path = f.getAbsolutePath();
         t.size = f.length();
         t.dateModified = f.lastModified() / 1000;
         t.dateAdded = t.dateModified;
-        t.durationMs = 0;                   // will be filled by player
-        t.contentUri = Uri.fromFile(f);     // MediaPlayer accepts this directly
+        t.durationMs = 0;
+        t.contentUri = Uri.fromFile(f);
 
-        // Prepend so the incoming file is the first row
         visibleTracks.add(0, t);
         allTracks.add(0, t);
         adapter.notifyDataSetChanged();
