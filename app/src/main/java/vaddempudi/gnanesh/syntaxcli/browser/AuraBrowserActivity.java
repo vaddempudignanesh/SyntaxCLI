@@ -1506,6 +1506,16 @@ public class AuraBrowserActivity extends AppCompatActivity {
                 startService(svc);
             }
 
+
+
+            // ★ Open the panel so the user sees the download immediately.
+            runOnUiThread(() -> {
+                if (downloadPanelDialog != null && downloadPanelDialog.isShowing()) return;
+                new Handler(Looper.getMainLooper())
+                        .postDelayed(this::showDownloadPanel, 400);
+            });
+
+
         } catch (Exception e) {
             Log.e("AuraBrowser", "Failed to start download service", e);
         }
@@ -1658,7 +1668,7 @@ public class AuraBrowserActivity extends AppCompatActivity {
         // ── List ──
         ScrollView scroll = new ScrollView(this);
         scroll.setLayoutParams(new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));   // fills rest
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         scroll.setFillViewport(true);
 
         LinearLayout list = new LinearLayout(this);
@@ -1672,10 +1682,18 @@ public class AuraBrowserActivity extends AppCompatActivity {
         if (w != null) {
             w.setBackgroundDrawable(new ColorDrawable(0xFF0A0A0A));
             w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT);   // ★ FULL SCREEN
+                    ViewGroup.LayoutParams.MATCH_PARENT);
             w.setGravity(Gravity.FILL);
-            w.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);   // no dim
+            w.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
         }
+
+        // ★ Render once immediately so the panel isn't blank while
+        //   the first poll tick is pending.
+        try {
+            renderDownloadList(list, dialog,
+                    AuraDownloadHistory.get(this).listAll());
+        } catch (Exception ignored) {}
+
         final Handler h = new Handler(Looper.getMainLooper());
         final boolean[] alive = {true};
         final String[] lastJson = {""};
@@ -1703,6 +1721,13 @@ public class AuraBrowserActivity extends AppCompatActivity {
                 }
             }
         }, "aura-poll");
+        pollThread.start();
+
+        dialog.setOnDismissListener(d -> {
+            alive[0] = false;
+            if (downloadPanelDialog == d) downloadPanelDialog = null;
+        });
+        dialog.show();
     }
 
     private static final String EMPTY_TAG = "__aura_empty__";
