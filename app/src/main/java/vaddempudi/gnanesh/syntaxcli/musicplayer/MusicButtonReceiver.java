@@ -110,21 +110,21 @@ public class MusicButtonReceiver extends BroadcastReceiver {
             i.putExtra(MusicPlayerActivity.EXTRA_CMD, cmd);
             LocalBroadcastManager.getInstance(context.getApplicationContext())
                     .sendBroadcast(i);
+        } catch (Exception ignored) { }
 
-            // Also forward to the service so it re-broadcasts into the
-            // activity if the activity isn't currently alive (rare, but
-            // makes resume-after-kill work correctly).
-            Intent svc = new Intent(context.getApplicationContext(),
-                    MusicPlaybackService.class);
-            svc.setAction(MusicPlayerActivity.ACTION_CTRL);
-            svc.putExtra(MusicPlayerActivity.EXTRA_CMD, cmd);
-            try {
-                if (android.os.Build.VERSION.SDK_INT >= 26) {
-                    context.getApplicationContext().startForegroundService(svc);
-                } else {
-                    context.getApplicationContext().startService(svc);
-                }
-            } catch (Exception ignored) { }
+        // ★ Try to wake the Music activity so it can handle the command
+        //   if it's currently dead (after the OS kills it or the user
+        //   swiped it away). If the activity isn't running, this launches it.
+        try {
+            if (!MusicPlayerActivity.alive) {
+                Intent open = new Intent(context.getApplicationContext(),
+                        MusicPlayerActivity.class);
+                open.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                        | Intent.FLAG_ACTIVITY_SINGLE_TOP
+                        | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                open.putExtra(MusicPlayerActivity.EXTRA_CMD, cmd);
+                context.getApplicationContext().startActivity(open);
+            }
         } catch (Exception ignored) { }
     }
 
