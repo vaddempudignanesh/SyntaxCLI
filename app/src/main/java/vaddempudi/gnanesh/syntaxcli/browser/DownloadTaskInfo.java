@@ -9,7 +9,7 @@ import java.io.ObjectOutputStream;
 import java.io.Serializable;
 
 public class DownloadTaskInfo implements Serializable {
-    private static final long serialVersionUID = 3L;
+    private static final long serialVersionUID = 4L;
 
     public String gid;
     public String url;
@@ -19,12 +19,15 @@ public class DownloadTaskInfo implements Serializable {
     public String cookies;
     public String extraHeaders;
     public String mimeType;
+    public String etag = null;
+    public String lastModified = null;
     public long totalSize;
     public int threadCount;
     public long[] startBytes;
     public long[] endBytes;
     public long[] downloadedBytes;
     public long elapsedMs = 0L;
+    public boolean hadFailure = false;
 
     public DownloadTaskInfo(String gid, String url, String savePath,
                             long totalSize, int threadCount) {
@@ -44,8 +47,25 @@ public class DownloadTaskInfo implements Serializable {
         return t;
     }
 
+    /**
+     * True only when EVERY worker's byte range has been fully written.
+     * This is the authoritative completion test — file.length() is
+     * useless because pre-allocated files are sparse.
+     */
     public boolean isComplete() {
-        return totalDownloaded() >= totalSize && totalSize > 0;
+        if (hadFailure) return false;
+        if (totalSize <= 0) return false;
+
+        for (int i = 0; i < threadCount; i++) {
+            long rangeLen = endBytes[i] - startBytes[i] + 1;
+            if (endBytes[i] == Long.MAX_VALUE - 1) {
+                return !hadFailure && downloadedBytes[i] > 0;
+            }
+            if (downloadedBytes[i] < rangeLen) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public void saveState(String stateFilePath) {

@@ -21,6 +21,7 @@ public class NativeEngine {
     private ExecutorService executor;
     private final AtomicBoolean paused = new AtomicBoolean(false);
     private final AtomicBoolean finished = new AtomicBoolean(false);
+    private final AtomicBoolean failed = new AtomicBoolean(false);
     private final DownloadProgressListener listener;
 
     private final AtomicLong rawBytesThisTick = new AtomicLong(0);
@@ -32,7 +33,6 @@ public class NativeEngine {
 
     private Thread tickerThread;
 
-    // Throttle state-file writes to avoid CPU/IO overhead
     private long lastStateSaveMs = 0L;
     private static final long STATE_SAVE_INTERVAL_MS = 3000L;
 
@@ -63,6 +63,7 @@ public class NativeEngine {
     public void start() {
         paused.set(false);
         finished.set(false);
+        failed.set(false);
         rawBytesThisTick.set(0);
         smoothedSpeed = 0.0;
         startTimeMs = System.currentTimeMillis();
@@ -94,25 +95,52 @@ public class NativeEngine {
                 if (paused.get()) {
                     try { taskInfo.saveState(stateFilePath); } catch (Exception ignored) {}
                     listener.onPaused();
-                } else if (!finished.getAndSet(true)) {
-                    // Verify file was actually written
-                    File f = new File(taskInfo.savePath);
-                    if (!f.exists() || f.length() == 0) {
-                        listener.onError("Download produced empty file");
-                        return;
-                    }
-                    // If known size and mismatch, error
-                    if (taskInfo.totalSize > 0 && f.length() < taskInfo.totalSize) {
-                        listener.onError("Incomplete download: "
-                                + f.length() + "/" + taskInfo.totalSize);
-                        return;
-                    }
-                    File stateFile = new File(stateFilePath);
-                    if (stateFile.exists()) stateFile.delete();
+                    return;
+                }
+
+                if (failed.get() || taskInfo.hadFailure) {
+                    return;
+                }
+
+                if (!taskInfo.isComplete()) {
+                    listener.onError("Download incomplete: "
+                            + taskInfo.totalDownloaded()
+                            + " / " + taskInfo.totalSize
+                            + " bytes");
+                    return;
+                }
+
+                long advertised = probeContentLength(taskInfo.url);
+                if (advertised > 0 && taskInfo.totalSize > 0
+                        && advertised != taskInfo.totalSize) {
+                    listener.onError("Remote size changed ("
+                            + advertised + " vs " + taskInfo.totalSize + ")");
+                    return;
+                }
+
+                File stateFile = new File(stateFilePath);
+                if (stateFile.exists()) stateFile.delete();
+
+                if (!finished.getAndSet(true)) {
                     listener.onComplete(totalElapsed);
                 }
             } catch (InterruptedException ignored) {}
         }, "aura-dl-watchdog").start();
+    }
+
+    private long probeContentLength(String url) {
+        try {
+            HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+            c.setRequestMethod("HEAD");
+            c.setConnectTimeout(5000);
+            c.setReadTimeout(5000);
+            c.connect();
+            long len = c.getContentLengthLong();
+            c.disconnect();
+            return len;
+        } catch (Exception e) {
+            return -1L;
+        }
     }
 
     private void tickerLoop() {
@@ -157,7 +185,6 @@ public class NativeEngine {
                         reported, totalElapsed, etaMs);
             } catch (Exception ignored) {}
 
-            // Throttle state-file writes — this was a major CPU/IO hog
             if (now - lastStateSaveMs >= STATE_SAVE_INTERVAL_MS) {
                 lastStateSaveMs = now;
                 taskInfo.elapsedMs = totalElapsed;
@@ -205,7 +232,6 @@ public class NativeEngine {
                 connection.setReadTimeout(30000);
                 connection.setInstanceFollowRedirects(true);
 
-                // Build Range header
                 String rangeHeader;
                 if (end == Long.MAX_VALUE - 1) {
                     rangeHeader = "bytes=" + actualStart + "-";
@@ -214,7 +240,15 @@ public class NativeEngine {
                 }
                 connection.setRequestProperty("Range", rangeHeader);
 
-                // Apply all stored headers
+                if (actualStart > 0) {
+                    if (taskInfo.etag != null && !taskInfo.etag.isEmpty()) {
+                        connection.setRequestProperty("If-Range", taskInfo.etag);
+                    } else if (taskInfo.lastModified != null
+                            && !taskInfo.lastModified.isEmpty()) {
+                        connection.setRequestProperty("If-Range", taskInfo.lastModified);
+                    }
+                }
+
                 if (taskInfo.userAgent != null && !taskInfo.userAgent.isEmpty()) {
                     connection.setRequestProperty("User-Agent", taskInfo.userAgent);
                 }
@@ -242,7 +276,6 @@ public class NativeEngine {
 
                 int code = connection.getResponseCode();
 
-                // Handle redirects manually for non-following servers
                 int redirects = 0;
                 while ((code == HttpURLConnection.HTTP_MOVED_PERM
                         || code == HttpURLConnection.HTTP_MOVED_TEMP
@@ -269,38 +302,47 @@ public class NativeEngine {
                     code = connection.getResponseCode();
                 }
 
-                // Accept 200 (server ignored Range) or 206 (partial)
                 if (code != HttpURLConnection.HTTP_PARTIAL
                         && code != HttpURLConnection.HTTP_OK) {
-                    if (!paused.get()) listener.onError("HTTP " + code);
+                    if (!paused.get()) {
+                        failed.set(true);
+                        taskInfo.hadFailure = true;
+                        listener.onError("HTTP " + code);
+                    }
                     return;
                 }
-
 
                 if (code == HttpURLConnection.HTTP_OK && taskInfo.threadCount > 1
                         && actualStart > 0) {
-                    if (!paused.get()) listener.onError("Server does not support resume");
+                    if (!paused.get()) {
+                        failed.set(true);
+                        taskInfo.hadFailure = true;
+                        listener.onError("Server does not support resume");
+                    }
                     return;
                 }
+
                 in = new BufferedInputStream(connection.getInputStream(), 65536);
                 File targetFile = new File(taskInfo.savePath);
                 try {
                     fileAccessor = new RandomAccessFile(targetFile, "rw");
                 } catch (Exception ioEx) {
                     if (!paused.get()) {
+                        failed.set(true);
+                        taskInfo.hadFailure = true;
                         listener.onError("Cannot write file: " + ioEx.getMessage());
                     }
                     return;
                 }
+
                 if (code == HttpURLConnection.HTTP_OK && taskInfo.threadCount == 1) {
-                    // ★ Only truncate on a truly FRESH download.
                     if (taskInfo.totalDownloaded() == 0 && taskInfo.elapsedMs == 0L) {
                         fileAccessor.setLength(0);
                         fileAccessor.seek(0);
                     } else {
-                        // Resume not supported by server — fail rather than
-                        // wiping the user's partial file.
                         if (!paused.get()) {
+                            failed.set(true);
+                            taskInfo.hadFailure = true;
                             listener.onError("Server does not support resume");
                         }
                         return;
@@ -319,10 +361,23 @@ public class NativeEngine {
                 }
             } catch (Exception e) {
                 if (!paused.get() && !Thread.currentThread().isInterrupted()) {
+                    failed.set(true);
+                    taskInfo.hadFailure = true;
                     Log.d(TAG, "Worker " + threadId + " error: " + e.getMessage());
-                    listener.onError(e.getMessage() == null ? "Network error" : e.getMessage());
+                    listener.onError(e.getMessage() == null ? "Network error"
+                            : e.getMessage());
                 }
             } finally {
+                try {
+                    long need = taskInfo.endBytes[threadId] - taskInfo.startBytes[threadId] + 1;
+                    if (taskInfo.endBytes[threadId] != Long.MAX_VALUE - 1
+                            && taskInfo.downloadedBytes[threadId] < need
+                            && !paused.get()) {
+                        failed.set(true);
+                        taskInfo.hadFailure = true;
+                    }
+                } catch (Exception ignored) {}
+
                 try { if (fileAccessor != null) fileAccessor.close(); } catch (Exception ignored) {}
                 try { if (in != null) in.close(); } catch (Exception ignored) {}
                 if (connection != null) connection.disconnect();

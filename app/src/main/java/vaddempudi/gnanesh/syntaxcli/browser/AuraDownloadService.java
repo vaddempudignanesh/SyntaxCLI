@@ -32,6 +32,7 @@ public class AuraDownloadService extends Service {
     public static final String EXTRA_REFERER             = "REFERER";
     public static final String EXTRA_COOKIES             = "COOKIES";
     public static final String EXTRA_EXTRA_HEADERS       = "EXTRA_HEADERS";
+    public static final String EXTRA_FORCED_FILENAME     = "FORCED_FILENAME";
 
     private static final String CHANNEL_ID           = "AuraDownloadChannel";
     private static final int    BASE_NOTIFICATION_ID = 8810;
@@ -46,11 +47,6 @@ public class AuraDownloadService extends Service {
 
         createNotificationChannel();
 
-        // ★ Android requires startForeground() within 5s of
-        //   startForegroundService(). We MUST call it before anything else,
-        //   using the SAME ID that the real per-download notification will
-        //   later use, to avoid notification churn / "Cannot find enqueued
-        //   record" warnings.
         boolean isControl = AuraDownloadHistory.ACTION_CONTROL.equals(intent.getAction());
 
         String gid;
@@ -65,7 +61,6 @@ public class AuraDownloadService extends Service {
         }
         NOTIF_IDS.put(gid, notifId);
 
-        // ★ Promote FIRST.
         try {
             Notification placeholder = new NotificationCompat.Builder(this, CHANNEL_ID)
                     .setContentTitle(isControl ? "Downloads" : "Preparing…")
@@ -82,8 +77,6 @@ public class AuraDownloadService extends Service {
             String action = intent.getStringExtra(AuraDownloadHistory.EXTRA_ACTION);
             handleControl(action, gid);
 
-            // If nothing left, gracefully stop. Otherwise demote but keep
-            // the currently posted real notifications visible.
             if (ENGINES.isEmpty()) {
                 stopForeground(false);
                 stopSelf(startId);
@@ -103,7 +96,7 @@ public class AuraDownloadService extends Service {
         String userAgent          = intent.getStringExtra(EXTRA_USER_AGENT);
         String contentDisposition = intent.getStringExtra(EXTRA_CONTENT_DISPOSITION);
         String mimeType           = intent.getStringExtra(EXTRA_MIME_TYPE);
-        String forcedFilename = intent.getStringExtra("FORCED_FILENAME");
+        String forcedFilename     = intent.getStringExtra(EXTRA_FORCED_FILENAME);
         String referer            = intent.getStringExtra(EXTRA_REFERER);
         String cookies            = intent.getStringExtra(EXTRA_COOKIES);
         String extraHeaders       = intent.getStringExtra(EXTRA_EXTRA_HEADERS);
@@ -113,10 +106,10 @@ public class AuraDownloadService extends Service {
             catch (Exception ignored) {}
         }
 
-
         String fileName = (forcedFilename != null && !forcedFilename.isEmpty())
                 ? SafeFileName.sanitizeOnly(forcedFilename)
                 : SafeFileName.derive(urlString, contentDisposition, mimeType);
+
         final String finalGid          = gid;
         final int    finalNotifId      = notifId;
         final String finalUrl          = urlString;
@@ -127,15 +120,15 @@ public class AuraDownloadService extends Service {
         final String finalCookies      = cookies;
         final String finalExtraHeaders = extraHeaders;
         final String finalFileName     = fileName;
+        final String finalForced       = forcedFilename;
 
-        // Re-post with the real filename — SAME notifId, no churn.
         startForegroundWithId(finalNotifId, finalFileName);
 
         new Thread(() -> {
             try {
                 initializeDownload(finalGid, finalUrl, finalUserAgent, finalCd,
                         finalMime, finalReferer, finalFileName, finalNotifId,
-                        finalCookies, finalExtraHeaders, forcedFilename);
+                        finalCookies, finalExtraHeaders, finalForced);
             } catch (Throwable t) {
                 Log.e("AuraDL", "Init crashed", t);
                 try {
@@ -208,17 +201,16 @@ public class AuraDownloadService extends Service {
                     }
 
                     if (info != null) {
-                        // ★ FIX: verify the target file still matches the
-                        //   recorded downloadedBytes. If not, the file was
-                        //   externally modified/deleted — refuse to resume
-                        //   (would corrupt), and mark error.
                         if (!verifyFileIntact(info)) {
                             markError(history, gid, info.savePath,
                                     info.totalSize, 0,
                                     "Downloaded file changed — cannot resume");
-                            continueOrCleanup(startIdFromGid(gid));
+                            continueOrCleanup();
                             break;
                         }
+                        info.hadFailure = false;
+                        try { info.saveState(info.savePath + ".state"); }
+                        catch (Exception ignored) {}
                         try {
                             startEngineFor(info);
                         } catch (Throwable t) {
@@ -273,24 +265,19 @@ public class AuraDownloadService extends Service {
         }
     }
 
-    // stub used by resume error path; keeps code readable
-    private int startIdFromGid(String gid) { return 0; }
-
-    private void continueOrCleanup(int startId) {
+    private void continueOrCleanup() {
         if (ENGINES.isEmpty()) {
             stopForeground(false);
             stopSelf();
         }
     }
 
-    /** True if target file exists and its length matches recorded progress. */
     private boolean verifyFileIntact(DownloadTaskInfo info) {
         try {
             File f = new File(info.savePath);
             if (!f.exists()) return false;
-            long expected = info.totalDownloaded();
-            if (expected <= 0) return true;   // nothing downloaded yet — fine
-            return f.length() >= expected;
+            if (info.totalSize > 0 && f.length() < info.totalSize) return false;
+            return true;
         } catch (Exception e) {
             return false;
         }
@@ -332,8 +319,9 @@ public class AuraDownloadService extends Service {
             boolean acceptsRanges = false;
             String finalUrl = urlString;
             String finalMime = mimeType;
+            String etag = null;
+            String lastModified = null;
 
-            // ── Probe ──
             try {
                 HttpURLConnection conn = (HttpURLConnection) new URL(urlString).openConnection();
                 conn.setRequestMethod("GET");
@@ -390,8 +378,9 @@ public class AuraDownloadService extends Service {
                 acceptsRanges = "bytes".equalsIgnoreCase(
                         conn.getHeaderField("Accept-Ranges"));
 
-                // ★ Only re-derive the name if we still had a placeholder name.
-                // ★ Only re-derive when the user did not pick a name.
+                etag = conn.getHeaderField("ETag");
+                lastModified = conn.getHeaderField("Last-Modified");
+
                 String cd = conn.getHeaderField("Content-Disposition");
                 if (forcedFilename == null && cd != null && !cd.isEmpty()
                         && fileName.startsWith("download_")) {
@@ -415,14 +404,15 @@ public class AuraDownloadService extends Service {
                 Log.w("AuraDL", "probe failed: " + e.getMessage());
             }
 
-            // ── Load or create state ──
             String statePath = fullSavePath + ".state";
             DownloadTaskInfo info = DownloadTaskInfo.loadState(statePath);
 
             if (info != null && !verifyFileIntact(info)) {
-                // State file exists but file was modified/deleted.
                 try { new File(statePath).delete(); } catch (Exception ignored) {}
                 info = null;
+            } else if (info != null) {
+                info.hadFailure = false;
+                try { info.saveState(statePath); } catch (Exception ignored) {}
             }
 
             if (info == null) {
@@ -434,6 +424,8 @@ public class AuraDownloadService extends Service {
                 info.cookies = cookies;
                 info.extraHeaders = extraHeaders;
                 info.mimeType = finalMime;
+                info.etag = etag;
+                info.lastModified = lastModified;
 
                 if (threads > 1) {
                     long seg = remoteSize / threads;
@@ -477,7 +469,6 @@ public class AuraDownloadService extends Service {
             AuraDownloadHistory.get(this).upsert(job);
             AuraDownloadHistory.get(this).flush();
 
-            // ★ Update notification title with the final derived name
             startForegroundWithId(notifId, fileName);
 
             startEngineFor(info);
@@ -533,8 +524,34 @@ public class AuraDownloadService extends Service {
 
                     @Override
                     public void onComplete(long elapsedMs) {
-                        ENGINES.remove(info.gid);
+                        if (ENGINES.remove(info.gid) == null) return;
                         INFOS.remove(info.gid);
+
+                        if (!info.isComplete()) {
+                            try {
+                                JSONObject o = new JSONObject();
+                                o.put("gid", info.gid);
+                                o.put("name", fileName);
+                                o.put("savePath", info.savePath);
+                                o.put("url", info.url);
+                                o.put("status", "error");
+                                o.put("errorMessage", "File incomplete — resume to finish");
+                                o.put("totalLength", info.totalSize);
+                                o.put("completedLength", info.totalDownloaded());
+                                o.put("downloadSpeed", "0");
+                                o.put("elapsedMs", elapsedMs);
+                                o.put("etaMs", 0);
+                                AuraDownloadHistory.get(AuraDownloadService.this).upsert(o);
+                                AuraDownloadHistory.get(AuraDownloadService.this).flush();
+                            } catch (Exception ignored) {}
+                            updateNotification(info.gid, "error",
+                                    info.totalDownloaded(), 0, fileName, elapsedMs, 0);
+                            if (ENGINES.isEmpty()) {
+                                stopForeground(false);
+                                stopSelf();
+                            }
+                            return;
+                        }
 
                         try {
                             JSONObject o = new JSONObject();
@@ -543,7 +560,8 @@ public class AuraDownloadService extends Service {
                             o.put("savePath", info.savePath);
                             o.put("url", info.url);
                             o.put("status", "complete");
-                            o.put("totalLength", info.totalSize > 0 ? info.totalSize : info.totalDownloaded());
+                            o.put("totalLength", info.totalSize > 0
+                                    ? info.totalSize : info.totalDownloaded());
                             o.put("completedLength", info.totalDownloaded());
                             o.put("downloadSpeed", "0");
                             o.put("elapsedMs", elapsedMs);
@@ -563,7 +581,6 @@ public class AuraDownloadService extends Service {
 
                     @Override
                     public void onError(String message) {
-                        // ★ Only the FIRST worker to report an error wins.
                         if (ENGINES.remove(info.gid) == null) return;
                         try {
                             JSONObject o = new JSONObject();
@@ -581,6 +598,9 @@ public class AuraDownloadService extends Service {
                             AuraDownloadHistory.get(AuraDownloadService.this).upsert(o);
                             AuraDownloadHistory.get(AuraDownloadService.this).flush();
                         } catch (Exception ignored) {}
+
+                        try { info.saveState(info.savePath + ".state"); }
+                        catch (Exception ignored) {}
 
                         updateNotification(info.gid, "error",
                                 info.totalDownloaded(), 0, fileName,

@@ -990,8 +990,8 @@ public class AuraBrowserActivity extends AppCompatActivity {
     }
 
     private void updateDarkIconTint() {
-        int tint = forceDark ? 0xFFFFAA00 : 0xFF33FF33;
-        btnDarkMode.setColorFilter(tint);
+        int tint = 0xFF33FF33;
+         btnDarkMode.setColorFilter(tint);
         btnDarkMode.setImageResource(forceDark
                 ? R.drawable.aura_ic_sun
                 : R.drawable.aura_ic_moon);
@@ -1508,9 +1508,7 @@ public class AuraBrowserActivity extends AppCompatActivity {
             svc.putExtra(AuraDownloadService.EXTRA_COOKIES, cookies);
             svc.putExtra(AuraDownloadService.EXTRA_EXTRA_HEADERS, extraHeaders);
 
-            // ★ NEW: pass the user-chosen filename so the service
-            //   does NOT re-derive it.
-            svc.putExtra("FORCED_FILENAME", fileName);
+            svc.putExtra(AuraDownloadService.EXTRA_FORCED_FILENAME, fileName);
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 ContextCompat.startForegroundService(this, svc);
@@ -2104,7 +2102,9 @@ public class AuraBrowserActivity extends AppCompatActivity {
         switch (status) {
             case "active":   chipText = "DOWNLOADING"; break;
             case "paused":   chipText = "PAUSED";      break;
-            case "complete": chipText = "DONE";        break;
+            case "complete":
+                chipText = (total > 0 && completed >= total) ? "DONE" : "INCOMPLETE";
+                break;
             case "error":    chipText = "STOPPED";     break;
             default:         chipText = "WAITING";     break;
         }
@@ -2159,10 +2159,17 @@ public class AuraBrowserActivity extends AppCompatActivity {
         bar.setProgress(pct);
         bar.setVisibility("complete".equals(status) ? View.GONE : View.VISIBLE);
 
-        // ── Error text (still green — user requested no multi-color) ──
         if ("error".equals(status)) {
             String errMsg = job.optString("errorMessage", "");
-            tvErr.setText("⚠ " + (errMsg.isEmpty() ? "Download stopped" : errMsg));
+            boolean incomplete = total > 0 && completed < total;
+            String prefix = incomplete
+                    ? "⚠ Incomplete (" + humanBytes(completed) + " / " + humanBytes(total) + ") — "
+                    : "⚠ ";
+            tvErr.setText(prefix + (errMsg.isEmpty() ? "Download stopped" : errMsg));
+            tvErr.setTextColor(0xFF33FF33);
+            tvErr.setVisibility(View.VISIBLE);
+        } else if ("complete".equals(status) && total > 0 && completed < total) {
+            tvErr.setText("⚠ Completed but file may be incomplete — tap Resume");
             tvErr.setTextColor(0xFF33FF33);
             tvErr.setVisibility(View.VISIBLE);
         } else {
@@ -2175,24 +2182,32 @@ public class AuraBrowserActivity extends AppCompatActivity {
         final int GREEN = 0xFF33FF33;
 
         if ("active".equals(status)) {
-            actions.addView(makeBigActionButton("⏸  Pause",  GREEN, () ->
+            actions.addView(makeBigActionButton("Pause", GREEN, () ->
                     AuraDownloadHistory.get(this).pause(g)));
-            actions.addView(makeBigActionButton("✕  Cancel", GREEN, () ->
+            actions.addView(makeBigActionButton("Cancel", GREEN, () ->
                     AuraDownloadHistory.get(this).remove(g)));
         } else if ("paused".equals(status) || "error".equals(status)) {
-            actions.addView(makeBigActionButton("▶  Resume", GREEN, () ->
+            actions.addView(makeBigActionButton("Resume", GREEN, () ->
                     AuraDownloadHistory.get(this).unpause(g)));
-            actions.addView(makeBigActionButton("✕  Cancel", GREEN, () ->
+            actions.addView(makeBigActionButton("Cancel", GREEN, () ->
                     AuraDownloadHistory.get(this).remove(g)));
         } else if ("complete".equals(status)) {
-            actions.addView(makeBigActionButton("📂  Open",   GREEN, () -> {
-                String path = job.optString("savePath", "");
-                if (!path.isEmpty()) openFile(new File(path));
-            }));
-            actions.addView(makeBigActionButton("✕  Remove", GREEN, () ->
-                    AuraDownloadHistory.get(this).remove(g)));
+            boolean fullyDone = total <= 0 || completed >= total;
+            if (fullyDone) {
+                actions.addView(makeBigActionButton("Open", GREEN, () -> {
+                    String path = job.optString("savePath", "");
+                    if (!path.isEmpty()) openFile(new File(path));
+                }));
+                actions.addView(makeBigActionButton("Remove", GREEN, () ->
+                        AuraDownloadHistory.get(this).remove(g)));
+            } else {
+                actions.addView(makeBigActionButton("Resume", GREEN, () ->
+                        AuraDownloadHistory.get(this).unpause(g)));
+                actions.addView(makeBigActionButton("Cancel", GREEN, () ->
+                        AuraDownloadHistory.get(this).remove(g)));
+            }
         } else {
-            actions.addView(makeBigActionButton("✕  Cancel", GREEN, () ->
+            actions.addView(makeBigActionButton("Cancel", GREEN, () ->
                     AuraDownloadHistory.get(this).remove(g)));
         }
         applyButtonGap(actions);
