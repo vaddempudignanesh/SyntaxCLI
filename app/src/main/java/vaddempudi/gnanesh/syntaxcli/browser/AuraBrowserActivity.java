@@ -953,6 +953,8 @@ public class AuraBrowserActivity extends AppCompatActivity {
         } catch (Exception ignored) {}
     }
 
+
+
     private void onPopupBlocked() {
         blockedPopupsThisSession++;
     }
@@ -1462,14 +1464,21 @@ public class AuraBrowserActivity extends AppCompatActivity {
 
     private void startNativeDownload(String url, String userAgent,
                                      String contentDisposition, String mimeType) {
+        if (url == null || url.isEmpty()) return;
 
-        if (url != null && url.startsWith("blob:")) {
-            startBlobDownload(url, contentDisposition, mimeType);
-            return;
+        if (url.startsWith("blob:")) {
+            promptForFilenameThenDownload(url, userAgent, contentDisposition,
+                    mimeType, true);
+        } else {
+            promptForFilenameThenDownload(url, userAgent, contentDisposition,
+                    mimeType, false);
         }
+    }
 
+    private void startNativeDownloadWithName(String url, String userAgent,
+                                             String contentDisposition, String mimeType,
+                                             String fileName) {
         try {
-            // Capture cookies and headers from the current WebView
             String cookies = null;
             String referer = "";
             String extraHeaders = null;
@@ -1481,7 +1490,6 @@ public class AuraBrowserActivity extends AppCompatActivity {
                     cookies = CookieManager.getInstance().getCookie(url);
                 } catch (Exception ignored) {}
 
-                // Build extra headers that mimic a real browser
                 StringBuilder headers = new StringBuilder();
                 headers.append("Accept: */*\n");
                 headers.append("Accept-Language: en-US,en;q=0.9\n");
@@ -1500,39 +1508,172 @@ public class AuraBrowserActivity extends AppCompatActivity {
             svc.putExtra(AuraDownloadService.EXTRA_COOKIES, cookies);
             svc.putExtra(AuraDownloadService.EXTRA_EXTRA_HEADERS, extraHeaders);
 
+            // ★ NEW: pass the user-chosen filename so the service
+            //   does NOT re-derive it.
+            svc.putExtra("FORCED_FILENAME", fileName);
+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 ContextCompat.startForegroundService(this, svc);
             } else {
                 startService(svc);
             }
 
-
-
-            // ★ Open the panel so the user sees the download immediately.
             runOnUiThread(() -> {
                 if (downloadPanelDialog != null && downloadPanelDialog.isShowing()) return;
                 new Handler(Looper.getMainLooper())
                         .postDelayed(this::showDownloadPanel, 400);
             });
 
-
         } catch (Exception e) {
             Log.e("AuraBrowser", "Failed to start download service", e);
         }
     }
+    private void promptForFilenameThenDownload(
+            String url,
+            String userAgent,
+            String contentDisposition,
+            String mimeType,
+            boolean isBlob) {
+
+        String suggested = SafeFileName.derive(url, contentDisposition, mimeType);
+
+        // ── Root container with pure black background ──
+        LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+        container.setBackgroundColor(0xFF000000);
+        int padOuter = dp(20);
+        container.setPadding(padOuter, dp(16), padOuter, dp(16));
+
+        // Title
+        TextView titleView = new TextView(this);
+        titleView.setText("Save as");
+        titleView.setTextColor(0xFF33FF33);
+        titleView.setTextSize(18);
+        titleView.setTypeface(null, android.graphics.Typeface.BOLD);
+        titleView.setPadding(0, 0, 0, dp(12));
+        container.addView(titleView);
+
+        // Editable filename field
+        final EditText input = new EditText(this);
+        input.setText(suggested);
+        input.setSelectAllOnFocus(true);
+        input.setTextColor(0xFF33FF33);
+        input.setHintTextColor(0xFF336633);
+        input.setHint("filename.ext");
+        input.setSingleLine(true);
+        input.setInputType(InputType.TYPE_CLASS_TEXT
+                | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD);
+        input.setPadding(dp(12), dp(10), dp(12), dp(10));
+
+        android.graphics.drawable.GradientDrawable fieldBg =
+                new android.graphics.drawable.GradientDrawable();
+        fieldBg.setColor(0xFF000000);
+        fieldBg.setStroke(dp(1), 0xFF33FF33);
+        fieldBg.setCornerRadius(dp(6));
+        input.setBackground(fieldBg);
+
+        LinearLayout.LayoutParams inputLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        input.setLayoutParams(inputLp);
+        container.addView(input);
+
+        // ── Button row (50 / 50) ──
+        LinearLayout btnRow = new LinearLayout(this);
+        btnRow.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        rowLp.topMargin = dp(16);
+        btnRow.setLayoutParams(rowLp);
+
+        TextView cancelBtn = makeBigActionButton("Cancel", 0xFF33FF33,
+                () -> { /* replaced below */ });
+        TextView downloadBtn = makeBigActionButton("Download", 0xFF33FF33,
+                () -> { /* replaced below */ });
+
+        LinearLayout.LayoutParams b1 = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        b1.setMarginEnd(dp(6));
+        cancelBtn.setLayoutParams(b1);
+
+        LinearLayout.LayoutParams b2 = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        b2.setMarginStart(dp(6));
+        downloadBtn.setLayoutParams(b2);
+
+        btnRow.addView(cancelBtn);
+        btnRow.addView(downloadBtn);
+        container.addView(btnRow);
+
+        // Build the dialog WITHOUT the framework title/button chrome
+        final Dialog dlg = new Dialog(this);
+        dlg.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        dlg.setCancelable(true);
+        dlg.setContentView(container);
+
+        Window dw = dlg.getWindow();
+        if (dw != null) {
+            // ★ Force dark window background — no white flash, no white edges
+            dw.setBackgroundDrawable(new ColorDrawable(0xFF000000));
+            dw.setLayout(
+                    (int) (getResources().getDisplayMetrics().widthPixels * 0.92),
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+            dw.setGravity(Gravity.CENTER);
+            dw.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            WindowManager.LayoutParams lp = dw.getAttributes();
+            lp.dimAmount = 0.7f;
+            dw.setAttributes(lp);
+        }
+
+        cancelBtn.setOnClickListener(v -> dlg.dismiss());
+
+        downloadBtn.setOnClickListener(v -> {
+            String raw = input.getText() == null
+                    ? "" : input.getText().toString().trim();
+            if (raw.isEmpty()) {
+                Toast.makeText(this, "Filename cannot be empty",
+                        Toast.LENGTH_SHORT).show();
+                return;
+            }
+            String finalName = SafeFileName.sanitizeOnly(raw);
+            dlg.dismiss();
+
+            if (isBlob) {
+                startBlobDownloadWithName(url, contentDisposition, mimeType, finalName);
+            } else {
+                startNativeDownloadWithName(url, userAgent, contentDisposition,
+                        mimeType, finalName);
+            }
+        });
+
+        dlg.setOnShowListener(d -> {
+            input.requestFocus();
+            input.postDelayed(() -> {
+                InputMethodManager imm = (InputMethodManager)
+                        getSystemService(Context.INPUT_METHOD_SERVICE);
+                if (imm != null)
+                    imm.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT);
+            }, 150);
+        });
+
+        dlg.show();
+    }
+
+
 
     private void startBlobDownload(String blobUrl, String contentDisposition,
                                    String mimeType) {
+        promptForFilenameThenDownload(blobUrl, null, contentDisposition,
+                mimeType, true);
+    }
+
+    private void startBlobDownloadWithName(String blobUrl, String contentDisposition,
+                                           String mimeType, String fileName) {
         Tab t = currentTab();
         if (t == null) return;
         WebView wv = t.webView;
 
-        String suggestedName = SafeFileName.derive(
-                "blob_" + System.currentTimeMillis(),
-                contentDisposition,
-                mimeType);
-
-        final String fileName = suggestedName;
         final String gid = AuraBlobBridge.newGid();
 
         String js =
@@ -1645,7 +1786,7 @@ public class AuraBrowserActivity extends AppCompatActivity {
 
         TextView closeBtn = new TextView(this);
         closeBtn.setText("✕");
-        closeBtn.setTextColor(0xFFFF6666);
+        closeBtn.setTextColor(0xFF33FF33);
         closeBtn.setTextSize(22);
         closeBtn.setPadding(dp(12), dp(4), dp(12), dp(4));
         closeBtn.setOnClickListener(v -> dialog.dismiss());
@@ -1655,7 +1796,7 @@ public class AuraBrowserActivity extends AppCompatActivity {
         // ── Clear completed ──
         TextView clearBtn = new TextView(this);
         clearBtn.setText("Clear completed");
-        clearBtn.setTextColor(0xFFFF6666);
+        clearBtn.setTextColor(0xFF33FF33);
         clearBtn.setTextSize(13);
         clearBtn.setPadding(dp(8), dp(8), dp(8), dp(8));
         clearBtn.setOnClickListener(v -> AuraDownloadHistory.get(this).clearStopped());
@@ -1680,7 +1821,7 @@ public class AuraBrowserActivity extends AppCompatActivity {
 
         Window w = dialog.getWindow();
         if (w != null) {
-            w.setBackgroundDrawable(new ColorDrawable(0xFF0A0A0A));
+            w.setBackgroundDrawable(new ColorDrawable(0xFF000000));
             w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT);
             w.setGravity(Gravity.FILL);
@@ -1749,14 +1890,14 @@ public class AuraBrowserActivity extends AppCompatActivity {
             TextView icon = new TextView(this);
             icon.setText("⬇");
             icon.setTextSize(48);
-            icon.setTextColor(0xFF333333);
+            icon.setTextColor(0xFF33FF33);
             icon.setGravity(Gravity.CENTER);
             empty.addView(icon);
 
             TextView msg = new TextView(this);
             msg.setText("No downloads yet");
             msg.setTextSize(14);
-            msg.setTextColor(0xFF666666);
+            msg.setTextColor(0xFF33FF33);
             msg.setGravity(Gravity.CENTER);
             msg.setPadding(0, dp(8), 0, 0);
             empty.addView(msg);
@@ -1764,7 +1905,7 @@ public class AuraBrowserActivity extends AppCompatActivity {
             TextView sub = new TextView(this);
             sub.setText("Downloads you start will appear here");
             sub.setTextSize(12);
-            sub.setTextColor(0xFF444444);
+            sub.setTextColor(0xFF33FF33);
             sub.setGravity(Gravity.CENTER);
             sub.setPadding(0, dp(4), 0, 0);
             empty.addView(sub);
@@ -1827,8 +1968,14 @@ public class AuraBrowserActivity extends AppCompatActivity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.setMargins(0, dp(6), 0, dp(6));
         card.setLayoutParams(lp);
-        card.setBackgroundColor(0xFF141414);
-
+        card.setBackgroundColor(0xFF000000);
+        // Optional: thin green outline
+        android.graphics.drawable.GradientDrawable cardBg =
+                new android.graphics.drawable.GradientDrawable();
+        cardBg.setColor(0xFF000000);
+        cardBg.setStroke(dp(1), 0xFF1A3A1A);
+        cardBg.setCornerRadius(dp(6));
+        card.setBackground(cardBg);
         // Name row
         LinearLayout nameRow = new LinearLayout(this);
         nameRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -1836,7 +1983,7 @@ public class AuraBrowserActivity extends AppCompatActivity {
 
         TextView tvName = new TextView(this);
         tvName.setId(View.generateViewId());
-        tvName.setTextColor(0xFFF0F0F0);
+        tvName.setTextColor(0xFF33FF33);
         tvName.setTextSize(15);
         tvName.setTypeface(null, android.graphics.Typeface.BOLD);
         tvName.setMaxLines(2);
@@ -1856,7 +2003,7 @@ public class AuraBrowserActivity extends AppCompatActivity {
         TextView tvStats = new TextView(this);
         tvStats.setId(View.generateViewId());
         tvStats.setTextSize(13);
-        tvStats.setTextColor(0xFFAAAAAA);
+        tvStats.setTextColor(0xFF33FF33);
         tvStats.setPadding(0, dp(8), 0, dp(4));
         card.addView(tvStats);
 
@@ -1864,7 +2011,7 @@ public class AuraBrowserActivity extends AppCompatActivity {
         TextView tvTimers = new TextView(this);
         tvTimers.setId(View.generateViewId());
         tvTimers.setTextSize(11);
-        tvTimers.setTextColor(0xFF666666);
+        tvTimers.setTextColor(0xFF33FF33);
         tvTimers.setPadding(0, 0, 0, dp(8));
         card.addView(tvTimers);
 
@@ -1882,7 +2029,7 @@ public class AuraBrowserActivity extends AppCompatActivity {
         TextView tvErr = new TextView(this);
         tvErr.setId(View.generateViewId());
         tvErr.setTextSize(11);
-        tvErr.setTextColor(0xFFFF6666);
+        tvErr.setTextColor(0xFF33FF33);
         tvErr.setPadding(0, dp(6), 0, 0);
         tvErr.setVisibility(View.GONE);
         card.addView(tvErr);
@@ -1901,12 +2048,12 @@ public class AuraBrowserActivity extends AppCompatActivity {
     private android.graphics.drawable.Drawable makeProgressDrawable() {
         android.graphics.drawable.GradientDrawable bg =
                 new android.graphics.drawable.GradientDrawable();
-        bg.setColor(0xFF222222);
+        bg.setColor(0xFF000000);              // pure black
         bg.setCornerRadius(dp(3));
 
         android.graphics.drawable.GradientDrawable fg =
                 new android.graphics.drawable.GradientDrawable();
-        fg.setColor(0xFF33FF33);
+        fg.setColor(0xFF33FF33);              // pure green
         fg.setCornerRadius(dp(3));
 
         android.graphics.drawable.ClipDrawable progress =
@@ -1920,7 +2067,6 @@ public class AuraBrowserActivity extends AppCompatActivity {
 
         ld.setId(0, android.R.id.background);
         ld.setId(1, android.R.id.progress);
-
         return ld;
     }
 
@@ -1953,24 +2099,25 @@ public class AuraBrowserActivity extends AppCompatActivity {
 
         tvName.setText(name);
 
+        // ── Status chip: green text on black, no colored chips ──
         String chipText;
-        int chipBg, chipFg;
         switch (status) {
-            case "active":
-                chipText = "DOWNLOADING"; chipBg = 0xFF1A3A1A; chipFg = 0xFF33FF33; break;
-            case "paused":
-                chipText = "PAUSED";      chipBg = 0xFF3A2A1A; chipFg = 0xFFFFAA00; break;
-            case "complete":
-                chipText = "DONE";        chipBg = 0xFF1A2A3A; chipFg = 0xFF66BBFF; break;
-            case "error":
-                chipText = "STOPPED";     chipBg = 0xFF3A1A1A; chipFg = 0xFFFF6666; break;
-            default:
-                chipText = "WAITING";     chipBg = 0xFF222222; chipFg = 0xFF888888; break;
+            case "active":   chipText = "DOWNLOADING"; break;
+            case "paused":   chipText = "PAUSED";      break;
+            case "complete": chipText = "DONE";        break;
+            case "error":    chipText = "STOPPED";     break;
+            default:         chipText = "WAITING";     break;
         }
         tvStatusChip.setText(chipText);
-        tvStatusChip.setTextColor(chipFg);
-        tvStatusChip.setBackgroundColor(chipBg);
+        tvStatusChip.setTextColor(0xFF33FF33);
+        android.graphics.drawable.GradientDrawable chipBg =
+                new android.graphics.drawable.GradientDrawable();
+        chipBg.setColor(0xFF000000);
+        chipBg.setStroke(dp(1), 0xFF33FF33);
+        chipBg.setCornerRadius(dp(3));
+        tvStatusChip.setBackground(chipBg);
 
+        // ── Stats line (green) ──
         String stats;
         if ("active".equals(status)) {
             stats = pct + "%  •  " + humanSpeed(speed)
@@ -1983,7 +2130,9 @@ public class AuraBrowserActivity extends AppCompatActivity {
             stats = pct + "%";
         }
         tvStats.setText(stats);
+        tvStats.setTextColor(0xFF33FF33);
 
+        // ── Timers line (green) ──
         String timers;
         switch (status) {
             case "active":
@@ -2004,40 +2153,46 @@ public class AuraBrowserActivity extends AppCompatActivity {
                 break;
         }
         tvTimers.setText(timers);
+        tvTimers.setTextColor(0xFF33FF33);
         tvTimers.setVisibility(timers.isEmpty() ? View.GONE : View.VISIBLE);
 
         bar.setProgress(pct);
         bar.setVisibility("complete".equals(status) ? View.GONE : View.VISIBLE);
 
+        // ── Error text (still green — user requested no multi-color) ──
         if ("error".equals(status)) {
             String errMsg = job.optString("errorMessage", "");
             tvErr.setText("⚠ " + (errMsg.isEmpty() ? "Download stopped" : errMsg));
+            tvErr.setTextColor(0xFF33FF33);
             tvErr.setVisibility(View.VISIBLE);
         } else {
             tvErr.setVisibility(View.GONE);
         }
+
+        // ── Buttons: same green for all ──
         actions.removeAllViews();
         final String g = gid;
+        final int GREEN = 0xFF33FF33;
 
         if ("active".equals(status)) {
-            actions.addView(makeBigActionButton("⏸  Pause", 0xFFFFAA00, () ->
+            actions.addView(makeBigActionButton("⏸  Pause",  GREEN, () ->
                     AuraDownloadHistory.get(this).pause(g)));
-            actions.addView(makeBigActionButton("✕  Cancel", 0xFFFF6666, () ->
+            actions.addView(makeBigActionButton("✕  Cancel", GREEN, () ->
                     AuraDownloadHistory.get(this).remove(g)));
         } else if ("paused".equals(status) || "error".equals(status)) {
-            actions.addView(makeBigActionButton("▶  Resume", 0xFF33FF33, () ->
+            actions.addView(makeBigActionButton("▶  Resume", GREEN, () ->
                     AuraDownloadHistory.get(this).unpause(g)));
-            actions.addView(makeBigActionButton("✕  Cancel", 0xFFFF6666, () ->
+            actions.addView(makeBigActionButton("✕  Cancel", GREEN, () ->
                     AuraDownloadHistory.get(this).remove(g)));
         } else if ("complete".equals(status)) {
-            actions.addView(makeBigActionButton("📂  Open", 0xFF66BBFF, () -> {
+            actions.addView(makeBigActionButton("📂  Open",   GREEN, () -> {
                 String path = job.optString("savePath", "");
                 if (!path.isEmpty()) openFile(new File(path));
             }));
-            actions.addView(makeBigActionButton("✕  Remove", 0xFFFF6666, () ->
+            actions.addView(makeBigActionButton("✕  Remove", GREEN, () ->
                     AuraDownloadHistory.get(this).remove(g)));
         } else {
-            actions.addView(makeBigActionButton("✕  Cancel", 0xFFFF6666, () ->
+            actions.addView(makeBigActionButton("✕  Cancel", GREEN, () ->
                     AuraDownloadHistory.get(this).remove(g)));
         }
         applyButtonGap(actions);
@@ -2057,7 +2212,7 @@ public class AuraBrowserActivity extends AppCompatActivity {
     private TextView makeBigActionButton(String label, int color, Runnable onClick) {
         TextView tv = new TextView(this);
         tv.setText(label);
-        tv.setTextColor(color);
+        tv.setTextColor(color);                    // ★ honor parameter
         tv.setTextSize(15);
         tv.setTypeface(null, android.graphics.Typeface.BOLD);
         tv.setGravity(Gravity.CENTER);
@@ -2065,12 +2220,13 @@ public class AuraBrowserActivity extends AppCompatActivity {
 
         android.graphics.drawable.GradientDrawable bg =
                 new android.graphics.drawable.GradientDrawable();
-        bg.setColor(0xFF1E1E1E);
+        bg.setColor(0xFF000000);
+        bg.setStroke(dp(1), color);                // ★ honor parameter
         bg.setCornerRadius(dp(8));
         tv.setBackground(bg);
 
         tv.setLayoutParams(new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));  // no margin here
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         tv.setOnClickListener(v -> {
             onClick.run();
             tv.setAlpha(0.5f);

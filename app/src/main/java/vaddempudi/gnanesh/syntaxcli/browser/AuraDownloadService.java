@@ -103,6 +103,7 @@ public class AuraDownloadService extends Service {
         String userAgent          = intent.getStringExtra(EXTRA_USER_AGENT);
         String contentDisposition = intent.getStringExtra(EXTRA_CONTENT_DISPOSITION);
         String mimeType           = intent.getStringExtra(EXTRA_MIME_TYPE);
+        String forcedFilename = intent.getStringExtra("FORCED_FILENAME");
         String referer            = intent.getStringExtra(EXTRA_REFERER);
         String cookies            = intent.getStringExtra(EXTRA_COOKIES);
         String extraHeaders       = intent.getStringExtra(EXTRA_EXTRA_HEADERS);
@@ -112,10 +113,10 @@ public class AuraDownloadService extends Service {
             catch (Exception ignored) {}
         }
 
-        // Pre-derive a name so the notification shows SOMETHING immediately.
-        // It may be updated once Content-Disposition is parsed.
-        String fileName = SafeFileName.derive(urlString, contentDisposition, mimeType);
 
+        String fileName = (forcedFilename != null && !forcedFilename.isEmpty())
+                ? SafeFileName.sanitizeOnly(forcedFilename)
+                : SafeFileName.derive(urlString, contentDisposition, mimeType);
         final String finalGid          = gid;
         final int    finalNotifId      = notifId;
         final String finalUrl          = urlString;
@@ -134,7 +135,7 @@ public class AuraDownloadService extends Service {
             try {
                 initializeDownload(finalGid, finalUrl, finalUserAgent, finalCd,
                         finalMime, finalReferer, finalFileName, finalNotifId,
-                        finalCookies, finalExtraHeaders);
+                        finalCookies, finalExtraHeaders, forcedFilename);
             } catch (Throwable t) {
                 Log.e("AuraDL", "Init crashed", t);
                 try {
@@ -317,7 +318,8 @@ public class AuraDownloadService extends Service {
     private void initializeDownload(String gid, String urlString, String userAgent,
                                     String contentDisposition, String mimeType,
                                     String referer, String fileName, int notifId,
-                                    String cookies, String extraHeaders) {
+                                    String cookies, String extraHeaders,
+                                    String forcedFilename) {
         try {
             File downloadDir = Environment.getExternalStoragePublicDirectory(
                     Environment.DIRECTORY_DOWNLOADS);
@@ -389,8 +391,10 @@ public class AuraDownloadService extends Service {
                         conn.getHeaderField("Accept-Ranges"));
 
                 // ★ Only re-derive the name if we still had a placeholder name.
+                // ★ Only re-derive when the user did not pick a name.
                 String cd = conn.getHeaderField("Content-Disposition");
-                if (cd != null && !cd.isEmpty() && fileName.startsWith("download_")) {
+                if (forcedFilename == null && cd != null && !cd.isEmpty()
+                        && fileName.startsWith("download_")) {
                     String derived = SafeFileName.derive(finalUrl, cd, finalMime);
                     if (derived != null && !derived.isEmpty()) {
                         fileName = derived;

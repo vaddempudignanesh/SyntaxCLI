@@ -158,6 +158,14 @@ public final class SafeFileName {
         return s;
     }
 
+    /** Sanitize + truncate an already-derived name. */
+    public static String sanitizeOnly(String name) {
+        if (name == null || name.trim().isEmpty()) {
+            return "download_" + System.currentTimeMillis();
+        }
+        return truncatePreservingExtension(sanitize(name));
+    }
+
     /** Truncate the basename while keeping the extension intact. */
     private static String truncatePreservingExtension(String name) {
         if (name.length() <= MAX_FILENAME_LEN) return name;
