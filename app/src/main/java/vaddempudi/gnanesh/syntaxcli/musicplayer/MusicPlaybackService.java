@@ -30,6 +30,8 @@ public class MusicPlaybackService extends Service {
     private static final String CHANNEL_ID = "music_playback_channel";
     private static final int    NOTIF_ID   = 0xA11CE;
 
+    private BroadcastReceiver noisyReceiver;
+
     public static final String ACTION_UPDATE_NOTIFICATION =
             "vaddempudi.gnanesh.syntaxcli.MUSIC_UPDATE_NOTIF";
 
@@ -81,7 +83,17 @@ public class MusicPlaybackService extends Service {
         f.addAction("vaddempudi.gnanesh.syntaxcli.MUSIC_TRACK_CHANGED");
         f.addAction(ACTION_UPDATE_NOTIFICATION);
         LocalBroadcastManager.getInstance(this).registerReceiver(updateReceiver, f);
-
+        noisyReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                if (intent == null) return;
+                if (!AudioManager.ACTION_AUDIO_BECOMING_NOISY.equals(intent.getAction())) return;
+                sendCmd(MusicPlayerActivity.CMD_PAUSE);
+            }
+        };
+        IntentFilter noisyFilter = new IntentFilter(
+                AudioManager.ACTION_AUDIO_BECOMING_NOISY);
+        registerReceiver(noisyReceiver, noisyFilter);
         startForegroundInternal();
     }
 
@@ -113,6 +125,9 @@ public class MusicPlaybackService extends Service {
             }
         } catch (Exception ignored) { }
         abandonAudioFocus();
+        try {
+            if (noisyReceiver != null) unregisterReceiver(noisyReceiver);
+        } catch (Exception ignored) { }
         super.onDestroy();
     }
 
