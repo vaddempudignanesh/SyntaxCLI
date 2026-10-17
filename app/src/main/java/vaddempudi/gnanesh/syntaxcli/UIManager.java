@@ -70,6 +70,7 @@ import vaddempudi.gnanesh.syntaxcli.tuils.interfaces.CommandExecuter;
 import vaddempudi.gnanesh.syntaxcli.tuils.interfaces.OnBatteryUpdate;
 import vaddempudi.gnanesh.syntaxcli.tuils.interfaces.OnRedirectionListener;
 import vaddempudi.gnanesh.syntaxcli.tuils.stuff.PolicyReceiver;
+import java.util.Random;
 
 public class UIManager implements OnTouchListener {
 
@@ -98,6 +99,14 @@ public class UIManager implements OnTouchListener {
         weather,
         unlock
     }
+
+    private static final String CP_OFF_LABEL = "[ OFF ]  Enable Cyberpunk 2077 typing animation";
+
+    private TextView cyberpunkView;
+    private TextView cyberpunkToggleView;
+    private CyberpunkRunnable cyberpunkRunnable;
+    private boolean cyberpunkEnabled = false;
+    private final Random cpRand = new Random();
 
     private static final int RAM_DELAY = 8000;
     private static final int TIME_DELAY = 1000;
@@ -229,6 +238,248 @@ public class UIManager implements OnTouchListener {
             charging = false;
             lastIntPercent = -1;
             update(-1);
+        }
+    }
+
+    private class CyberpunkRunnable implements Runnable {
+        private final StringBuilder[] lines = {
+                new StringBuilder(),
+                new StringBuilder(),
+                new StringBuilder()
+        };
+        private final String[] targets = {"", "", ""};
+        private final int[] cursors = {0, 0, 0};
+        private final int[] restartCountdown = {0, 0, 0};
+        private int blinkFrame = 0;
+
+        private static final int TICK_MS = 40;
+        private static final int CHARS_PER_TICK = 2;
+        private static final int LINE_COUNT = 3;
+        private static final int RESTART_FRAMES = 50;
+        private static final String CURSOR = "█";
+
+        private final String[] GENERATOR_KINDS = {
+                "SENTENCE", "COMMAND", "HEX", "BINARY", "IP", "PORT",
+                "STACK", "NET", "MOUNT", "PROC", "KERNEL", "SIGNAL"
+        };
+
+        private final String[] SENTENCES = {
+                ">> BYPASSING ARASAKA GATEWAY",
+                ">> ICE-BREAKER ACTIVE ON NODE 04",
+                ">> MALWARE INJECTED INTO CORE",
+                ">> DECRYPTING PRIVATE KEY",
+                ">> SPOOFING PROXY CHAIN",
+                ">> ROOT ACCESS GRANTED",
+                ">> FETCHING SYSTEM LOG",
+                ">> NEURAL LINK ESTABLISHED",
+                ">> DAEMON OVERRIDE ACCEPTED",
+                ">> BLACKWALL HANDSHAKE COMPLETE",
+                ">> PAYLOAD DELIVERED TO TARGET",
+                ">> TRACE ROUTE COMPLETE",
+                ">> ENCRYPTION KEY RECOVERED",
+                ">> SUBNET SCAN IN PROGRESS",
+                ">> FIREWALL RULES PATCHED",
+                ">> MEMORY REGION UNLOCKED",
+                ">> GHOST PROTOCOL ENGAGED",
+                ">> EXPLOIT PAYLOAD STAGED",
+                ">> ICE LAYER BREACHED",
+                ">> PACKET STACK FLOOD DETECTED"
+        };
+
+        private final String[] COMMANDS = {
+                "$ chmod +x /usr/bin/node",
+                "$ sudo nmap -sS -O 10.0.0.1/24",
+                "$ cat /etc/passwd | grep root",
+                "$ ps aux --sort=-%mem",
+                "$ netstat -tulpn | grep LISTEN",
+                "$ tcpdump -i eth0 port 443",
+                "$ iptables -F && iptables -X",
+                "$ cat /var/log/auth.log | tail",
+                "$ ssh -i key.pem root@10.0.0.42",
+                "$ systemctl restart daemon",
+                "$ dd if=/dev/urandom of=/tmp/x",
+                "$ lsof -i :8080 | grep ESTAB",
+                "$ grep -r \"password\" /etc",
+                "$ find / -perm -4000 2>/dev/null",
+                "$ uname -a && hostname",
+                "$ curl -X POST http://c2/x",
+                "$ kill -9 $(pidof daemon)",
+                "$ journalctl -xe | tail -n 50"
+        };
+
+        private final String[] MOUNTS = {
+                "/dev/sda1", "/dev/nvme0n1p2", "/mnt/crypto",
+                "/sys/kernel/security", "/proc/self/mem",
+                "/var/run/secrets", "/root/.ssh/id_rsa",
+                "/dev/mapper/crypt", "/sys/fs/cgroup"
+        };
+
+        private final String[] KERNELS = {
+                ">> PANIC: PAGE_FAULT_IN_NONPAGED_AREA",
+                ">> KERNEL: OOPS 0002 [#1] SMP",
+                ">> DMESG: USB device reset failed",
+                ">> SYSCALL: EPERM (Operation not permitted)",
+                ">> SEGFAULT: address 0xdeadbeef",
+                ">> STACK TRACE: kthreadd+0x1a2c",
+                ">> MEMORY: OOM killer triggered",
+                ">> FATAL: unable to handle kernel NULL",
+                ">> WARN: soft lockup - CPU#3 stuck",
+                ">> BUG: scheduling while atomic"
+        };
+
+        private final String[] SIGNALS = {
+                "SIGKILL", "SIGSEGV", "SIGABRT", "SIGBUS",
+                "SIGILL", "SIGFPE", "SIGHUP", "SIGTERM",
+                "SIGQUIT", "SIGPIPE"
+        };
+
+        @Override
+        public void run() {
+            if (!cyberpunkEnabled || !uiVisible || handler == null || cyberpunkView == null) {
+                return;
+            }
+
+            blinkFrame = (blinkFrame + 1) % 20;
+
+            for (int i = 0; i < LINE_COUNT; i++) {
+                if (cursors[i] < targets[i].length()) {
+                    int end = Math.min(cursors[i] + CHARS_PER_TICK, targets[i].length());
+                    lines[i].append(targets[i], cursors[i], end);
+                    cursors[i] = end;
+                } else if (restartCountdown[i] > 0) {
+                    restartCountdown[i]--;
+                    if (restartCountdown[i] == 0) {
+                        lines[i].setLength(0);
+                        targets[i] = generateLine(i);
+                        cursors[i] = 0;
+                    }
+                }
+            }
+
+            StringBuilder rendered = new StringBuilder();
+            for (int i = 0; i < LINE_COUNT; i++) {
+                if (i > 0) rendered.append('\n');
+                rendered.append(lines[i]);
+                if (cursors[i] < targets[i].length() || blinkFrame < 10) {
+                    rendered.append(CURSOR);
+                }
+                if (cursors[i] >= targets[i].length() && restartCountdown[i] == 0) {
+                    restartCountdown[i] = RESTART_FRAMES;
+                }
+            }
+
+            cyberpunkView.setText(rendered);
+            handler.postDelayed(this, TICK_MS);
+        }
+
+        private String generateLine(int lineIndex) {
+            String kind = GENERATOR_KINDS[cpRand.nextInt(GENERATOR_KINDS.length)];
+            return build(kind);
+        }
+
+        private String build(String kind) {
+            StringBuilder b = new StringBuilder();
+            switch (kind) {
+                case "SENTENCE": {
+                    b.append(SENTENCES[cpRand.nextInt(SENTENCES.length)]);
+                    padToWidth(b, 48);
+                    break;
+                }
+                case "COMMAND": {
+                    b.append(COMMANDS[cpRand.nextInt(COMMANDS.length)]);
+                    padToWidth(b, 52);
+                    break;
+                }
+                case "HEX": {
+                    b.append(">> 0x");
+                    String h = Long.toHexString(cpRand.nextLong()).toUpperCase()
+                            + Long.toHexString(cpRand.nextLong()).toUpperCase();
+                    b.append(h.substring(0, 20));
+                    b.append("  0x").append(Long.toHexString(cpRand.nextLong())
+                            .toUpperCase().substring(0, 8));
+                    padToWidth(b, 48);
+                    break;
+                }
+                case "BINARY": {
+                    b.append(">> ");
+                    for (int k = 0; k < 6; k++) {
+                        for (int bit = 0; bit < 8; bit++) b.append(cpRand.nextInt(2));
+                        b.append(' ');
+                    }
+                    padToWidth(b, 56);
+                    break;
+                }
+                case "IP": {
+                    b.append(">> SRC ");
+                    b.append(cpRand.nextInt(256)).append('.')
+                            .append(cpRand.nextInt(256)).append('.')
+                            .append(cpRand.nextInt(256)).append('.')
+                            .append(cpRand.nextInt(256));
+                    b.append(" -> DST ");
+                    b.append(cpRand.nextInt(256)).append('.')
+                            .append(cpRand.nextInt(256)).append('.')
+                            .append(cpRand.nextInt(256)).append('.')
+                            .append(cpRand.nextInt(256));
+                    padToWidth(b, 56);
+                    break;
+                }
+                case "PORT": {
+                    b.append(">> tcp/").append(cpRand.nextInt(65535))
+                            .append(" ").append(cpRand.nextBoolean() ? "OPEN" : "FILTR")
+                            .append("   tcp/").append(cpRand.nextInt(65535))
+                            .append(" ").append(cpRand.nextBoolean() ? "OPEN" : "FILTR");
+                    padToWidth(b, 52);
+                    break;
+                }
+                case "STACK": {
+                    b.append(">> ");
+                    for (int k = 0; k < 6; k++) {
+                        b.append("0x").append(Integer.toHexString(cpRand.nextInt())
+                                .toUpperCase()).append(' ');
+                    }
+                    padToWidth(b, 56);
+                    break;
+                }
+                case "NET": {
+                    b.append(">> TRACE ").append(cpRand.nextInt(32)).append(" hops  ")
+                            .append("loss ").append(cpRand.nextInt(100)).append("%  ")
+                            .append("rtt ").append(cpRand.nextInt(500)).append("ms");
+                    padToWidth(b, 52);
+                    break;
+                }
+                case "MOUNT": {
+                    b.append("$ mount ").append(MOUNTS[cpRand.nextInt(MOUNTS.length)])
+                            .append(" /mnt/").append(Integer.toHexString(cpRand.nextInt(0xFFFF)).toUpperCase());
+                    padToWidth(b, 52);
+                    break;
+                }
+                case "PROC": {
+                    b.append("$ ps -ef | grep ")
+                            .append(Integer.toHexString(cpRand.nextInt()).toUpperCase())
+                            .append("  PID ").append(cpRand.nextInt(99999))
+                            .append(" %CPU ").append(cpRand.nextInt(100));
+                    padToWidth(b, 56);
+                    break;
+                }
+                case "KERNEL": {
+                    b.append(KERNELS[cpRand.nextInt(KERNELS.length)]);
+                    padToWidth(b, 52);
+                    break;
+                }
+                default: {
+                    b.append(">> ").append(SIGNALS[cpRand.nextInt(SIGNALS.length)])
+                            .append(" from pid ").append(cpRand.nextInt(99999))
+                            .append("  addr 0x")
+                            .append(Integer.toHexString(cpRand.nextInt()).toUpperCase());
+                    padToWidth(b, 56);
+                    break;
+                }
+            }
+            return b.toString();
+        }
+
+        private void padToWidth(StringBuilder b, int target) {
+            while (b.length() < target) b.append(' ');
         }
     }
 
@@ -406,7 +657,6 @@ public class UIManager implements OnTouchListener {
         }
     }
 
-
     private int weatherDelay;
 
     private double lastLatitude, lastLongitude;
@@ -456,7 +706,6 @@ public class UIManager implements OnTouchListener {
             if (!fixedLocation) setUrl(lastLatitude, lastLongitude);
             handler.postDelayed(this, weatherDelay);
         }
-
 
         private void setUrl(String where) {
             url = "https://api.openweathermap.org/data/2.5/weather?" + where + "&appid=" + key + "&units=" + XMLPrefsManager.get(Behavior.weather_temperature_measure);
@@ -630,7 +879,6 @@ public class UIManager implements OnTouchListener {
             } else if (v.equals("false")) {
                 useSystemWP = false;
             } else {
-                // Number or "NN% dimming"
                 int pct = v.indexOf('%');
                 if (pct >= 0) v = v.substring(0, pct).trim();
                 try {
@@ -733,16 +981,15 @@ public class UIManager implements OnTouchListener {
         };
 
         boolean[] show = new boolean[Label.values().length];
-        show[Label.notes.ordinal()] = XMLPrefsManager.getBoolean(Ui.show_notes);
-        show[Label.ram.ordinal()] = XMLPrefsManager.getBoolean(Ui.show_ram);
-// ★ Force OFF: device / time / storage lines are removed from the home screen
-        show[Label.device.ordinal()] = false;
-        show[Label.time.ordinal()] = false;
-        show[Label.battery.ordinal()] = XMLPrefsManager.getBoolean(Ui.show_battery);
-        show[Label.network.ordinal()] = false;
-        show[Label.storage.ordinal()] = false;
-        show[Label.weather.ordinal()] = XMLPrefsManager.getBoolean(Ui.show_weather);
-        show[Label.unlock.ordinal()] = XMLPrefsManager.getBoolean(Ui.show_unlock_counter);
+        show[Label.notes.ordinal()]    = XMLPrefsManager.getBoolean(Ui.show_notes);
+        show[Label.battery.ordinal()]  = false;
+        show[Label.weather.ordinal()]  = XMLPrefsManager.getBoolean(Ui.show_weather);
+        show[Label.ram.ordinal()]      = true;
+        show[Label.device.ordinal()]   = false;
+        show[Label.time.ordinal()]     = false;
+        show[Label.network.ordinal()]  = false;
+        show[Label.storage.ordinal()]  = false;
+        show[Label.unlock.ordinal()]   = false;
 
         float[] indexes = new float[Label.values().length];
         indexes[Label.notes.ordinal()] = show[Label.notes.ordinal()] ? XMLPrefsManager.getFloat(Ui.notes_index) : Integer.MAX_VALUE;
@@ -860,23 +1107,82 @@ public class UIManager implements OnTouchListener {
             }
         }
 
-        if (show[Label.ram.ordinal()]) {
-            ramRunnable = new RamRunnable();
-            memory = new ActivityManager.MemoryInfo();
-            activityManager = (ActivityManager) context.getSystemService(Activity.ACTIVITY_SERVICE);
-            handler.post(ramRunnable);
+        TextView ramLabel = null;
+        for (int i = 0; i < labelViews.length; i++) {
+            if (labelViews[i] != null
+                    && (int) labelIndexes[Label.ram.ordinal()] == i) {
+                ramLabel = labelViews[i];
+                break;
+            }
+        }
+        if (ramLabel == null) {
+            ramLabel = new TextView(context);
+            ramLabel.setTypeface(Tuils.getTypeface(context));
+            ramLabel.setTextSize(labelSizes[Label.ram.ordinal()]);
+            ramLabel.setTextColor(0xFF00FF00);
+            lViewsParent.addView(ramLabel);
+        }
+        if (ramLabel.getParent() == lViewsParent) {
+            lViewsParent.removeView(ramLabel);
         }
 
+        cyberpunkToggleView = ramLabel;
+        cyberpunkToggleView.setText(CP_OFF_LABEL);
+        cyberpunkToggleView.setTag("cyberpunk_toggle");
+        cyberpunkToggleView.setClickable(true);
+        cyberpunkToggleView.setFocusable(true);
+        cyberpunkToggleView.setFocusableInTouchMode(true);
+        cyberpunkToggleView.setTextColor(0xFF00FF00);
+        cyberpunkToggleView.setPadding(dp(context, 8), dp(context, 6),
+                dp(context, 8), dp(context, 6));
 
-        if (show[Label.battery.ordinal()]) {
-            batteryUpdate = new BatteryUpdate();
-            mediumPercentage = XMLPrefsManager.getInt(Behavior.battery_medium);
-            lowPercentage = XMLPrefsManager.getInt(Behavior.battery_low);
-            Tuils.registerBatteryReceiver(context, batteryUpdate);
-        } else {
-            batteryUpdate = null;
-        }
+        LinearLayout.LayoutParams toggleLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        toggleLp.topMargin = dp(context, 4);
+        toggleLp.bottomMargin = dp(context, 4);
+        cyberpunkToggleView.setLayoutParams(toggleLp);
 
+        cyberpunkView = new TextView(context);
+        cyberpunkView.setTypeface(Tuils.getTypeface(context));
+        cyberpunkView.setTextSize(labelSizes[Label.ram.ordinal()]);
+        cyberpunkView.setTextColor(0xFF00FF00);
+        cyberpunkView.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        cyberpunkView.setHorizontallyScrolling(false);
+        cyberpunkView.setVerticalScrollBarEnabled(false);
+        cyberpunkView.setIncludeFontPadding(false);
+        cyberpunkView.setText("");
+        cyberpunkView.setPadding(0, 0, 0, 0);
+        cyberpunkView.setSingleLine(false);
+        cyberpunkView.setMaxLines(3);
+        cyberpunkView.setLines(3);
+        cyberpunkView.setEllipsize(null);
+
+        LinearLayout.LayoutParams canvasLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        canvasLp.topMargin = 0;
+        canvasLp.bottomMargin = 0;
+        canvasLp.leftMargin = 0;
+        canvasLp.rightMargin = 0;
+        cyberpunkView.setLayoutParams(canvasLp);
+        cyberpunkView.setVisibility(View.GONE);
+
+        lViewsParent.addView(cyberpunkView, 0);
+        lViewsParent.addView(cyberpunkToggleView, 0);
+
+        cyberpunkView.setOnClickListener(v -> stopCyberpunkAnimation());
+        cyberpunkToggleView.setOnClickListener(v -> {
+            if (cyberpunkEnabled) stopCyberpunkAnimation();
+            else startCyberpunkAnimation();
+        });
+        cyberpunkToggleView.setOnTouchListener((v, event) -> false);
+
+        ramRunnable = null;
+        memory = null;
+        activityManager = null;
+
+        batteryUpdate = null;
 
         final TextView notesView = getLabelView(Label.notes);
         notesManager = new NotesManager(context, notesView);
@@ -937,7 +1243,6 @@ public class UIManager implements OnTouchListener {
             unlockTimeOrder = XMLPrefsManager.getInt(Behavior.unlock_time_order);
             nextUnlockCycleRestart = preferences.getLong(NEXT_UNLOCK_CYCLE_RESTART, 0);
 
-            // Single row only — always one entry.
             lastUnlocks = new long[1];
             lastUnlocks[0] = -1;
 
@@ -1024,6 +1329,49 @@ public class UIManager implements OnTouchListener {
         OutlineTextView.redrawTimes = drawTimes;
     }
 
+    private void startCyberpunkAnimation() {
+        if (cyberpunkToggleView == null || cyberpunkView == null || handler == null) return;
+
+        cyberpunkEnabled = true;
+
+        cyberpunkToggleView.setVisibility(View.GONE);
+        cyberpunkView.setVisibility(View.VISIBLE);
+        cyberpunkView.setText("");
+
+        if (cyberpunkRunnable == null) {
+            cyberpunkRunnable = new CyberpunkRunnable();
+        }
+        for (int i = 0; i < 3; i++) {
+            cyberpunkRunnable.lines[i].setLength(0);
+            cyberpunkRunnable.cursors[i] = 0;
+            cyberpunkRunnable.restartCountdown[i] = 0;
+            cyberpunkRunnable.targets[i] = cyberpunkRunnable.generateLine(i);
+        }
+        cyberpunkRunnable.blinkFrame = 0;
+        handler.post(cyberpunkRunnable);
+    }
+
+    private void stopCyberpunkAnimation() {
+        cyberpunkEnabled = false;
+
+        if (handler != null && cyberpunkRunnable != null) {
+            handler.removeCallbacks(cyberpunkRunnable);
+        }
+        if (cyberpunkView != null) {
+            cyberpunkView.setText("");
+            cyberpunkView.setVisibility(View.GONE);
+        }
+        if (cyberpunkToggleView != null) {
+            cyberpunkToggleView.setText(CP_OFF_LABEL);
+            cyberpunkToggleView.setVisibility(View.VISIBLE);
+        }
+    }
+
+    private static int dp(Context ctx, int px) {
+        if (ctx == null) return px;
+        return Math.round(px * ctx.getResources().getDisplayMetrics().density);
+    }
+
     public static int[] getListOfIntValues(String values, int length, int defaultValue) {
         int[] is = new int[length];
         values = removeSquareBrackets(values);
@@ -1086,6 +1434,10 @@ public class UIManager implements OnTouchListener {
     }
 
     public void dispose() {
+        if (cyberpunkRunnable != null && handler != null) {
+            handler.removeCallbacks(cyberpunkRunnable);
+        }
+        cyberpunkEnabled = false;
         uiVisible = false;
         if (handler != null) {
             handler.removeCallbacksAndMessages(null);
@@ -1216,7 +1568,6 @@ public class UIManager implements OnTouchListener {
         if (System.currentTimeMillis() - lastUnlockTime < 1000 || lastUnlocks == null) return;
         lastUnlockTime = System.currentTimeMillis();
         unlockTimes++;
-        // single slot — no arraycopy needed
         lastUnlocks[0] = lastUnlockTime;
         preferences.edit().putInt(UNLOCK_KEY, unlockTimes).apply();
         invalidateUnlockText();
@@ -1291,7 +1642,6 @@ public class UIManager implements OnTouchListener {
 
             CharSequence cs = Tuils.EMPTYSTRING;
 
-            // Single row only — iterate exactly one entry
             String t = text;
             t = indexPattern.matcher(t).replaceAll("1");
             cs = TextUtils.concat(cs, t);
