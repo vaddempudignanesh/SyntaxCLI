@@ -431,7 +431,7 @@ The easiest way to install is to grab the latest APK from the badge at the top o
    Credits
 
     SyntaxCLI builds on the excellent foundation laid by Francesco Andreuzzi (@fandreuz), who wrote the original launcher core.   
-    That core is used here under the MIT License and is preserved below with his copyright notice.
+    That core is used here under the MIT License and is preserved with his copyright notice.
     
     All other components — the gallery, music player, browser, file manager, DOCX and PDF readers, keyboard and IME, gesture 
     triggers, calculator, alarm, stopwatch, timer, calendar, and the intent router — were developed by Vaddempudi Gnanesh
