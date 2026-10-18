@@ -1,5 +1,6 @@
 package vaddempudi.gnanesh.syntaxcli.ime;
 
+
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Paint;
@@ -21,6 +22,23 @@ public class BasicKeyboardView extends View {
     }
 
     private boolean shiftLocked = false;
+
+    private long enterDownTime = 0L;
+    private long spaceDownTime = 0L;
+    private long lastSpaceUpTime = 0L;
+
+    public static final int LETTER_LONG_PRESS_TRIGGER = -1004;
+    private HitKey letterLongPressKey = null;
+    private Runnable letterLongPressRunnable = null;
+
+    private Runnable pendingLongPress = null;
+    private final Handler longPressHandler = new Handler(Looper.getMainLooper());
+
+    public static final int EMOJI_PANEL_TRIGGER       = -1001;
+    public static final int GESTURE_EDITOR_TRIGGER    = -1002;
+    public static final int GESTURE_DOUBLE_TRIGGER    = -1003;
+
+    private boolean longPressHandled = false;
 
     private final float density;
     private final float scaledDensity;
@@ -256,6 +274,10 @@ public class BasicKeyboardView extends View {
         }
     }
 
+    public KeyAction actionForKey(String keyChar) {
+        return GestureActionStore.get(getContext()).byKeyChar(keyChar);
+    }
+
     @Override
     public boolean onTouchEvent(MotionEvent event) {
         switch (event.getActionMasked()) {
@@ -263,15 +285,33 @@ public class BasicKeyboardView extends View {
                 HitKey hk = findKey(event.getX(), event.getY());
                 if (hk != null) {
                     pressed = hk;
+                    longPressHandled = false;
                     showBubbleFor(hk);
                     invalidate();
+
                     if (hk.key.code == BasicKey.CODE_DELETE) startRepeat(hk);
+                    if (hk.key.code == BasicKey.CODE_NONE
+                            && hk.key.lower != null
+                            && hk.key.lower.length() == 1
+                            && GestureActionStore.get(getContext())
+                            .byKeyChar(hk.key.lower) != null) {
+                        scheduleLetterLongPress(hk, KeyboardConfig.LONG_PRESS_ENTER_MS);
+                    }
+
+                    if (hk.key.code == BasicKey.CODE_ENTER) {
+                        enterDownTime = System.currentTimeMillis();
+                        scheduleLongPress(hk, KeyboardConfig.LONG_PRESS_ENTER_MS);
+                    } else if (hk.key.code == BasicKey.CODE_SPACE) {
+                        spaceDownTime = System.currentTimeMillis();
+                        scheduleLongPress(hk, KeyboardConfig.LONG_PRESS_SPACE_MS);
+                    }
                 }
                 return true;
             }
             case MotionEvent.ACTION_MOVE: {
                 HitKey hk = findKey(event.getX(), event.getY());
                 if (hk != pressed) {
+                    cancelPendingLongPress();
                     pressed = hk;
                     if (hk != null) showBubbleFor(hk);
                     else if (bubbleOverlay != null) bubbleOverlay.hide();
@@ -282,15 +322,32 @@ public class BasicKeyboardView extends View {
                 return true;
             }
             case MotionEvent.ACTION_UP: {
+                cancelPendingLongPress();
                 HitKey hk = pressed;
                 pressed = null;
                 invalidate();
                 stopRepeat();
                 if (bubbleOverlay != null) bubbleOverlay.hide();
-                if (hk != null && listener != null) dispatch(hk.key);
+
+                if (hk != null && listener != null) {
+                    if (hk.key.code == BasicKey.CODE_SPACE) {
+                        long now = System.currentTimeMillis();
+                        boolean doubleTap = (now - lastSpaceUpTime) <= KeyboardConfig.DOUBLE_TAP_SPACE_MS;
+                        if (doubleTap && !longPressHandled) {
+                            listener.onKey(GESTURE_DOUBLE_TRIGGER, null);
+                            longPressHandled = true;
+                        }
+                        lastSpaceUpTime = now;
+                    }
+
+                    if (!longPressHandled) {
+                        dispatch(hk.key);
+                    }
+                }
                 return true;
             }
             case MotionEvent.ACTION_CANCEL: {
+                cancelPendingLongPress();
                 pressed = null;
                 invalidate();
                 stopRepeat();
@@ -301,6 +358,58 @@ public class BasicKeyboardView extends View {
         return super.onTouchEvent(event);
     }
 
+    private void scheduleLetterLongPress(final HitKey hk, long delayMs) {
+        cancelLetterLongPress();
+        letterLongPressKey = hk;
+        letterLongPressRunnable = () -> {
+            letterLongPressRunnable = null;
+            if (pressed != hk || listener == null || longPressHandled) return;
+            longPressHandled = true;
+            if (bubbleOverlay != null) bubbleOverlay.hide();
+            pressed = null;
+            invalidate();
+            listener.onKey(LETTER_LONG_PRESS_TRIGGER, hk.key.lower);
+        };
+        repeatHandler.postDelayed(letterLongPressRunnable, delayMs);
+    }
+
+    private void cancelLetterLongPress() {
+        if (letterLongPressRunnable != null) {
+            repeatHandler.removeCallbacks(letterLongPressRunnable);
+            letterLongPressRunnable = null;
+            letterLongPressKey = null;
+        }
+    }
+
+    private void scheduleLongPress(final HitKey hk, long delayMs) {
+        cancelPendingLongPress();
+        pendingLongPress = () -> {
+            pendingLongPress = null;
+            if (pressed != hk || listener == null || longPressHandled) return;
+
+            if (hk.key.code == BasicKey.CODE_ENTER) {
+                longPressHandled = true;
+                if (bubbleOverlay != null) bubbleOverlay.hide();
+                pressed = null;
+                invalidate();
+                listener.onKey(EMOJI_PANEL_TRIGGER, null);
+            } else if (hk.key.code == BasicKey.CODE_SPACE) {
+                longPressHandled = true;
+                if (bubbleOverlay != null) bubbleOverlay.hide();
+                pressed = null;
+                invalidate();
+                listener.onKey(GESTURE_EDITOR_TRIGGER, null);
+            }
+        };
+        longPressHandler.postDelayed(pendingLongPress, delayMs);
+    }
+
+    private void cancelPendingLongPress() {
+        if (pendingLongPress != null) {
+            longPressHandler.removeCallbacks(pendingLongPress);
+            pendingLongPress = null;
+        }
+    }
     private void showBubbleFor(HitKey hk) {
         if (bubbleOverlay == null) return;
         if (hk == null || hk.key.code != BasicKey.CODE_NONE) {

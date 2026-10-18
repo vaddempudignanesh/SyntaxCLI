@@ -29,7 +29,7 @@ public final class KeyboardConfig {
     public static final float SPECIAL_BORDER_WIDTH_DP    = 1f;
 
     public static final long REPEAT_START_MS             = 400L;
-    public static final long REPEAT_INTERVAL_MS          = 60L;
+    public static final long REPEAT_INTERVAL_MS          = 80L;
 
     public static final long SHIFT_DOUBLE_TAP_MS         = 300L;
 
@@ -48,6 +48,21 @@ public final class KeyboardConfig {
     public static final int COLOR_PREVIEW_BG             = 0xFF0A0A0A;
     public static final int COLOR_PREVIEW_TEXT           = 0xFF33FF33;
     public static final int COLOR_PREVIEW_BORDER         = 0xFF33FF33;
+
+    // ─── Emoji panel ─────────────────────────────────────────────────
+    public static final float EMOJI_PANEL_HEIGHT_DP      = 220f;
+    public static final float EMOJI_TEXT_SIZE_SP         = 28f;
+    public static final float EMOJI_CELL_SIZE_DP         = 48f;
+    public static final float EMOJI_CATEGORY_TEXT_SIZE_SP = 12f;
+    public static final int   COLOR_EMOJI_PANEL_BG       = 0xFF050505;
+    public static final int   COLOR_EMOJI_CATEGORY_TEXT  = 0xFF33FF33;
+    public static final int   COLOR_EMOJI_CATEGORY_SEL   = 0xFF1E4D1E;
+    public static final int   COLOR_EMOJI_TEXT           = 0xFFFFFFFF;
+
+    // ─── Gesture thresholds ──────────────────────────────────────────
+    public static final long  LONG_PRESS_ENTER_MS        = 350L;
+    public static final long  LONG_PRESS_SPACE_MS        = 350L;
+    public static final long  DOUBLE_TAP_SPACE_MS        = 300L;
 
     public static Float rowHeightOverride(int rowIndex) {
         return null;

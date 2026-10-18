@@ -298,6 +298,12 @@
         </activity>
 
         <activity
+            android:name=".ime.GestureActionEditorActivity"
+            android:exported="false"
+            android:label="Gesture Actions" />
+
+
+        <activity
             android:name=".alarm.TimerRingActivity"
             android:excludeFromRecents="true"
             android:exported="false"
