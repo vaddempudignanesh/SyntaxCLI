@@ -117,20 +117,15 @@
                 android:typeface="monospace"/>
         </LinearLayout>
 
-        <ScrollView
+        <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/calc_history_scroll"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
             android:paddingStart="12dp"
-            android:paddingEnd="12dp">
-
-            <LinearLayout
-                android:id="@+id/calc_history_list"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"/>
-        </ScrollView>
+            android:paddingEnd="12dp"
+            android:clipToPadding="false"
+            android:scrollbars="vertical" />
 
         <TextView
             android:id="@+id/calc_history_empty"
@@ -176,6 +171,5 @@
 
         <Button android:id="@+id/btn_0" style="@style/CalcButton" android:text="0" android:layout_columnSpan="2"/>
         <Button android:id="@+id/btn_decimal" style="@style/CalcButton" android:text="."/>
-        <Button android:id="@+id/btn_history_toggle" style="@style/CalcButtonOp" android:text="📜" android:visibility="gone"/>
     </GridLayout>
 </LinearLayout>

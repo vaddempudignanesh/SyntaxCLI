@@ -1,14 +1,18 @@
 package vaddempudi.gnanesh.syntaxcli.calculator;
 
 import android.content.SharedPreferences;
+import android.graphics.Typeface;
 import android.os.Bundle;
+import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
-import android.widget.LinearLayout;
-import android.widget.ScrollView;
+import android.view.ViewGroup;
 import android.widget.TextView;
 
+import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
 
 import java.text.DecimalFormat;
 import java.util.ArrayList;
@@ -23,19 +27,20 @@ public class CalculatorActivity extends AppCompatActivity {
     private static final int MAX_HISTORY = 500;
 
     // ── Engine state ──
-    private String currentInput = "";     // digits typed for the *current* operand
-    private String pendingOp = "";        // + - × ÷
-    private double accumulator = 0;       // running total
+    private String currentInput = "";
+    private String pendingOp = "";
+    private double accumulator = 0;
     private boolean hasAccumulator = false;
-    private boolean justEvaluated = false; // last action was "="
+    private boolean justEvaluated = false;
     private boolean operatorJustPressed = false;
 
     private final DecimalFormat fmt = new DecimalFormat("#.##########");
 
     // ── Views ──
     private TextView display, expression;
-    private LinearLayout historyPanel;
-    private ScrollView historyScroll;
+    private View historyPanel;
+    private RecyclerView historyList;
+    private HistoryAdapter historyAdapter;
     private TextView historyEmpty;
 
     // ── History ──
@@ -50,11 +55,16 @@ public class CalculatorActivity extends AppCompatActivity {
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         loadHistory();
 
-        display = findViewById(R.id.calc_display);
-        expression = findViewById(R.id.calc_expression);
-        historyPanel = findViewById(R.id.calc_history_panel);
-        historyScroll = findViewById(R.id.calc_history_scroll);
-        historyEmpty = findViewById(R.id.calc_history_empty);
+        display        = findViewById(R.id.calc_display);
+        expression     = findViewById(R.id.calc_expression);
+        historyPanel   = findViewById(R.id.calc_history_panel);
+        historyList    = findViewById(R.id.calc_history_scroll);
+        historyEmpty   = findViewById(R.id.calc_history_empty);
+
+        historyList.setLayoutManager(new LinearLayoutManager(this));
+        historyList.setItemAnimator(null);
+        historyAdapter = new HistoryAdapter();
+        historyList.setAdapter(historyAdapter);
 
         setupButtons();
         refreshDisplay();
@@ -73,7 +83,6 @@ public class CalculatorActivity extends AppCompatActivity {
     }
 
     private void saveHistory() {
-        // Trim to MAX_HISTORY most recent
         while (history.size() > MAX_HISTORY) history.remove(0);
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < history.size(); i++) {
@@ -84,39 +93,39 @@ public class CalculatorActivity extends AppCompatActivity {
     }
 
     private void addHistory(String entry) {
+        if (history.size() >= MAX_HISTORY) {
+            history.remove(0);
+            historyAdapter.notifyItemRemoved(0);
+        }
         history.add(entry);
+        historyAdapter.notifyItemInserted(history.size() - 1);
+        if (historyPanel.getVisibility() == View.VISIBLE) {
+            historyList.scrollToPosition(history.size() - 1);
+        }
+        updateEmptyState();
         saveHistory();
-        refreshHistory();
     }
 
     private void clearHistory() {
+        int n = history.size();
         history.clear();
+        historyAdapter.notifyItemRangeRemoved(0, n);
+        updateEmptyState();
         saveHistory();
-        refreshHistory();
     }
 
     private void refreshHistory() {
-        historyPanel.removeAllViews();
-
-        if (history.isEmpty()) {
-            historyEmpty.setVisibility(View.VISIBLE);
-            return;
+        historyAdapter.notifyDataSetChanged();
+        updateEmptyState();
+        if (!history.isEmpty()) {
+            historyList.scrollToPosition(history.size() - 1);
         }
-        historyEmpty.setVisibility(View.GONE);
+    }
 
-        // newest at the bottom, so the ScrollView auto-scrolls to show it
-        for (String line : history) {
-            TextView tv = new TextView(this);
-            tv.setText(line);
-            tv.setTextColor(0xFF00FF00);
-            tv.setTextSize(13);
-            tv.setTypeface(android.graphics.Typeface.MONOSPACE);
-            tv.setPadding(0, dp(6), 0, dp(6));
-            tv.setBackgroundColor(0x00000000);
-            historyPanel.addView(tv);
+    private void updateEmptyState() {
+        if (historyEmpty != null) {
+            historyEmpty.setVisibility(history.isEmpty() ? View.VISIBLE : View.GONE);
         }
-
-        historyScroll.post(() -> historyScroll.fullScroll(View.FOCUS_DOWN));
     }
 
     private void setupButtons() {
@@ -163,13 +172,10 @@ public class CalculatorActivity extends AppCompatActivity {
         animate(v);
     }
 
-
-
     // ═══════════════════ Core logic ═══════════════════
 
     private void appendNumber(String num) {
         if (justEvaluated) {
-            // starting a fresh calculation after "="
             currentInput = "";
             pendingOp = "";
             accumulator = 0;
@@ -207,7 +213,6 @@ public class CalculatorActivity extends AppCompatActivity {
 
     private void setOperator(String op) {
         if (justEvaluated) {
-            // chain from previous result: 2+3= then + → accumulator=5
             accumulator = parse(currentInput);
             hasAccumulator = true;
             pendingOp = op;
@@ -230,7 +235,6 @@ public class CalculatorActivity extends AppCompatActivity {
             currentInput = "";
             operatorJustPressed = true;
         } else if (hasAccumulator) {
-            // user just presses another operator — swap
             pendingOp = op;
             operatorJustPressed = true;
         }
@@ -239,11 +243,9 @@ public class CalculatorActivity extends AppCompatActivity {
 
     private void calculate() {
         if (!hasAccumulator || pendingOp.isEmpty()) {
-            // "=" with no pending op → just re-display
             return;
         }
 
-        // If operator was just pressed and nothing typed, use accumulator itself
         double operand = currentInput.isEmpty() ? accumulator : parse(currentInput);
         double result = apply(accumulator, operand, pendingOp);
 
@@ -283,7 +285,6 @@ public class CalculatorActivity extends AppCompatActivity {
 
     private void backspace() {
         if (justEvaluated) {
-            // treat backspace after = as starting a new input
             currentInput = "";
             justEvaluated = false;
         }
@@ -293,6 +294,7 @@ public class CalculatorActivity extends AppCompatActivity {
     }
 
     private void toggleHistory() {
+        if (historyPanel == null) return;
         if (historyPanel.getVisibility() == View.VISIBLE) {
             historyPanel.setVisibility(View.GONE);
         } else {
@@ -310,15 +312,12 @@ public class CalculatorActivity extends AppCompatActivity {
             display.setText(currentInput);
         }
 
-        // secondary expression line
         StringBuilder sb = new StringBuilder();
         if (hasAccumulator && !pendingOp.isEmpty()) {
             sb.append(format(accumulator)).append(" ").append(pendingOp);
             if (!currentInput.isEmpty() && !operatorJustPressed) {
                 sb.append(" ").append(currentInput);
             }
-        } else if (justEvaluated) {
-            sb.append(""); // result already in the main display
         }
         expression.setText(sb.toString());
     }
@@ -335,6 +334,42 @@ public class CalculatorActivity extends AppCompatActivity {
         String s = fmt.format(d);
         if (s.startsWith(".")) s = "0" + s;
         return s;
+    }
+
+    // ═══════════════════ Recycler adapter ═══════════════════
+
+    private class HistoryAdapter extends RecyclerView.Adapter<HistoryAdapter.VH> {
+
+        @NonNull @Override
+        public VH onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+            TextView tv = new TextView(CalculatorActivity.this);
+            tv.setTextColor(0xFF00FF00);
+            tv.setTextSize(13);
+            tv.setTypeface(Typeface.MONOSPACE);
+            tv.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+            tv.setPadding(dp(8), dp(6), dp(8), dp(6));
+            tv.setBackgroundColor(0x00000000);
+            tv.setLayoutParams(new RecyclerView.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT));
+            return new VH(tv);
+        }
+
+        @Override
+        public void onBindViewHolder(@NonNull VH h, int position) {
+            h.text.setText(history.get(position));
+        }
+
+        @Override
+        public int getItemCount() { return history.size(); }
+
+        class VH extends RecyclerView.ViewHolder {
+            final TextView text;
+            VH(@NonNull View v) {
+                super(v);
+                text = (TextView) v;
+            }
+        }
     }
 
     // ═══════════════════ Visual feedback ═══════════════════
