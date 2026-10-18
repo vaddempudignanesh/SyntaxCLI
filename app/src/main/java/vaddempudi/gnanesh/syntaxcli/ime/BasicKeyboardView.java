@@ -20,30 +20,6 @@ public class BasicKeyboardView extends View {
         void onKey(int code, String text);
     }
 
-    private static final int COLOR_BACKGROUND   = 0xFF000000;
-    private static final int COLOR_KEY          = 0xFF000000;
-    private static final int COLOR_KEY_PRESSED  = 0xFF1E4D1E;
-    private static final int COLOR_TEXT         = 0xFF33FF33;
-    private static final int COLOR_BORDER       = 0xFF1F3F1F;
-
-    private static final float GAP_DP                = 3f;
-    private static final float KEY_RADIUS_DP         = 6f;
-    private static final float TEXT_SIZE_SP          = 22f;
-    private static final float SPECIAL_TEXT_SIZE_SP  = 16f;
-
-    private static final float ROW_HEIGHT_DP         = 55f;
-    private static final float TOP_PADDING_DP        = 8f;
-    private static final float BOTTOM_PADDING_DP     = 8f;
-
-    private static final float ASDF_SIDE_PADDING_DP  = 17f;
-
-    private static final long REPEAT_START_MS        = 400L;
-    private static final long REPEAT_INTERVAL_MS     = 60L;
-
-    // --- bubble geometry (used by the overlay window) ---
-    static final float PREVIEW_SIZE_DP       = 62f;
-    static final float PREVIEW_GAP_DP        = 60f;
-
     private boolean shiftLocked = false;
 
     private final float density;
@@ -68,7 +44,6 @@ public class BasicKeyboardView extends View {
     private HitKey repeatKey = null;
     private Runnable repeatRunnable;
 
-    // set by the IME service so we can drive the overlay bubble
     private KeyBubbleOverlay bubbleOverlay;
 
     public BasicKeyboardView(Context context) {
@@ -80,14 +55,14 @@ public class BasicKeyboardView extends View {
 
         keyPaint.setStyle(Paint.Style.FILL);
         borderPaint.setStyle(Paint.Style.STROKE);
-        borderPaint.setStrokeWidth(density);
-        borderPaint.setColor(COLOR_BORDER);
+        borderPaint.setStrokeWidth(KeyboardConfig.KEY_BORDER_WIDTH_DP * density);
+        borderPaint.setColor(KeyboardConfig.COLOR_BORDER);
 
         textPaint.setTypeface(Typeface.MONOSPACE);
         textPaint.setTextAlign(Paint.Align.CENTER);
-        textPaint.setColor(COLOR_TEXT);
+        textPaint.setColor(KeyboardConfig.COLOR_TEXT);
 
-        setBackgroundColor(COLOR_BACKGROUND);
+        setBackgroundColor(KeyboardConfig.COLOR_BACKGROUND);
         setFocusable(true);
         setFocusableInTouchMode(true);
 
@@ -96,28 +71,22 @@ public class BasicKeyboardView extends View {
             public void run() {
                 if (repeatKey != null && listener != null) {
                     dispatch(repeatKey.key);
-                    repeatHandler.postDelayed(this, REPEAT_INTERVAL_MS);
+                    repeatHandler.postDelayed(this, KeyboardConfig.REPEAT_INTERVAL_MS);
                 }
             }
         };
     }
 
-    public void setBubbleOverlay(KeyBubbleOverlay overlay) {
-        this.bubbleOverlay = overlay;
-    }
+    public void setBubbleOverlay(KeyBubbleOverlay overlay) { this.bubbleOverlay = overlay; }
 
-    // ------------------------------------------------------------------
-    // State helpers
-    // ------------------------------------------------------------------
     public boolean isShiftLocked() { return shiftLocked; }
     public void setShiftLocked(boolean s) { shiftLocked = s; invalidate(); }
 
-    private static final long SHIFT_DOUBLE_TAP_MS = 300L;
     private long lastShiftTapMs = 0L;
 
     public boolean registerShiftTap() {
         long now = System.currentTimeMillis();
-        boolean second = (now - lastShiftTapMs) <= SHIFT_DOUBLE_TAP_MS;
+        boolean second = (now - lastShiftTapMs) <= KeyboardConfig.SHIFT_DOUBLE_TAP_MS;
         lastShiftTapMs = now;
         return second;
     }
@@ -159,19 +128,25 @@ public class BasicKeyboardView extends View {
 
     private int rowCount() { return rows().size(); }
 
+    private float rowHeightDp(int rowIndex) {
+        Float override = KeyboardConfig.rowHeightOverride(rowIndex);
+        return override != null ? override : KeyboardConfig.ROW_HEIGHT_DP;
+    }
+
     private int desiredHeightPx() {
         int rows = rowCount();
-        float rowsHeight = rows * ROW_HEIGHT_DP * density;
-        float top = TOP_PADDING_DP * density;
-        float bottom = BOTTOM_PADDING_DP * density;
-        return (int) (rowsHeight + top + bottom);
+        float total = 0f;
+        for (int r = 0; r < rows; r++) total += rowHeightDp(r);
+        total += (rows - 1) * KeyboardConfig.ROW_GAP_DP;
+        total += KeyboardConfig.KEYBOARD_TOP_PADDING_DP;
+        total += KeyboardConfig.KEYBOARD_BOTTOM_PADDING_DP;
+        return (int) (total * density);
     }
 
     @Override
     protected void onMeasure(int widthSpec, int heightSpec) {
         int width = MeasureSpec.getSize(widthSpec);
-        int height = desiredHeightPx();
-        setMeasuredDimension(width, height);
+        setMeasuredDimension(width, desiredHeightPx());
     }
 
     @Override
@@ -185,64 +160,67 @@ public class BasicKeyboardView extends View {
         int rows = rowCount();
         if (rows == 0) return;
 
-        float gap = GAP_DP * density;
+        float gap = KeyboardConfig.ROW_GAP_DP * density;
+        float keyGap = KeyboardConfig.KEY_HORIZONTAL_GAP_DP * density;
         float width = getWidth();
-        float height = getHeight();
-        if (width <= 0 || height <= 0) return;
+        if (width <= 0) return;
 
-        float top = TOP_PADDING_DP * density;
-        float bottom = BOTTOM_PADDING_DP * density;
-        float usableHeight = height - top - bottom;
-
-        float rowHeight = (usableHeight - gap * (rows - 1)) / rows;
+        float top = KeyboardConfig.KEYBOARD_TOP_PADDING_DP * density;
+        float y = top;
 
         for (int r = 0; r < rows; r++) {
             BasicKey[] row = rows().get(r);
+            float rowHeight = rowHeightDp(r) * density;
 
             float sideInset = 0f;
-            if (isAsdfRow(row)) sideInset = ASDF_SIDE_PADDING_DP * density;
+            if (isAsdfRow(row)) {
+                Float ov = KeyboardConfig.rowSidePaddingOverride(r);
+                sideInset = (ov != null ? ov : KeyboardConfig.ASDF_SIDE_PADDING_DP) * density;
+            }
 
             float totalWeight = 0f;
             for (BasicKey k : row) totalWeight += k.weight;
 
-            float rowTop = top + r * (rowHeight + gap);
-            float rowBottom = rowTop + rowHeight;
-
-            float usableWidth = width - sideInset * 2 - gap * (row.length - 1);
+            float usableWidth = width - sideInset * 2 - keyGap * (row.length - 1);
             float x = sideInset;
+
+            float rowTop    = y + KeyboardConfig.KEY_INNER_PADDING_TOP_DP * density;
+            float rowBottom = y + rowHeight - KeyboardConfig.KEY_INNER_PADDING_BOTTOM_DP * density;
 
             for (BasicKey k : row) {
                 float keyWidth = usableWidth * (k.weight / totalWeight);
                 RectF rect = new RectF(x, rowTop, x + keyWidth, rowBottom);
-                hitKeys.add(new HitKey(k, rect));
-                x += keyWidth + gap;
+                hitKeys.add(new HitKey(k, rect, r));
+                x += keyWidth + keyGap;
             }
+
+            y += rowHeight + gap;
         }
     }
 
     private boolean isAsdfRow(BasicKey[] row) {
         if (row == null || row.length != 9) return false;
-        if (!"a".equals(row[0].lower)) return false;
-        if (!"s".equals(row[1].lower)) return false;
-        if (!"d".equals(row[2].lower)) return false;
-        if (!"f".equals(row[3].lower)) return false;
-        if (!"g".equals(row[4].lower)) return false;
-        if (!"h".equals(row[5].lower)) return false;
-        if (!"j".equals(row[6].lower)) return false;
-        if (!"k".equals(row[7].lower)) return false;
-        if (!"l".equals(row[8].lower)) return false;
-        return true;
+        return "a".equals(row[0].lower)
+                && "s".equals(row[1].lower)
+                && "d".equals(row[2].lower)
+                && "f".equals(row[3].lower)
+                && "g".equals(row[4].lower)
+                && "h".equals(row[5].lower)
+                && "j".equals(row[6].lower)
+                && "k".equals(row[7].lower)
+                && "l".equals(row[8].lower);
     }
 
     @Override
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
 
-        float radius = KEY_RADIUS_DP * density;
+        float radius = KeyboardConfig.KEY_CORNER_RADIUS_DP * density;
 
         for (HitKey hk : hitKeys) {
-            if (hk == pressed) keyPaint.setColor(COLOR_KEY_PRESSED);
-            else               keyPaint.setColor(COLOR_KEY);
+            if (hk == pressed) keyPaint.setColor(KeyboardConfig.COLOR_KEY_PRESSED);
+            else if (hk.key.code != BasicKey.CODE_NONE) keyPaint.setColor(KeyboardConfig.COLOR_SPECIAL_KEY);
+            else keyPaint.setColor(KeyboardConfig.COLOR_KEY);
 
             keyRect.set(hk.rect);
             canvas.drawRoundRect(keyRect, radius, radius, keyPaint);
@@ -257,7 +235,18 @@ public class BasicKeyboardView extends View {
             if (label == null) label = "";
 
             boolean isSpecial = hk.key.code != BasicKey.CODE_NONE;
-            textPaint.setTextSize((isSpecial ? SPECIAL_TEXT_SIZE_SP : TEXT_SIZE_SP) * scaledDensity);
+            boolean isNav = hk.key.code == BasicKey.CODE_LEFT
+                    || hk.key.code == BasicKey.CODE_RIGHT;
+
+            float textSizeSp;
+            if (isNav) {
+                textSizeSp = KeyboardConfig.NAV_ICON_TEXT_SIZE_SP;
+            } else if (isSpecial) {
+                textSizeSp = KeyboardConfig.TEXT_SIZE_SPECIAL_SP;
+            } else {
+                textSizeSp = KeyboardConfig.TEXT_SIZE_LETTER_SP;
+            }
+            textPaint.setTextSize(textSizeSp * scaledDensity);
 
             Paint.FontMetrics fm = textPaint.getFontMetrics();
             float textHeight = fm.descent - fm.ascent;
@@ -280,7 +269,6 @@ public class BasicKeyboardView extends View {
                 }
                 return true;
             }
-
             case MotionEvent.ACTION_MOVE: {
                 HitKey hk = findKey(event.getX(), event.getY());
                 if (hk != pressed) {
@@ -293,7 +281,6 @@ public class BasicKeyboardView extends View {
                 }
                 return true;
             }
-
             case MotionEvent.ACTION_UP: {
                 HitKey hk = pressed;
                 pressed = null;
@@ -303,7 +290,6 @@ public class BasicKeyboardView extends View {
                 if (hk != null && listener != null) dispatch(hk.key);
                 return true;
             }
-
             case MotionEvent.ACTION_CANCEL: {
                 pressed = null;
                 invalidate();
@@ -326,24 +312,17 @@ public class BasicKeyboardView extends View {
             bubbleOverlay.hide();
             return;
         }
-
-        // Convert key rect to screen coordinates
         int[] loc = new int[2];
         getLocationOnScreen(loc);
-
-        float keyCenterX = hk.rect.centerX();
-        float keyTopY    = hk.rect.top;
-
-        int screenX = (int) (loc[0] + keyCenterX);
-        int screenY = (int) (loc[1] + keyTopY);
-
+        int screenX = (int) (loc[0] + hk.rect.centerX());
+        int screenY = (int) (loc[1] + hk.rect.top);
         bubbleOverlay.show(label, screenX, screenY);
     }
 
     private void startRepeat(HitKey hk) {
         stopRepeat();
         repeatKey = hk;
-        repeatHandler.postDelayed(repeatRunnable, REPEAT_START_MS);
+        repeatHandler.postDelayed(repeatRunnable, KeyboardConfig.REPEAT_START_MS);
     }
 
     private void stopRepeat() {
@@ -385,9 +364,11 @@ public class BasicKeyboardView extends View {
     private static final class HitKey {
         final BasicKey key;
         final RectF rect;
-        HitKey(BasicKey key, RectF rect) {
+        final int rowIndex;
+        HitKey(BasicKey key, RectF rect, int rowIndex) {
             this.key = key;
             this.rect = rect;
+            this.rowIndex = rowIndex;
         }
     }
 }

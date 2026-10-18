@@ -22,73 +22,110 @@ public final class BasicKeyboardLayout {
     }
 
     private void buildLetters() {
+
+        // Row 1 — numbers
         letterRows.add(new BasicKey[] {
                 sym("1"), sym("2"), sym("3"), sym("4"), sym("5"),
                 sym("6"), sym("7"), sym("8"), sym("9"), sym("0")
         });
+
+        // Row 2 — QWERTY top
         letterRows.add(new BasicKey[] {
                 key("q"), key("w"), key("e"), key("r"), key("t"),
                 key("y"), key("u"), key("i"), key("o"), key("p")
         });
+
+        // Row 3 — ASDF
         letterRows.add(new BasicKey[] {
                 key("a"), key("s"), key("d"), key("f"), key("g"),
                 key("h"), key("j"), key("k"), key("l")
         });
+
+        // Row 4 — SHIFT + ZXCV + BACKSPACE
         letterRows.add(new BasicKey[] {
                 new BasicKey(BasicKey.CODE_SHIFT, null, null, "\u21E7", 1.5f),
                 key("z"), key("x"), key("c"), key("v"),
                 key("b"), key("n"), key("m"),
                 new BasicKey(BasicKey.CODE_DELETE, null, null, "\u232B", 1.5f)
         });
+
+        // Row 5 — ?123, comma, space, dot, ENTER
         letterRows.add(new BasicKey[] {
                 new BasicKey(BasicKey.CODE_SYMBOLS, null, null, "?123", 1.5f),
-                new BasicKey(BasicKey.CODE_LEFT, null, null, "\u25C0", 1f),
+                sym(","),
                 new BasicKey(BasicKey.CODE_SPACE, null, null, "space", 4f),
-                new BasicKey(BasicKey.CODE_RIGHT, null, null, "\u25B6", 1f),
+                sym("."),
                 new BasicKey(BasicKey.CODE_ENTER, null, null, "\u23CE", 1.5f)
         });
     }
 
     private void buildSymbolPage1() {
+        // Row 1 — numbers
         symbolPage1.add(new BasicKey[] {
                 sym("1"), sym("2"), sym("3"), sym("4"), sym("5"),
                 sym("6"), sym("7"), sym("8"), sym("9"), sym("0")
         });
+
+        // Row 2 — @ # ₹ _ & - + ( ) /
         symbolPage1.add(new BasicKey[] {
-                sym("-"), sym("/"), sym(":"), sym(";"), sym("("),
-                sym(")"), sym("$"), sym("&"), sym("@"), sym("\"")
+                sym("@"), sym("#"), sym("\u20B9"), sym("_"), sym("&"),
+                sym("-"), sym("+"), sym("("), sym(")"), sym("/")
         });
+
+        // Row 3 — "=\<" (2 buttons wide), space, " * " ' : ; ! ? " (last button backspace)
+        // First button: "=\<"  →  CODE_SYM_PAGE_2 (opens symbols page 2)
+        // Weight distribution: 2 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 (9 slots)
+        //   First button   = 2 slots   (opens page 2)
+        //   Second button  = 1/3 slot?  No — "=\<" is the first button and it
+        //                     occupies the full width of one button PLUS 1/3 of
+        //                     the second button. To express that as a weight,
+        //                     we use a first-button weight of 1.34f and the
+        //                     back button weight of 1.66f (so both look correct
+        //                     against the rest of the row).
         symbolPage1.add(new BasicKey[] {
-                sym("."), sym(","), sym("?"), sym("!"), sym("'"),
-                sym("*"), sym("#"), sym("%"), sym("+"), sym("=")
+                new BasicKey(BasicKey.CODE_SYM_PAGE_2, null, null, "=\\<", 1.34f),
+                sym("*"), sym("\""), sym("'"), sym(":"),
+                sym(";"), sym("!"), sym("?"),
+                new BasicKey(BasicKey.CODE_DELETE, null, null, "\u232B", 1.66f)
         });
+
+        // Row 4 — ABC, comma, space, period, ENTER
         symbolPage1.add(new BasicKey[] {
-                new BasicKey(BasicKey.CODE_SYM_PAGE_2, null, null, "=\\<", 1.5f),
-                new BasicKey(BasicKey.CODE_DELETE, null, null, "\u232B", 1.5f),
-                new BasicKey(BasicKey.CODE_SPACE, null, null, "space", 4f),
                 new BasicKey(BasicKey.CODE_ABC, null, null, "ABC", 1.5f),
+                sym(","),
+                new BasicKey(BasicKey.CODE_SPACE, null, null, "space", 4f),
+                sym("."),
                 new BasicKey(BasicKey.CODE_ENTER, null, null, "\u23CE", 1.5f)
         });
     }
 
     private void buildSymbolPage2() {
+        // Row 1 — ~ ` | • √ π ÷ × ¶ ∆
         symbolPage2.add(new BasicKey[] {
                 sym("~"), sym("`"), sym("|"), sym("\u2022"), sym("\u221A"),
                 sym("\u03C0"), sym("\u00F7"), sym("\u00D7"), sym("\u00B6"), sym("\u2206")
         });
+
+        // Row 2 — € $ ₹ ^ ° = { } "
         symbolPage2.add(new BasicKey[] {
-                sym("\u00A3"), sym("\u00A2"), sym("\u20AC"), sym("\u00A5"), sym("^"),
-                sym("\u00B0"), sym("{"), sym("}"), sym("["), sym("]")
+                sym("\u20AC"), sym("$"), sym("\u20B9"), sym("^"), sym("\u00B0"),
+                sym("="), sym("{"), sym("}"), sym("\""), sym("\\")
         });
+
+        // Row 3 — ?123 (1/3 width), %, ©, ®, ™, c/o, [, ], ⌫
+        //   First button  = 1/3 of row        → CODE_SYM_PAGE_1 (returns to page 1)
+        //   Last button   = backspace same width
         symbolPage2.add(new BasicKey[] {
-                sym("\u00A9"), sym("\u00AE"), sym("\u00A7"), sym("\u00B5"), sym("<"),
-                sym(">"), sym("\u00AB"), sym("\u00BB"), sym("\u00BF"), sym("\u00A1")
+                new BasicKey(BasicKey.CODE_SYM_PAGE_1, null, null, "?123", 1.34f),
+                sym("%"), sym("\u00A9"), sym("\u00AE"), sym("\u2122"),
+                sym("\u2105"), sym("["), sym("]"),
+                new BasicKey(BasicKey.CODE_DELETE, null, null, "\u232B", 1.66f)
         });
+
+        // Row 4 — ABC, space, ENTER (>) — matching page 1 action row
         symbolPage2.add(new BasicKey[] {
-                new BasicKey(BasicKey.CODE_SYM_PAGE_3, null, null, "2/3", 1.5f),
-                new BasicKey(BasicKey.CODE_DELETE, null, null, "\u232B", 1.5f),
-                new BasicKey(BasicKey.CODE_SPACE, null, null, "space", 4f),
                 new BasicKey(BasicKey.CODE_ABC, null, null, "ABC", 1.5f),
+                new BasicKey(BasicKey.CODE_SPACE, null, null, "space", 4f),
                 new BasicKey(BasicKey.CODE_ENTER, null, null, "\u23CE", 1.5f)
         });
     }

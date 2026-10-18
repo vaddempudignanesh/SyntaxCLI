@@ -2,15 +2,18 @@ package vaddempudi.gnanesh.syntaxcli.ime;
 
 import android.content.Context;
 import android.graphics.PixelFormat;
+import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.util.DisplayMetrics;
+import android.util.Log;
 import android.view.Gravity;
-import android.view.View;
 import android.view.WindowManager;
 import android.widget.TextView;
 
 public class KeyBubbleOverlay {
+
+    private static final String TAG = "KB-BUBBLE";
 
     private final Context context;
     private final WindowManager windowManager;
@@ -26,19 +29,22 @@ public class KeyBubbleOverlay {
 
         DisplayMetrics dm = this.context.getResources().getDisplayMetrics();
         float density = dm.density;
-        sizePx = (int) (BasicKeyboardView.PREVIEW_SIZE_DP * density);
+
+        sizePx = (int) (KeyboardConfig.PREVIEW_SIZE_DP * density);
 
         bubbleView = new TextView(this.context);
         bubbleView.setGravity(Gravity.CENTER);
-        bubbleView.setTypeface(android.graphics.Typeface.MONOSPACE);
-        bubbleView.setTextColor(0xFF33FF33);
-        bubbleView.setTextSize(34f);
+        bubbleView.setTypeface(Typeface.MONOSPACE);
+        bubbleView.setTextColor(KeyboardConfig.COLOR_PREVIEW_TEXT);
+        bubbleView.setTextSize(KeyboardConfig.PREVIEW_TEXT_SIZE_SP);
         bubbleView.setIncludeFontPadding(false);
 
         GradientDrawable bg = new GradientDrawable();
-        bg.setColor(0xFF0A0A0A);
-        bg.setCornerRadius(10 * density);
-        bg.setStroke((int) (1.5f * density), 0xFF33FF33);
+        bg.setColor(KeyboardConfig.COLOR_PREVIEW_BG);
+        bg.setCornerRadius(KeyboardConfig.PREVIEW_CORNER_RADIUS_DP * density);
+        bg.setStroke(
+                (int) (KeyboardConfig.PREVIEW_BORDER_WIDTH_DP * density),
+                KeyboardConfig.COLOR_PREVIEW_BORDER);
         bubbleView.setBackground(bg);
 
         int type;
@@ -63,17 +69,15 @@ public class KeyBubbleOverlay {
 
         DisplayMetrics dm = context.getResources().getDisplayMetrics();
         float density = dm.density;
-        int gap = (int) (BasicKeyboardView.PREVIEW_GAP_DP * density);
+        int gap = (int) (KeyboardConfig.PREVIEW_GAP_DP * density);
 
         int x = anchorCenterX - sizePx / 2;
         int y = anchorTopY - sizePx - gap;
 
-        // Keep on screen horizontally
         int screenW = dm.widthPixels;
         if (x < 0) x = 0;
         if (x + sizePx > screenW) x = screenW - sizePx;
 
-        // If it would go above the top of the screen, drop it below the key
         if (y < 0) {
             y = anchorTopY + gap;
         }
@@ -91,7 +95,7 @@ public class KeyBubbleOverlay {
                 showing = true;
             }
         } catch (Exception e) {
-            android.util.Log.e("KB-BUBBLE", "overlay show failed", e);
+            Log.e(TAG, "overlay show failed", e);
         }
     }
 
@@ -99,7 +103,7 @@ public class KeyBubbleOverlay {
         if (windowManager == null || !showing) return;
         try {
             windowManager.removeView(bubbleView);
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) { }
         showing = false;
     }
 }
