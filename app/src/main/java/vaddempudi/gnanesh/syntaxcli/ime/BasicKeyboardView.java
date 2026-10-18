@@ -236,16 +236,23 @@ public class BasicKeyboardView extends View {
         super.onDraw(canvas);
 
         ImeColorStore colors = ImeColorStore.get(getContext());
-        int keyFill = colors.getBgColor();
+        int keyFill     = colors.getBgColor();
+        int textColor   = colors.getTextColor();
+
+        // Special keys (SHIFT, ⌫, ENTER, ?123) = darker than the base background
         int specialFill = blend(keyFill, 0xFF000000, 0.35f);
-        int pressedFill = blend(keyFill, 0xFF33FF33, 0.35f);
+
+        // Pressed key = tinted towards the user's TEXT color
+        int pressedFill = blend(keyFill, textColor, 0.45f);
+
+        textPaint.setColor(textColor);
 
         float radius = KeyboardConfig.KEY_CORNER_RADIUS_DP * density;
 
         for (HitKey hk : hitKeys) {
-            if (hk == pressed) keyPaint.setColor(pressedFill);
-            else if (hk.key.code != BasicKey.CODE_NONE) keyPaint.setColor(specialFill);
-            else keyPaint.setColor(keyFill);
+            if (hk == pressed)                              keyPaint.setColor(pressedFill);
+            else if (hk.key.code != BasicKey.CODE_NONE)     keyPaint.setColor(specialFill);
+            else                                            keyPaint.setColor(keyFill);
 
             keyRect.set(hk.rect);
             canvas.drawRoundRect(keyRect, radius, radius, keyPaint);
@@ -264,13 +271,9 @@ public class BasicKeyboardView extends View {
                     || hk.key.code == BasicKey.CODE_RIGHT;
 
             float textSizeSp;
-            if (isNav) {
-                textSizeSp = KeyboardConfig.NAV_ICON_TEXT_SIZE_SP;
-            } else if (isSpecial) {
-                textSizeSp = KeyboardConfig.TEXT_SIZE_SPECIAL_SP;
-            } else {
-                textSizeSp = KeyboardConfig.TEXT_SIZE_LETTER_SP;
-            }
+            if (isNav)          textSizeSp = KeyboardConfig.NAV_ICON_TEXT_SIZE_SP;
+            else if (isSpecial) textSizeSp = KeyboardConfig.TEXT_SIZE_SPECIAL_SP;
+            else                textSizeSp = KeyboardConfig.TEXT_SIZE_LETTER_SP;
             textPaint.setTextSize(textSizeSp * scaledDensity);
 
             Paint.FontMetrics fm = textPaint.getFontMetrics();

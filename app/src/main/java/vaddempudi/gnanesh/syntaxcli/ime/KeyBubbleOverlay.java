@@ -20,6 +20,7 @@ public class KeyBubbleOverlay {
     private final TextView bubbleView;
     private final WindowManager.LayoutParams params;
     private final int sizePx;
+    private final float density;
     private boolean showing = false;
 
     public KeyBubbleOverlay(Context context) {
@@ -28,26 +29,15 @@ public class KeyBubbleOverlay {
                 (WindowManager) this.context.getSystemService(Context.WINDOW_SERVICE);
 
         DisplayMetrics dm = this.context.getResources().getDisplayMetrics();
-        float density = dm.density;
-
-        ImeColorStore colors = ImeColorStore.get(this.context);
+        this.density = dm.density;
 
         sizePx = (int) (KeyboardConfig.PREVIEW_SIZE_DP * density);
 
         bubbleView = new TextView(this.context);
         bubbleView.setGravity(Gravity.CENTER);
         bubbleView.setTypeface(Typeface.MONOSPACE);
-        bubbleView.setTextColor(colors.getTextColor());
         bubbleView.setTextSize(KeyboardConfig.PREVIEW_TEXT_SIZE_SP);
         bubbleView.setIncludeFontPadding(false);
-
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(colors.getBgColor());
-        bg.setCornerRadius(KeyboardConfig.PREVIEW_CORNER_RADIUS_DP * density);
-        bg.setStroke(
-                (int) (KeyboardConfig.PREVIEW_BORDER_WIDTH_DP * density),
-                colors.getTextColor());
-        bubbleView.setBackground(bg);
 
         int type;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -66,11 +56,30 @@ public class KeyBubbleOverlay {
         params.gravity = Gravity.TOP | Gravity.START;
     }
 
+    /** Re-applies the current theme colors from ImeColorStore. */
+    private void applyTheme() {
+        ImeColorStore colors = ImeColorStore.get(context);
+        int textColor = colors.getTextColor();
+        int bgColor   = colors.getBgColor();
+
+        bubbleView.setTextColor(textColor);
+
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(bgColor);
+        bg.setCornerRadius(KeyboardConfig.PREVIEW_CORNER_RADIUS_DP * density);
+        bg.setStroke(
+                (int) (KeyboardConfig.PREVIEW_BORDER_WIDTH_DP * density),
+                textColor);
+        bubbleView.setBackground(bg);
+    }
+
     public void show(String label, int anchorCenterX, int anchorTopY) {
         if (windowManager == null) return;
 
+        // ★ Always pick up the latest theme colors before showing.
+        applyTheme();
+
         DisplayMetrics dm = context.getResources().getDisplayMetrics();
-        float density = dm.density;
         int gap = (int) (KeyboardConfig.PREVIEW_GAP_DP * density);
 
         int x = anchorCenterX - sizePx / 2;
