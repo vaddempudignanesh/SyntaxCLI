@@ -1,24 +1,60 @@
+<div align="center">
+
 # SyntaxCLI
+
+<a href="https://github.com/vaddempudignanesh/AURA-CTRL-LSPosed/">
+  <img src="https://img.shields.io/badge/Also%20by%20me-AURA--CTRL--LSPosed-blue?style=for-the-badge" alt="AURA-CTRL-LSPosed">
+</a>
+
+<br><br>
+
+Hi there, I am **Vaddempudi Gnanesh**, creator of [AURA-CTRL-LSPosed](https://github.com/vaddempudignanesh/AURA-CTRL-LSPosed/).
+
+<br>
+
+I am introducing my next project:
+
+<br><br>
+
+<img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/ic_launcher-playstore.png" alt="SyntaxCLI Icon" width="180">
+
+<br><br>
+
+# **SyntaxCLI**
+
+<br>
 
 **Hacker-styled, Linux-flavored CLI launcher for Android.**
 
-Hi there, I am **Vaddempudi Gnanesh**, creator of [AURA-CTRL-LSPosed](https://github.com/vaddempudignanesh/AURA-CTRL-LSPosed/). SyntaxCLI is my next project: a full terminal-inspired Android experience that replaces the stock launcher, keyboard, and media apps with a single cohesive, green-on-black command-line interface.
+<br>
 
-Everything you can do on a phone, you can do here — only it looks like you're typing commands into a shell on a black screen.
+<img src="https://img.shields.io/badge/Size-2.7%20MB-green?style=flat-square" alt="Size">
+<img src="https://img.shields.io/badge/Platform-Android%208.0%2B-green?style=flat-square" alt="Platform">
+<img src="https://img.shields.io/badge/License-Open%20Source-green?style=flat-square" alt="License">
+
+</div>
 
 ---
 
 ## Features
+
+<table>
+<tr>
+<td width="50%" valign="top">
 
 - **Launcher** — full home-screen replacement with a Linux-style prompt
 - **CLI Launcher** — launch any app by typing its name
 - **Gallery** — image and video browser with albums, favorites, and a Bin
 - **Music Player** — full library, playlists, loop modes, notification controls
 - **Browser** — built-in WebView browser with downloads, cookies, dark mode
-- **File Manager** — full filesystem access, root explorer, copy, move, zip, extract
+- **File Manager** — full filesystem access, copy, move, zip, extract
 - **DOCX Reader** — in-house Word document renderer with images and zoom
 - **PDF Reader** — in-house PDF renderer with page cache and pinch zoom
-- **Root Explorer** — browse `/system` and other protected paths with `su`
+- **Root Explorer** — browse `/system` and protected paths with `su`
+
+</td>
+<td width="50%" valign="top">
+
 - **Multi-File Reader** — open any text, markdown, XML, or config file
 - **Calculator** — with persistent scrollable history
 - **Alarm** — schedule and re-arm after reboot
@@ -27,209 +63,310 @@ Everything you can do on a phone, you can do here — only it looks like you're 
 - **Keyboard / IME** — full custom keyboard with gesture triggers
 - **Gesture Triggers** — launch apps or run actions from swipe patterns
 - **Calendar** — CLI-styled calendar integrated into the launcher
+- **Emoji Keyboard** — full emoji picker built into the IME
+
+</td>
+</tr>
+</table>
 
 ---
 
 ## Showcase
 
 ### Launcher
-<p align="center">
-  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/launcher1.png" alt="Launcher" width="32%">
-  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/launcher2.png" alt="Launcher Prompt" width="32%">
-  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/launcher3.gif" alt="Launcher Animation" width="32%">
-</p>
 
-<p align="center">
-  <span style="color:#e63946;font-weight:bold;">Launcher</span>
-  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-  <span style="color:#e63946;font-weight:bold;">Command Prompt</span>
-  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-  <span style="color:#e63946;font-weight:bold;">Cyberpunk Animation</span>
-</p>
+<div align="center">
 
-<p align="center">
-  <span style="color:#2ecc40;">Full home-screen replacement with a Linux-style prompt.</span>
-  &nbsp;&nbsp;
-  <span style="color:#2ecc40;">Type any app name to launch it directly.</span>
-  &nbsp;&nbsp;
-  <span style="color:#2ecc40;">Cyberpunk-2077-inspired boot animation on launch.</span>
-</p>
+<table>
+<tr>
+<td align="center" width="33%">
+  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/launcher1.png" alt="Launcher" width="100%">
+</td>
+<td align="center" width="33%">
+  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/launcher2.png" alt="Command Prompt" width="100%">
+</td>
+<td align="center" width="33%">
+  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/launcher3.gif" alt="Cyberpunk Animation" width="100%">
+</td>
+</tr>
+<tr>
+<td align="center"><b><span style="color:#e63946;">Launcher</span></b></td>
+<td align="center"><b><span style="color:#e63946;">Command Prompt</span></b></td>
+<td align="center"><b><span style="color:#e63946;">Cyberpunk Animation</span></b></td>
+</tr>
+<tr>
+<td align="center"><span style="color:#2ecc40;">Full home-screen replacement with a Linux-style prompt.</span></td>
+<td align="center"><span style="color:#2ecc40;">Type any app name to launch it directly.</span></td>
+<td align="center"><span style="color:#2ecc40;">Cyberpunk-2077-inspired boot animation.</span></td>
+</tr>
+</table>
+
+</div>
 
 ---
 
 ### Browser
-<p align="center">
-  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/browser1.png" alt="Browser" width="49%">
-  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/browser2.png" alt="Browser Tabs" width="49%">
-</p>
 
-<p align="center">
-  <span style="color:#e63946;font-weight:bold;">Browser</span>
-  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-  <span style="color:#e63946;font-weight:bold;">Tab Management</span>
-</p>
+<div align="center">
 
-<p align="center">
-  <span style="color:#2ecc40;">WebView browser with dark mode, cookie-aware sessions, and downloads.</span>
-  &nbsp;&nbsp;
-  <span style="color:#2ecc40;">Swipeable tab sheet with incognito isolation.</span>
-</p>
+<table>
+<tr>
+<td align="center" width="50%">
+  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/browser1.png" alt="Browser" width="100%">
+</td>
+<td align="center" width="50%">
+  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/browser2.png" alt="Tab Management" width="100%">
+</td>
+</tr>
+<tr>
+<td align="center"><b><span style="color:#e63946;">Browser</span></b></td>
+<td align="center"><b><span style="color:#e63946;">Tab Management</span></b></td>
+</tr>
+<tr>
+<td align="center"><span style="color:#2ecc40;">WebView browser with dark mode, cookie-aware sessions, and downloads.</span></td>
+<td align="center"><span style="color:#2ecc40;">Swipeable tab sheet with incognito isolation.</span></td>
+</tr>
+</table>
+
+</div>
 
 ---
 
 ### Downloads
-<p align="center">
-  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/downloads.png" alt="Downloads" width="49%">
-  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/filemanager.png" alt="File Manager" width="49%">
-</p>
 
-<p align="center">
-  <span style="color:#e63946;font-weight:bold;">Downloads</span>
-  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-  <span style="color:#e63946;font-weight:bold;">File Manager</span>
-</p>
+<div align="center">
 
-<p align="center">
-  <span style="color:#2ecc40;">Live progress, pause, resume, cancel — never a stale entry again.</span>
-  &nbsp;&nbsp;
-  <span style="color:#2ecc40;">Two-pane filesystem browser with thumbnails and categories.</span>
-</p>
+<table>
+<tr>
+<td align="center" width="70%">
+  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/downloads.png" alt="Downloads" width="100%">
+</td>
+</tr>
+<tr>
+<td align="center"><b><span style="color:#e63946;">Downloads</span></b></td>
+</tr>
+<tr>
+<td align="center"><span style="color:#2ecc40;">Live progress, pause, resume, and cancel — never a stale entry again. Cookie and session support for authenticated downloads.</span></td>
+</tr>
+</table>
 
----
-
-### File Manager & Root Explorer
-<p align="center">
-  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/filemanager2.png" alt="Root Explorer" width="49%">
-  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/pdf-viewer.png" alt="PDF Viewer" width="49%">
-</p>
-
-<p align="center">
-  <span style="color:#e63946;font-weight:bold;">Root Explorer</span>
-  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-  <span style="color:#e63946;font-weight:bold;">PDF Viewer</span>
-</p>
-
-<p align="center">
-  <span style="color:#2ecc40;">Browse `/system` and protected paths with `su`.</span>
-  &nbsp;&nbsp;
-  <span style="color:#2ecc40;">In-house renderer with LRU page cache and pinch zoom.</span>
-</p>
+</div>
 
 ---
 
-### DOCX Reader
-<p align="center">
-  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/Docx-reader.png" alt="DOCX Reader" width="70%">
-</p>
+### File Manager
 
-<p align="center">
-  <span style="color:#e63946;font-weight:bold;">DOCX Reader</span>
-</p>
+<div align="center">
 
-<p align="center">
-  <span style="color:#2ecc40;">In-house Word document renderer with image extraction, sampled decoding, and a single unified zoom-and-scroll engine.</span>
-</p>
+<table>
+<tr>
+<td align="center" width="50%">
+  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/filemanager.png" alt="File Manager" width="100%">
+</td>
+<td align="center" width="50%">
+  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/filemanager2.png" alt="Root Explorer" width="100%">
+</td>
+</tr>
+<tr>
+<td align="center"><b><span style="color:#e63946;">File Manager</span></b></td>
+<td align="center"><b><span style="color:#e63946;">Root Explorer</span></b></td>
+</tr>
+<tr>
+<td align="center"><span style="color:#2ecc40;">Two-pane filesystem browser with thumbnails, categories, and a built-in text editor.</span></td>
+<td align="center"><span style="color:#2ecc40;">Browse `/system` and protected paths with `su`.</span></td>
+</tr>
+</table>
+
+</div>
+
+---
+
+### PDF & DOCX Readers
+
+<div align="center">
+
+<table>
+<tr>
+<td align="center" width="50%">
+  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/pdf-viewer.png" alt="PDF Viewer" width="100%">
+</td>
+<td align="center" width="50%">
+  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/Docx-reader.png" alt="DOCX Reader" width="100%">
+</td>
+</tr>
+<tr>
+<td align="center"><b><span style="color:#e63946;">PDF Viewer</span></b></td>
+<td align="center"><b><span style="color:#e63946;">DOCX Reader</span></b></td>
+</tr>
+<tr>
+<td align="center"><span style="color:#2ecc40;">In-house renderer with LRU page cache, pinch zoom, and page slider.</span></td>
+<td align="center"><span style="color:#2ecc40;">In-house Word renderer with image extraction and unified zoom engine.</span></td>
+</tr>
+</table>
+
+</div>
 
 ---
 
 ### Gallery & Video Player
-<p align="center">
-  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/videoplayer.png" alt="Video Player" width="49%">
-  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/music-player.png" alt="Music Player" width="49%">
-</p>
 
-<p align="center">
-  <span style="color:#e63946;font-weight:bold;">Video Player</span>
-  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-  <span style="color:#e63946;font-weight:bold;">Music Player</span>
-</p>
+<div align="center">
 
-<p align="center">
-  <span style="color:#2ecc40;">Battery-friendly playback with double-tap seek and gesture volume/brightness.</span>
-  &nbsp;&nbsp;
-  <span style="color:#2ecc40;">Full library, playlists, loop modes, noise-aware pause, hardware key controls.</span>
-</p>
+<table>
+<tr>
+<td align="center" width="50%">
+  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/gallery.png" alt="Gallery" width="100%">
+</td>
+<td align="center" width="50%">
+  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/videoplayer.png" alt="Video Player" width="100%">
+</td>
+</tr>
+<tr>
+<td align="center"><b><span style="color:#e63946;">Gallery</span></b></td>
+<td align="center"><b><span style="color:#e63946;">Video Player</span></b></td>
+</tr>
+<tr>
+<td align="center"><span style="color:#2ecc40;">Grid view with albums, favorites, a Bin, and drag-to-select multi-item operations.</span></td>
+<td align="center"><span style="color:#2ecc40;">Battery-friendly playback with double-tap seek and gesture volume/brightness.</span></td>
+</tr>
+</table>
+
+</div>
+
+---
+
+### Music Player
+
+<div align="center">
+
+<table>
+<tr>
+<td align="center" width="70%">
+  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/music-player.png" alt="Music Player" width="100%">
+</td>
+</tr>
+<tr>
+<td align="center"><b><span style="color:#e63946;">Music Player</span></b></td>
+</tr>
+<tr>
+<td align="center"><span style="color:#2ecc40;">Full library, playlists, loop modes, noise-aware pause, hardware key controls, and a battery-optimized playback service.</span></td>
+</tr>
+</table>
+
+</div>
 
 ---
 
 ### Keyboard / IME
-<p align="center">
-  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/keyboard-customization1.png" alt="Keyboard Customization" width="32%">
-  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/keyboard-customization2.png" alt="Keyboard Customization" width="32%">
-  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/keyboard-customization3.png" alt="Keyboard Customization" width="32%">
-</p>
 
-<p align="center">
-  <span style="color:#e63946;font-weight:bold;">Keyboard Customization</span>
-  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-  <span style="color:#e63946;font-weight:bold;">Custom Controls</span>
-</p>
+<div align="center">
 
-<p align="center">
-  <span style="color:#2ecc40;">Full color and layout customization with live preview.</span>
-  &nbsp;&nbsp;
-  <span style="color:#2ecc40;">Green-on-black keys in the standard QWERTY layout everyone knows.</span>
-</p>
+<table>
+<tr>
+<td align="center" width="33%">
+  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/keyboard-customization1.png" alt="Keyboard 1" width="100%">
+</td>
+<td align="center" width="33%">
+  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/keyboard-customization2.png" alt="Keyboard 2" width="100%">
+</td>
+<td align="center" width="33%">
+  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/keyboard-customization3.png" alt="Keyboard 3" width="100%">
+</td>
+</tr>
+<tr>
+<td align="center"><b><span style="color:#e63946;">Keyboard Customization</span></b></td>
+<td align="center"><b><span style="color:#e63946;">Keyboard Layout</span></b></td>
+<td align="center"><b><span style="color:#e63946;">Keyboard Controls</span></b></td>
+</tr>
+<tr>
+<td align="center"><span style="color:#2ecc40;">Full color customization with live preview.</span></td>
+<td align="center"><span style="color:#2ecc40;">Standard QWERTY layout used by popular IMEs.</span></td>
+<td align="center"><span style="color:#2ecc40;">Green-on-black terminal styling on every key.</span></td>
+</tr>
+</table>
+
+</div>
 
 ---
 
 ### Emoji Keyboard & Gesture Triggers
-<p align="center">
-  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/emoji-keyboard.png" alt="Emoji Keyboard" width="49%">
-  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/custom-keybrd-controls.png" alt="Keyboard Controls" width="49%">
-</p>
 
-<p align="center">
-  <span style="color:#e63946;font-weight:bold;">Emoji Keyboard</span>
-  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-  <span style="color:#e63946;font-weight:bold;">Gesture Triggers</span>
-</p>
+<div align="center">
 
-<p align="center">
-  <span style="color:#2ecc40;">Full emoji picker integrated into the SyntaxCLI keyboard.</span>
-  &nbsp;&nbsp;
-  <span style="color:#2ecc40;">Assign apps or actions to swipe patterns directly on the keyboard.</span>
-</p>
+<table>
+<tr>
+<td align="center" width="50%">
+  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/emoji-keyboard.png" alt="Emoji Keyboard" width="100%">
+</td>
+<td align="center" width="50%">
+  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/custom-keybrd-controls.png" alt="Gesture Triggers" width="100%">
+</td>
+</tr>
+<tr>
+<td align="center"><b><span style="color:#e63946;">Emoji Keyboard</span></b></td>
+<td align="center"><b><span style="color:#e63946;">Gesture Triggers</span></b></td>
+</tr>
+<tr>
+<td align="center"><span style="color:#2ecc40;">Full emoji picker integrated into the SyntaxCLI keyboard.</span></td>
+<td align="center"><span style="color:#2ecc40;">Assign apps or actions to swipe patterns directly on the keyboard.</span></td>
+</tr>
+</table>
+
+</div>
 
 ---
 
 ### Calculator, Alarm & Stopwatch
-<p align="center">
-  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/calculator.png" alt="Calculator" width="32%">
-  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/alarm.png" alt="Alarm" width="32%">
-  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/stopwatch.png" alt="Stopwatch" width="32%">
-</p>
 
-<p align="center">
-  <span style="color:#e63946;font-weight:bold;">Calculator</span>
-  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-  <span style="color:#e63946;font-weight:bold;">Alarm</span>
-  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-  <span style="color:#e63946;font-weight:bold;">Stopwatch</span>
-</p>
+<div align="center">
 
-<p align="center">
-  <span style="color:#2ecc40;">CLI-styled calculator with persistent, scrollable history.</span>
-  &nbsp;&nbsp;
-  <span style="color:#2ecc40;">Scheduled alarms that re-arm after reboot with a foreground service.</span>
-  &nbsp;&nbsp;
-  <span style="color:#2ecc40;">Precise stopwatch with lap tracking.</span>
-</p>
+<table>
+<tr>
+<td align="center" width="33%">
+  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/calculator.png" alt="Calculator" width="100%">
+</td>
+<td align="center" width="33%">
+  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/alarm.png" alt="Alarm" width="100%">
+</td>
+<td align="center" width="33%">
+  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/stopwatch.png" alt="Stopwatch" width="100%">
+</td>
+</tr>
+<tr>
+<td align="center"><b><span style="color:#e63946;">Calculator</span></b></td>
+<td align="center"><b><span style="color:#e63946;">Alarm</span></b></td>
+<td align="center"><b><span style="color:#e63946;">Stopwatch</span></b></td>
+</tr>
+<tr>
+<td align="center"><span style="color:#2ecc40;">CLI-styled calculator with persistent scrollable history.</span></td>
+<td align="center"><span style="color:#2ecc40;">Scheduled alarms that re-arm after reboot.</span></td>
+<td align="center"><span style="color:#2ecc40;">Precise stopwatch with lap tracking.</span></td>
+</tr>
+</table>
+
+</div>
 
 ---
 
 ### Timer
-<p align="center">
-  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/timer.png" alt="Timer" width="70%">
-</p>
 
-<p align="center">
-  <span style="color:#e63946;font-weight:bold;">Timer</span>
-</p>
+<div align="center">
 
-<p align="center">
-  <span style="color:#2ecc40;">Countdown timer with a full-screen ring activity that survives backgrounding.</span>
-</p>
+<table>
+<tr>
+<td align="center" width="70%">
+  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/timer.png" alt="Timer" width="100%">
+</td>
+</tr>
+<tr>
+<td align="center"><b><span style="color:#e63946;">Timer</span></b></td>
+</tr>
+<tr>
+<td align="center"><span style="color:#2ecc40;">Countdown timer with a full-screen ring activity that survives backgrounding.</span></td>
+</tr>
+</table>
+
+</div>
 
 ---
 
