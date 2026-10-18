@@ -1154,9 +1154,10 @@ public class MusicPlayerActivity extends AppCompatActivity {
             try { player.release(); } catch (Exception ignored) { }
             player = null;
         }
-        try {
-            stopService(new Intent(this, MusicPlaybackService.class));
-        } catch (Exception ignored) { }
+        // Do not stop MusicPlaybackService here. This method is also called
+        // during every track change, so stopping the service here destroys
+        // its MediaSession and removes the notification between songs.
+        // Keep the foreground service alive while switching tracks.
     }
 
     private void handleControlCommand(String cmd) {
