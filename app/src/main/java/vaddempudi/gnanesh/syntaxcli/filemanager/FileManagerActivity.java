@@ -563,26 +563,35 @@ public class FileManagerActivity extends AppCompatActivity {
             return;
         }
 
+        if (isDocx) {
+            try {
+                android.content.Intent intent = new android.content.Intent(
+                        this,
+                        vaddempudi.gnanesh.syntaxcli.mediareader.DocxViewerActivity.class);
+                intent.putExtra(
+                        vaddempudi.gnanesh.syntaxcli.mediareader.DocxViewerActivity.EXTRA_DOCX_PATH,
+                        file.getAbsolutePath());
+                startActivity(intent);
+                return;
+            } catch (Exception e) {
+                Toast.makeText(this, "Cannot launch docx viewer: " + e.getMessage(),
+                        Toast.LENGTH_SHORT).show();
+                // fall through to old path
+            }
+        }
+
+        // .doc (binary) still uses the old native extractor + dialog
         executor.execute(() -> {
             try {
-                String text;
-                if (isDocx) {
-                    text = DocxReader.readDocx(file);
-                } else {
-                    text = DocReader.readDoc(file);
-                }
-
+                String text = DocReader.readDoc(file);
                 if (text == null || text.trim().isEmpty()) {
                     text = "(This document contains no readable text or is protected.)";
                 }
-
                 final String content = text;
                 mainHandler.post(() -> showDocumentViewer(file, content));
-
             } catch (Exception e) {
                 mainHandler.post(() -> {
-                    Toast.makeText(this,
-                            "Native reader failed, trying external app…",
+                    Toast.makeText(this, "Native reader failed, trying external app…",
                             Toast.LENGTH_SHORT).show();
                     openOfficeDocument(file, getMimeType(file));
                 });
