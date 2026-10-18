@@ -63,32 +63,7 @@ public class BasicImeService extends InputMethodService
         keyboardView = new BasicKeyboardView(this);
         bubbleOverlay = new KeyBubbleOverlay(this);
         keyboardView.setBubbleOverlay(bubbleOverlay);
-
-        keyboardView.setListener(new BasicKeyboardView.Listener() {
-            @Override
-            public void onKey(int code, String text) {
-                if (code == BasicKeyboardView.EMOJI_PANEL_TRIGGER) {
-                    showEmojiPanel();
-                    return;
-                }
-                if (code == BasicKeyboardView.GESTURE_EDITOR_TRIGGER) {
-                    GestureActionEditorActivity.open(BasicImeService.this);
-                    return;
-                }
-                if (code == BasicKeyboardView.GESTURE_DOUBLE_TRIGGER) {
-                    String id = GestureConfig.get(BasicImeService.this).getSpaceDoubleActionId();
-                    KeyAction a = GestureActionStore.get(BasicImeService.this).byId(id);
-                    if (a != null) runAction(a);
-                    return;
-                }
-                if (code == BasicKeyboardView.LETTER_LONG_PRESS_TRIGGER) {
-                    KeyAction a = GestureActionStore.get(BasicImeService.this).byKeyChar(text);
-                    if (a != null) runAction(a);
-                    return;
-                }
-                handleKey(code, text);
-            }
-        });
+        keyboardView.setListener(buildListener());
         return keyboardView;
     }
 
@@ -171,10 +146,45 @@ public class BasicImeService extends InputMethodService
         }
     }
 
+    private BasicKeyboardView.Listener buildListener() {
+        return new BasicKeyboardView.Listener() {
+            @Override
+            public void onKey(int code, String text) {
+                if (code == BasicKeyboardView.EMOJI_PANEL_TRIGGER) {
+                    showEmojiPanel();
+                    return;
+                }
+                if (code == BasicKeyboardView.GESTURE_EDITOR_TRIGGER) {
+                    GestureActionEditorActivity.open(BasicImeService.this);
+                    return;
+                }
+                if (code == BasicKeyboardView.GESTURE_DOUBLE_TRIGGER) {
+                    String id = GestureConfig.get(BasicImeService.this).getSpaceDoubleActionId();
+                    KeyAction a = GestureActionStore.get(BasicImeService.this).byId(id);
+                    if (a != null) runAction(a);
+                    return;
+                }
+                if (code == BasicKeyboardView.LETTER_LONG_PRESS_TRIGGER) {
+                    KeyAction a = GestureActionStore.get(BasicImeService.this).byKeyChar(text);
+                    if (a != null) runAction(a);
+                    return;
+                }
+                handleKey(code, text);
+            }
+        };
+    }
+
     @Override
     public void onStartInputView(EditorInfo info, boolean restarting) {
         super.onStartInputView(info, restarting);
         setPage(0);
+
+        // Rebuild the keyboard so color changes from the gesture editor take effect.
+        keyboardView = new BasicKeyboardView(this);
+        if (bubbleOverlay == null) bubbleOverlay = new KeyBubbleOverlay(this);
+        keyboardView.setBubbleOverlay(bubbleOverlay);
+        keyboardView.setListener(buildListener());
+        setInputView(keyboardView);
     }
 
     @Override

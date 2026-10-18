@@ -376,15 +376,26 @@ public class CalculatorActivity extends AppCompatActivity {
 
     private void animate(View v) {
         v.setOnTouchListener((view, event) -> {
-            switch (event.getAction()) {
+            switch (event.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
-                    view.animate().scaleX(0.94f).scaleY(0.94f)
-                            .setDuration(90).start();
+                    view.animate()
+                            .scaleX(0.72f).scaleY(0.72f)
+                            .rotation(3f)             // slight tilt
+                            .alpha(0.5f)
+                            .setDuration(55)
+                            .setInterpolator(new android.view.animation.DecelerateInterpolator(2f))
+                            .start();
                     break;
+
                 case MotionEvent.ACTION_UP:
                 case MotionEvent.ACTION_CANCEL:
-                    view.animate().scaleX(1f).scaleY(1f)
-                            .setDuration(90).start();
+                    view.animate()
+                            .scaleX(1f).scaleY(1f)
+                            .rotation(0f)
+                            .alpha(1f)
+                            .setDuration(160)
+                            .setInterpolator(new android.view.animation.OvershootInterpolator(2.2f))
+                            .start();
                     break;
             }
             return false;

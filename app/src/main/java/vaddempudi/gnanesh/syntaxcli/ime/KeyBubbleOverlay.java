@@ -30,21 +30,23 @@ public class KeyBubbleOverlay {
         DisplayMetrics dm = this.context.getResources().getDisplayMetrics();
         float density = dm.density;
 
+        ImeColorStore colors = ImeColorStore.get(this.context);
+
         sizePx = (int) (KeyboardConfig.PREVIEW_SIZE_DP * density);
 
         bubbleView = new TextView(this.context);
         bubbleView.setGravity(Gravity.CENTER);
         bubbleView.setTypeface(Typeface.MONOSPACE);
-        bubbleView.setTextColor(KeyboardConfig.COLOR_PREVIEW_TEXT);
+        bubbleView.setTextColor(colors.getTextColor());
         bubbleView.setTextSize(KeyboardConfig.PREVIEW_TEXT_SIZE_SP);
         bubbleView.setIncludeFontPadding(false);
 
         GradientDrawable bg = new GradientDrawable();
-        bg.setColor(KeyboardConfig.COLOR_PREVIEW_BG);
+        bg.setColor(colors.getBgColor());
         bg.setCornerRadius(KeyboardConfig.PREVIEW_CORNER_RADIUS_DP * density);
         bg.setStroke(
                 (int) (KeyboardConfig.PREVIEW_BORDER_WIDTH_DP * density),
-                KeyboardConfig.COLOR_PREVIEW_BORDER);
+                colors.getTextColor());
         bubbleView.setBackground(bg);
 
         int type;

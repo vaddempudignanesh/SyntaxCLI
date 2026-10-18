@@ -3,18 +3,20 @@ package vaddempudi.gnanesh.syntaxcli.ime;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
-import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.text.InputType;
+import android.view.ContextThemeWrapper;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.ImageButton;
 import android.widget.LinearLayout;
+import android.widget.PopupMenu;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -30,9 +32,19 @@ public class GestureActionEditorActivity extends Activity {
 
     private LinearLayout list;
 
+    // ★ Pending colors — not committed until the user taps RESTART
+    private int pendingTextColor;
+    private int pendingBgColor;
+    private boolean colorsDirty = false;
+
+    private TextView colorStatus;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        ImeColorStore store = ImeColorStore.get(this);
+        pendingTextColor = store.getTextColor();
+        pendingBgColor   = store.getBgColor();
         build();
         renderList();
     }
@@ -46,12 +58,31 @@ public class GestureActionEditorActivity extends Activity {
         root.setPadding(dp(16), dp(16), dp(16), dp(16));
         root.setBackgroundColor(BG);
 
+        // ── Title row with color icon on the right ──
+        LinearLayout titleRow = new LinearLayout(this);
+        titleRow.setOrientation(LinearLayout.HORIZONTAL);
+        titleRow.setGravity(Gravity.CENTER_VERTICAL);
+
         TextView title = new TextView(this);
         title.setText("GESTURE ACTIONS");
         title.setTextColor(GREEN);
         title.setTextSize(18);
         title.setTypeface(Typeface.MONOSPACE);
-        root.addView(title);
+        LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        titleRow.addView(title, titleLp);
+
+        ImageButton colorBtn = new ImageButton(this);
+        colorBtn.setImageResource(android.R.drawable.ic_menu_edit);
+        colorBtn.setColorFilter(GREEN);
+        colorBtn.setBackgroundColor(0x00000000);
+        colorBtn.setPadding(dp(6), dp(6), dp(6), dp(6));
+        colorBtn.setOnClickListener(this::showColorMenu);
+        LinearLayout.LayoutParams colorLp =
+                new LinearLayout.LayoutParams(dp(40), dp(40));
+        titleRow.addView(colorBtn, colorLp);
+
+        root.addView(titleRow);
 
         TextView sub = new TextView(this);
         sub.setText("Assign an action to a key. Long-press that key on the keyboard to run it.\n" +
@@ -60,6 +91,35 @@ public class GestureActionEditorActivity extends Activity {
         sub.setTextSize(11);
         sub.setPadding(0, dp(8), 0, dp(12));
         root.addView(sub);
+
+        // ── Color status + RESTART row ──
+        colorStatus = new TextView(this);
+        colorStatus.setTextColor(GREEN);
+        colorStatus.setTextSize(12);
+        colorStatus.setTypeface(Typeface.MONOSPACE);
+        colorStatus.setPadding(0, dp(4), 0, dp(4));
+        refreshColorStatus();
+        root.addView(colorStatus);
+
+        Button restartBtn = new Button(this);
+        restartBtn.setText("RESTART");
+        restartBtn.setTextColor(0xFF000000);
+        restartBtn.setBackgroundColor(GREEN);
+        restartBtn.setTypeface(Typeface.MONOSPACE);
+        restartBtn.setEnabled(false);
+        restartBtn.setOnClickListener(v -> {
+            ImeColorStore.get(this).save(pendingTextColor, pendingBgColor);
+            Toast.makeText(this, "Saved. Reopening…", Toast.LENGTH_SHORT).show();
+            // Recreate the activity to apply the new theme
+            recreate();
+        });
+        LinearLayout.LayoutParams rLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        rLp.topMargin = dp(4);
+        rLp.bottomMargin = dp(8);
+        root.addView(restartBtn, rLp);
+        this.restartButton = restartBtn;
 
         Button add = new Button(this);
         add.setText("+ ADD ACTION");
@@ -77,6 +137,72 @@ public class GestureActionEditorActivity extends Activity {
         scroll.addView(root);
         setContentView(scroll);
     }
+
+    private Button restartButton;
+
+    private void refreshColorStatus() {
+        if (colorStatus == null) return;
+        colorStatus.setText(
+                "Text color:  #" + hex(pendingTextColor) + "\n" +
+                        "Background:  #" + hex(pendingBgColor)
+                        + (colorsDirty ? "\n\n⚠ Tap RESTART to apply" : ""));
+        if (restartButton != null) restartButton.setEnabled(colorsDirty);
+    }
+
+    private static String hex(int c) {
+        return String.format("%08X", c);
+    }
+
+    private void showColorMenu(View anchor) {
+        ContextThemeWrapper w = new ContextThemeWrapper(this, R.style.PopupMenu_Black);
+        PopupMenu popup = new PopupMenu(w, anchor);
+        popup.getMenu().add(0, 1, 0, "Text color");
+        popup.getMenu().add(0, 2, 1, "Background color");
+        popup.setOnMenuItemClickListener(item -> {
+            switch (item.getItemId()) {
+                case 1:
+                    ColorPickerDialog.show(this, "TEXT COLOR", pendingTextColor, c -> {
+                        pendingTextColor = c;
+                        colorsDirty = true;
+                        refreshColorStatus();
+                    });
+                    return true;
+                case 2:
+                    ColorPickerDialog.show(this, "BACKGROUND COLOR", pendingBgColor, c -> {
+                        pendingBgColor = c;
+                        colorsDirty = true;
+                        refreshColorStatus();
+                    });
+                    return true;
+            }
+            return false;
+        });
+        try {
+            java.lang.reflect.Field[] fields = popup.getClass().getDeclaredFields();
+            for (java.lang.reflect.Field f : fields) {
+                if (!"mPopup".equals(f.getName())) continue;
+                f.setAccessible(true);
+                Object helper = f.get(popup);
+                try {
+                    java.lang.reflect.Field pf = helper.getClass()
+                            .getDeclaredField("mPopup");
+                    pf.setAccessible(true);
+                    Object lp = pf.get(helper);
+                    java.lang.reflect.Method bg = lp.getClass()
+                            .getMethod("setBackgroundDrawable",
+                                    android.graphics.drawable.Drawable.class);
+                    bg.invoke(lp,
+                            getDrawable(R.drawable.popup_bg));
+                } catch (Exception ignored) { }
+                break;
+            }
+        } catch (Exception ignored) { }
+        popup.show();
+    }
+
+    // ────────────────────────────────────────────────────────────
+    //  The rest is UNCHANGED from your file
+    // ────────────────────────────────────────────────────────────
 
     private void renderList() {
         list.removeAllViews();
@@ -270,7 +396,6 @@ public class GestureActionEditorActivity extends Activity {
                         }
                         if (key.length() > 1) key = key.substring(0, 1);
 
-                        // ★ Duplicate-key check
                         KeyAction dup = GestureActionStore.get(this).byKeyChar(key);
                         if (dup != null && (existing == null || !dup.id.equals(existing.id))) {
                             Toast.makeText(this,

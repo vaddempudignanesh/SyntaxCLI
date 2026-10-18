@@ -71,6 +71,8 @@ public class BasicKeyboardView extends View {
         scaledDensity = dm.scaledDensity;
         layout = new BasicKeyboardLayout();
 
+        ImeColorStore colors = ImeColorStore.get(context);
+
         keyPaint.setStyle(Paint.Style.FILL);
         borderPaint.setStyle(Paint.Style.STROKE);
         borderPaint.setStrokeWidth(KeyboardConfig.KEY_BORDER_WIDTH_DP * density);
@@ -78,9 +80,9 @@ public class BasicKeyboardView extends View {
 
         textPaint.setTypeface(Typeface.MONOSPACE);
         textPaint.setTextAlign(Paint.Align.CENTER);
-        textPaint.setColor(KeyboardConfig.COLOR_TEXT);
+        textPaint.setColor(colors.getTextColor());
 
-        setBackgroundColor(KeyboardConfig.COLOR_BACKGROUND);
+        setBackgroundColor(colors.getBgColor());
         setFocusable(true);
         setFocusableInTouchMode(true);
 
@@ -233,12 +235,17 @@ public class BasicKeyboardView extends View {
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
 
+        ImeColorStore colors = ImeColorStore.get(getContext());
+        int keyFill = colors.getBgColor();
+        int specialFill = blend(keyFill, 0xFF000000, 0.35f);
+        int pressedFill = blend(keyFill, 0xFF33FF33, 0.35f);
+
         float radius = KeyboardConfig.KEY_CORNER_RADIUS_DP * density;
 
         for (HitKey hk : hitKeys) {
-            if (hk == pressed) keyPaint.setColor(KeyboardConfig.COLOR_KEY_PRESSED);
-            else if (hk.key.code != BasicKey.CODE_NONE) keyPaint.setColor(KeyboardConfig.COLOR_SPECIAL_KEY);
-            else keyPaint.setColor(KeyboardConfig.COLOR_KEY);
+            if (hk == pressed) keyPaint.setColor(pressedFill);
+            else if (hk.key.code != BasicKey.CODE_NONE) keyPaint.setColor(specialFill);
+            else keyPaint.setColor(keyFill);
 
             keyRect.set(hk.rect);
             canvas.drawRoundRect(keyRect, radius, radius, keyPaint);
@@ -272,6 +279,18 @@ public class BasicKeyboardView extends View {
 
             canvas.drawText(label, hk.rect.centerX(), baseline, textPaint);
         }
+    }
+
+    /** Blend `src` over `dst` by `ratio` (0..1). Returns ARGB. */
+    private static int blend(int dst, int src, float ratio) {
+        if (ratio <= 0f) return dst;
+        if (ratio >= 1f) return src;
+        int dr = (dst >> 16) & 0xFF, dg = (dst >> 8) & 0xFF, db = dst & 0xFF;
+        int sr = (src >> 16) & 0xFF, sg = (src >> 8) & 0xFF, sb = src & 0xFF;
+        int r = Math.round(dr * (1 - ratio) + sr * ratio);
+        int g = Math.round(dg * (1 - ratio) + sg * ratio);
+        int b = Math.round(db * (1 - ratio) + sb * ratio);
+        return 0xFF000000 | (r << 16) | (g << 8) | b;
     }
 
     public KeyAction actionForKey(String keyChar) {
