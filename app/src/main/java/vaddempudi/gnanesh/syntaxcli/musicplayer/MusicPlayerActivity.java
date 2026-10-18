@@ -104,6 +104,17 @@ public class MusicPlayerActivity extends AppCompatActivity {
     private static final String KIND_PLAYLIST = "playlist";
     private static final String KIND_LIBRARY  = "library";
 
+    // ── Loop mode ──
+    public static final int LOOP_OFF  = 0;
+    public static final int LOOP_ONE  = 1;
+    public static final int LOOP_ALL  = 2;
+
+    private static final String KEY_LOOP_MODE = "loop_mode";
+    private int loopMode = LOOP_OFF;
+    private TextView btnLoop;
+
+
+
     private static long lastPlayedId = -1;
     private static String lastPlayedTitle = "";
     private static boolean isPausedStatic = false;
@@ -410,6 +421,19 @@ public class MusicPlayerActivity extends AppCompatActivity {
         ppLp.leftMargin = dp(4);
         navRow.addView(btnPlayPause, ppLp);
 
+        // ── Loop mode button ──
+        // ── Loop mode button ──
+        btnLoop = new TextView(this);
+        btnLoop.setTypeface(Typeface.MONOSPACE);
+        btnLoop.setTextSize(16);
+        btnLoop.setGravity(Gravity.CENTER);
+        btnLoop.setTextColor(DIM);
+        btnLoop.setOnClickListener(v -> cycleLoopMode());
+        LinearLayout.LayoutParams loopLp =
+                new LinearLayout.LayoutParams(dp(32), dp(32));
+        loopLp.leftMargin = dp(6);
+        navRow.addView(btnLoop, loopLp);
+
         tvNowPlaying = new TextView(this);
         tvNowPlaying.setTextColor(GREEN);
         tvNowPlaying.setTextSize(12);
@@ -458,6 +482,9 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
         setContentView(root);
+
+        loadLoopMode();
+        updateLoopButton();
     }
 
     private boolean isIgnoringBatteryOptimizations() {
@@ -1052,6 +1079,7 @@ public class MusicPlayerActivity extends AppCompatActivity {
                     .build());
             player.setDataSource(this, t.contentUri);
             player.setOnPreparedListener(mp -> {
+                applyLoopModeToPlayer();
                 mp.start();
                 isPaused = false;
                 isPausedStatic = false;
@@ -1072,7 +1100,7 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 ui.post(progressTick);
                 if (adapter != null) adapter.notifyDataSetChanged();
             });
-            player.setOnCompletionListener(mp -> playNext());
+            player.setOnCompletionListener(mp -> onTrackCompleted());
             player.setOnErrorListener((mp, what, extra) -> {
                 Toast.makeText(this, "Playback error", Toast.LENGTH_SHORT).show();
                 return true;
@@ -1122,8 +1150,24 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 if (list.get(i).id == lastPlayedId) { cur = i; break; }
             }
         }
-        if (cur < 0) cur = 0;
-        int next = (cur + 1) % list.size();
+
+        if (cur < 0) {
+            // No current track — start at the beginning.
+            playTrackByObject(list.get(0), list);
+            return;
+        }
+
+        int next = cur + 1;
+        if (next >= list.size()) {
+            if (loopMode == LOOP_OFF) {
+                // End of list, no loop — stop cleanly.
+                pauseAtEndOfList();
+                return;
+            }
+            // LOOP_ALL (LOOP_ONE is handled by MediaPlayer.setLooping,
+            // but if we land here anyway, restart at 0).
+            next = 0;
+        }
         playTrackByObject(list.get(next), list);
     }
 
@@ -1135,9 +1179,110 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 if (list.get(i).id == lastPlayedId) { cur = i; break; }
             }
         }
-        if (cur < 0) cur = 0;
-        int prev = (cur - 1 + list.size()) % list.size();
+
+        if (cur < 0) {
+            playTrackByObject(list.get(0), list);
+            return;
+        }
+
+        int prev = cur - 1;
+        if (prev < 0) {
+            if (loopMode == LOOP_OFF) {
+                // Start of list, no loop — stay on current track.
+                playTrackByObject(list.get(0), list);
+                return;
+            }
+            prev = list.size() - 1;
+        }
         playTrackByObject(list.get(prev), list);
+    }
+
+    private void onTrackCompleted() {
+        switch (loopMode) {
+            case LOOP_ONE:
+                // MediaPlayer.setLooping(true) already handles this.
+                // As a safety net, restart the same track.
+                if (player != null) {
+                    try { player.seekTo(0); player.start(); }
+                    catch (Exception ignored) { }
+                }
+                break;
+            case LOOP_ALL:
+                playNext();
+                break;
+            case LOOP_OFF:
+            default:
+                playNextFromList(resolvePlaybackList());
+                break;
+        }
+    }
+    private void cycleLoopMode() {
+        loopMode = (loopMode + 1) % 3;
+        saveLoopMode();
+        updateLoopButton();
+        applyLoopModeToPlayer();
+    }
+
+    private void applyLoopModeToPlayer() {
+        if (player == null) return;
+        try {
+            player.setLooping(loopMode == LOOP_ONE);
+        } catch (Exception ignored) { }
+    }
+
+    private void updateLoopButton() {
+        if (btnLoop == null) return;
+        switch (loopMode) {
+            case LOOP_ONE:
+                btnLoop.setText("\u21BB\u00B9");   // ↻¹
+                btnLoop.setTextColor(GREEN);
+                break;
+            case LOOP_ALL:
+                btnLoop.setText("\u21BB");          // ↻
+                btnLoop.setTextColor(GREEN);
+                break;
+            case LOOP_OFF:
+            default:
+                btnLoop.setText("\u21BB");          // ↻
+                btnLoop.setTextColor(DIM);
+                break;
+        }
+    }
+
+
+    private void saveLoopMode() {
+        try {
+            getSharedPreferences(PREFS, MODE_PRIVATE)
+                    .edit()
+                    .putInt(KEY_LOOP_MODE, loopMode)
+                    .apply();
+        } catch (Exception ignored) { }
+    }
+
+    private void loadLoopMode() {
+        try {
+            loopMode = getSharedPreferences(PREFS, MODE_PRIVATE)
+                    .getInt(KEY_LOOP_MODE, LOOP_OFF);
+            if (loopMode < 0 || loopMode > 2) loopMode = LOOP_OFF;
+        } catch (Exception ignored) {
+            loopMode = LOOP_OFF;
+        }
+    }
+
+    private void pauseAtEndOfList() {
+        if (player != null) {
+            try { player.pause(); } catch (Exception ignored) { }
+            try { player.seekTo(0); } catch (Exception ignored) { }
+        }
+        isPaused = true;
+        isPausedStatic = true;
+        if (btnPlayPause != null) {
+            btnPlayPause.setImageResource(R.drawable.ic_play_circle);
+            btnPlayPause.setColorFilter(NOW_PLAY);
+        }
+        ui.removeCallbacks(progressTick);
+        LocalBroadcastManager.getInstance(this)
+                .sendBroadcast(new Intent("vaddempudi.gnanesh.syntaxcli.MUSIC_STATE_CHANGED"));
     }
 
     private void playNext() {
