@@ -2872,10 +2872,15 @@ public class GalleryActivity extends AppCompatActivity {
     }
 
     private String formatTime(int ms) {
-        int seconds = ms / 1000;
-        int minutes = seconds / 60;
-        seconds = seconds % 60;
-        return String.format(Locale.US, "%02d:%02d", minutes, seconds);
+        if (ms < 0) ms = 0;
+        int totalSec = ms / 1000;
+        int h = totalSec / 3600;
+        int m = (totalSec % 3600) / 60;
+        int s = totalSec % 60;
+        if (h > 0) {
+            return String.format(Locale.US, "%d:%02d:%02d", h, m, s);
+        }
+        return String.format(Locale.US, "%02d:%02d", m, s);
     }
 
     private void showMediaHud(boolean isVolume, int percent) {
