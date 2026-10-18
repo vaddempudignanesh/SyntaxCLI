@@ -1341,13 +1341,18 @@ public class UIManager implements OnTouchListener {
         if (cyberpunkRunnable == null) {
             cyberpunkRunnable = new CyberpunkRunnable();
         }
-        for (int i = 0; i < 3; i++) {
-            cyberpunkRunnable.lines[i].setLength(0);
-            cyberpunkRunnable.cursors[i] = 0;
-            cyberpunkRunnable.restartCountdown[i] = 0;
-            cyberpunkRunnable.targets[i] = cyberpunkRunnable.generateLine(i);
+        // If we're already running, don't reset — just re-post.
+        handler.removeCallbacks(cyberpunkRunnable);
+
+        if (cyberpunkRunnable.targets[0] == null || cyberpunkRunnable.targets[0].isEmpty()) {
+            for (int i = 0; i < 3; i++) {
+                cyberpunkRunnable.lines[i].setLength(0);
+                cyberpunkRunnable.cursors[i] = 0;
+                cyberpunkRunnable.restartCountdown[i] = 0;
+                cyberpunkRunnable.targets[i] = cyberpunkRunnable.generateLine(i);
+            }
+            cyberpunkRunnable.blinkFrame = 0;
         }
-        cyberpunkRunnable.blinkFrame = 0;
         handler.post(cyberpunkRunnable);
     }
 
@@ -1467,12 +1472,20 @@ public class UIManager implements OnTouchListener {
         if (openKeyboardOnStart) openKeyboard();
     }
 
+
     public void onPause() {
         uiVisible = false;
+        if (handler != null && cyberpunkRunnable != null) {
+            handler.removeCallbacks(cyberpunkRunnable);
+        }
     }
 
     public void onResume() {
         uiVisible = true;
+        if (cyberpunkEnabled && cyberpunkRunnable != null && handler != null) {
+            handler.removeCallbacks(cyberpunkRunnable);
+            handler.post(cyberpunkRunnable);
+        }
     }
 
     public void setInput(String s) {
