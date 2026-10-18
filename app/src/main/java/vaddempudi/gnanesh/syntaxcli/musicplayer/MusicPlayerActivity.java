@@ -241,7 +241,10 @@ public class MusicPlayerActivity extends AppCompatActivity {
         try {
             LocalBroadcastManager.getInstance(this).unregisterReceiver(ctrlReceiver);
         } catch (Exception ignored) { }
-        if (isFinishing()) releasePlayer();
+        if (isFinishing()) {
+            releasePlayer();
+            stopPlaybackService();
+        }
     }
 
     @Override
@@ -1160,6 +1163,13 @@ public class MusicPlayerActivity extends AppCompatActivity {
         // Keep the foreground service alive while switching tracks.
     }
 
+    private void stopPlaybackService() {
+        try {
+            Intent serviceIntent = new Intent(this, MusicPlaybackService.class);
+            stopService(serviceIntent);
+        } catch (Exception ignored) { }
+    }
+
     private void handleControlCommand(String cmd) {
         if (cmd == null) return;
         switch (cmd) {
@@ -1359,7 +1369,14 @@ public class MusicPlayerActivity extends AppCompatActivity {
                             pickBuffer.remove((Long) track.id);
                             if (activePlaylistIds.isEmpty()) filterActive = false;
                             savePlaylist();
-                            releasePlayer();
+                            boolean deletedCurrentTrack = track.id == lastPlayedId;
+                            if (deletedCurrentTrack) {
+                                releasePlayer();
+                                lastPlayedId = -1;
+                                lastPlayedTitle = "";
+                                isPausedStatic = true;
+                                stopPlaybackService();
+                            }
                             playingIndex = -1;
                             bottomBar.setVisibility(View.GONE);
                             refreshList();

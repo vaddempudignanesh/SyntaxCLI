@@ -113,7 +113,21 @@ public class MusicPlaybackService extends Service {
     public IBinder onBind(Intent intent) { return null; }
 
     @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        // The user dismissed the player task from Recents: stop playback service
+        // instead of leaving a sticky foreground service/notification in memory.
+        try {
+            stopForeground(true);
+        } catch (Exception ignored) { }
+        stopSelf();
+        super.onTaskRemoved(rootIntent);
+    }
+
+    @Override
     public void onDestroy() {
+        try {
+            stopForeground(true);
+        } catch (Exception ignored) { }
         try {
             LocalBroadcastManager.getInstance(this).unregisterReceiver(updateReceiver);
         } catch (Exception ignored) { }
