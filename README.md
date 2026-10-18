@@ -46,7 +46,7 @@ I am introducing my next project:
 - **CLI Launcher** — launch any app by typing its name
 - **Gallery** — image and video browser with albums, favorites, and a Bin
 - **Music Player** — full library, playlists, loop modes, notification controls
-- **Browser** — built-in WebView browser with downloads, cookies, dark mode
+- **Browser** — built-in WebView browser with 16 parallel downloads, ad blocker, cookies, dark mode
 - **File Manager** — full filesystem access, copy, move, zip, extract
 - **DOCX Reader** — in-house Word document renderer with images and zoom
 - **PDF Reader** — in-house PDF renderer with page cache and pinch zoom
@@ -95,7 +95,7 @@ I am introducing my next project:
 <td align="center"><b><span style="color:#e63946;">Cyberpunk Animation</span></b></td>
 </tr>
 <tr>
-<td align="center"><span style="color:#2ecc40;">Full home-screen replacement with a Linux-style prompt.</span></td>
+<td align="center"><span style="color:#2ecc40;">SyntaxCLI is a full Android launcher — it replaces your home screen with a Linux-style prompt.</span></td>
 <td align="center"><span style="color:#2ecc40;">Type any app name to launch it directly.</span></td>
 <td align="center"><span style="color:#2ecc40;">Cyberpunk-2077-inspired boot animation.</span></td>
 </tr>
@@ -123,8 +123,11 @@ I am introducing my next project:
 <td align="center"><b><span style="color:#e63946;">Tab Management</span></b></td>
 </tr>
 <tr>
-<td align="center"><span style="color:#2ecc40;">WebView browser with dark mode, cookie-aware sessions, and downloads.</span></td>
+<td align="center"><span style="color:#2ecc40;">WebView browser with dark mode, cookie-aware sessions, and a built-in ad blocker.</span></td>
 <td align="center"><span style="color:#2ecc40;">Swipeable tab sheet with incognito isolation.</span></td>
+</tr>
+<tr>
+<td align="center" colspan="2"><span style="color:#2ecc40;">Supports up to <b>16 concurrent downloads</b> at maximum speed, backed by the built-in ad blocker for clean, tracker-free browsing.</span></td>
 </tr>
 </table>
 
@@ -138,15 +141,20 @@ I am introducing my next project:
 
 <table>
 <tr>
-<td align="center" width="70%">
+<td align="center" width="50%">
   <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/downloads.png" alt="Downloads" width="100%">
+</td>
+<td align="center" width="50%">
+  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/downloads2.png" alt="Active Download Progress" width="100%">
 </td>
 </tr>
 <tr>
 <td align="center"><b><span style="color:#e63946;">Downloads</span></b></td>
+<td align="center"><b><span style="color:#e63946;">Active Download Progress</span></b></td>
 </tr>
 <tr>
-<td align="center"><span style="color:#2ecc40;">Live progress, pause, resume, and cancel — never a stale entry again. Cookie and session support for authenticated downloads.</span></td>
+<td align="center"><span style="color:#2ecc40;">Live progress, pause, resume, and cancel — never a stale entry again.</span></td>
+<td align="center"><span style="color:#2ecc40;">Real-time progress bar showing speed, ETA, and bytes transferred.</span></td>
 </tr>
 </table>
 
@@ -241,15 +249,20 @@ I am introducing my next project:
 
 <table>
 <tr>
-<td align="center" width="70%">
+<td align="center" width="50%">
   <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/music-player.png" alt="Music Player" width="100%">
+</td>
+<td align="center" width="50%">
+  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/music-player2.png" alt="Music Player Controls" width="100%">
 </td>
 </tr>
 <tr>
-<td align="center"><b><span style="color:#e63946;">Music Player</span></b></td>
+<td align="center"><b><span style="color:#e63946;">Music Library</span></b></td>
+<td align="center"><b><span style="color:#e63946;">Playback Controls</span></b></td>
 </tr>
 <tr>
-<td align="center"><span style="color:#2ecc40;">Full library, playlists, loop modes, noise-aware pause, hardware key controls, and a battery-optimized playback service.</span></td>
+<td align="center"><span style="color:#2ecc40;">Full library, playlists, loop modes, and a persistent playback service.</span></td>
+<td align="center"><span style="color:#2ecc40;">Noise-aware pause, hardware key controls, and battery-optimized playback.</span></td>
 </tr>
 </table>
 
@@ -326,21 +339,21 @@ I am introducing my next project:
   <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/calculator.png" alt="Calculator" width="100%">
 </td>
 <td align="center" width="33%">
-  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/alarm.png" alt="Alarm" width="100%">
+  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/calculator2.png" alt="Calculator History" width="100%">
 </td>
 <td align="center" width="33%">
-  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/stopwatch.png" alt="Stopwatch" width="100%">
+  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/alarm.png" alt="Alarm" width="100%">
 </td>
 </tr>
 <tr>
 <td align="center"><b><span style="color:#e63946;">Calculator</span></b></td>
+<td align="center"><b><span style="color:#e63946;">Calculator History</span></b></td>
 <td align="center"><b><span style="color:#e63946;">Alarm</span></b></td>
-<td align="center"><b><span style="color:#e63946;">Stopwatch</span></b></td>
 </tr>
 <tr>
 <td align="center"><span style="color:#2ecc40;">CLI-styled calculator with persistent scrollable history.</span></td>
+<td align="center"><span style="color:#2ecc40;">Every past computation saved and scrollable across sessions.</span></td>
 <td align="center"><span style="color:#2ecc40;">Scheduled alarms that re-arm after reboot.</span></td>
-<td align="center"><span style="color:#2ecc40;">Precise stopwatch with lap tracking.</span></td>
 </tr>
 </table>
 
@@ -348,20 +361,25 @@ I am introducing my next project:
 
 ---
 
-### Timer
+### Stopwatch & Timer
 
 <div align="center">
 
 <table>
 <tr>
-<td align="center" width="70%">
+<td align="center" width="50%">
+  <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/stopwatch.png" alt="Stopwatch" width="100%">
+</td>
+<td align="center" width="50%">
   <img src="https://raw.githubusercontent.com/vaddempudignanesh/SyntaxCLI/main/media/timer.png" alt="Timer" width="100%">
 </td>
 </tr>
 <tr>
+<td align="center"><b><span style="color:#e63946;">Stopwatch</span></b></td>
 <td align="center"><b><span style="color:#e63946;">Timer</span></b></td>
 </tr>
 <tr>
+<td align="center"><span style="color:#2ecc40;">Precise stopwatch with lap tracking.</span></td>
 <td align="center"><span style="color:#2ecc40;">Countdown timer with a full-screen ring activity that survives backgrounding.</span></td>
 </tr>
 </table>
