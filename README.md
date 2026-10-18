@@ -394,3 +394,40 @@ I am introducing my next project:
 
    ```bash
    git clone https://github.com/vaddempudignanesh/SyntaxCLI.git
+
+
+
+ Requirements
+
+    Android 8.0 (API 26) or higher
+
+    Storage permission for file browsing
+
+    Root access (optional) for /system access
+
+    Notification permission for media and alarm foreground services
+
+
+  Related Projects
+
+    AURA-CTRL-LSPosed — my previous Xposed module for Android customization  
+
+
+
+   Credits
+
+    SyntaxCLI builds on the excellent foundation laid by Francesco Andreuzzi (@fandreuz), who wrote the original launcher core.   
+    That core is used here under the MIT License and is preserved below with his copyright notice.
+    
+    All other components — the gallery, music player, browser, file manager, DOCX and PDF readers, keyboard and IME, gesture 
+    triggers, calculator, alarm, stopwatch, timer, calendar, and the intent router — were developed by Vaddempudi Gnanesh
+    (@vaddempudignanesh) as additions on top of that launcher core. 
+
+
+    Author
+
+    Vaddempudi Gnanesh
+
+    GitHub: @vaddempudignanesh
+
+    Project: SyntaxCLI
