@@ -2,7 +2,14 @@ package vaddempudi.gnanesh.syntaxcli.mediareader;
 
 import android.content.Context;
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Matrix;
+import android.graphics.Paint;
+import android.graphics.Path;
+import android.graphics.RectF;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.graphics.pdf.PdfRenderer;
 import android.net.Uri;
 import android.os.Bundle;
@@ -10,6 +17,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.ParcelFileDescriptor;
 import android.util.LruCache;
+import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
 import android.view.View;
@@ -35,8 +43,6 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-import vaddempudi.gnanesh.syntaxcli.filemanager.FileLog;
-
 public class PdfViewerActivity extends AppCompatActivity {
 
     public static final String EXTRA_PDF_URI = "pdf_uri";
@@ -44,15 +50,16 @@ public class PdfViewerActivity extends AppCompatActivity {
 
     private static final int PAGE_WIDTH_PX = 1240;
     private static final int PAGE_HEIGHT_PX = 1754;
-    private static final int CACHE_BYTES = 24 * 1024 * 1024;  // 24 MB
+    private static final int CACHE_BYTES = 24 * 1024 * 1024;
 
     private RecyclerView recyclerPages;
     private ProgressBar progressBar;
-    private TextView tvStatus;
+    private PageSliderView pageSlider;
 
     private PdfRenderer pdfRenderer;
     private ParcelFileDescriptor pfd;
     private int pageCount = 0;
+    private int currentPage = 1;
 
     private final ExecutorService backgroundExecutor = Executors.newFixedThreadPool(2);
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -73,11 +80,9 @@ public class PdfViewerActivity extends AppCompatActivity {
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        FileLog.i("PdfViewerActivity.onCreate");
         try {
             buildUi();
         } catch (Exception e) {
-            FileLog.e("buildUi failed: " + e);
             Toast.makeText(this, "Cannot open PDF viewer", Toast.LENGTH_SHORT).show();
             finish();
             return;
@@ -93,7 +98,6 @@ public class PdfViewerActivity extends AppCompatActivity {
                 return;
             }
             openPdfAsync(pdfFile);
-            loadPdfTextAsync(pdfFile);
         });
     }
 
@@ -110,38 +114,99 @@ public class PdfViewerActivity extends AppCompatActivity {
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(Color.parseColor("#121212"));
 
+        FrameLayout contentArea = new FrameLayout(this);
+
         ZoomableFrameLayout zoomContainer = new ZoomableFrameLayout(this);
 
         recyclerPages = new RecyclerView(this);
         recyclerPages.setLayoutManager(new LinearLayoutManager(this));
-        recyclerPages.setItemViewCacheSize(2);
+        recyclerPages.setItemViewCacheSize(4);
         recyclerPages.setItemAnimator(null);
         recyclerPages.setHasFixedSize(true);
+        recyclerPages.setItemViewCacheSize(4);
+        recyclerPages.setDrawingCacheEnabled(false);
+        recyclerPages.setItemAnimator(null);
         adapter = new PdfPageAdapter();
         recyclerPages.setAdapter(adapter);
+
+        recyclerPages.addOnScrollListener(new RecyclerView.OnScrollListener() {
+            @Override
+            public void onScrolled(@NonNull RecyclerView rv, int dx, int dy) {
+                updateSliderFromScroll();
+            }
+        });
 
         zoomContainer.addView(recyclerPages, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
-        root.addView(zoomContainer, new LinearLayout.LayoutParams(
+        contentArea.addView(zoomContainer, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+
+        FrameLayout.LayoutParams sliderLp = new FrameLayout.LayoutParams(
+                (int) (40 * getResources().getDisplayMetrics().density),
+                FrameLayout.LayoutParams.MATCH_PARENT);
+        sliderLp.gravity = Gravity.END;
+
+        pageSlider = new PageSliderView(this);
+        pageSlider.setListener((position01) -> {
+            if (pageCount <= 0) return;
+            int target = (int) Math.round(position01 * (pageCount - 1));
+            if (target < 0) target = 0;
+            if (target >= pageCount) target = pageCount - 1;
+            if (target != currentPage - 1) {
+                currentPage = target + 1;
+                LinearLayoutManager lm =
+                        (LinearLayoutManager) recyclerPages.getLayoutManager();
+                if (lm != null) lm.scrollToPositionWithOffset(target, 0);
+            }
+        });
+
+        contentArea.addView(pageSlider, sliderLp);
+
+        root.addView(contentArea, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
 
         progressBar = new ProgressBar(this);
         LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT);
-        pp.gravity = android.view.Gravity.CENTER;
+        pp.gravity = Gravity.CENTER;
         root.addView(progressBar, pp);
 
-        tvStatus = new TextView(this);
-        tvStatus.setText("Loading…");
-        tvStatus.setTextColor(0xFF00AA00);
-        tvStatus.setGravity(android.view.Gravity.CENTER);
-        root.addView(tvStatus, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT));
-
         setContentView(root);
+    }
+
+    private void updateSliderFromScroll() {
+        if (pageSlider == null || pageCount <= 0) return;
+        LinearLayoutManager lm = (LinearLayoutManager) recyclerPages.getLayoutManager();
+        if (lm == null) return;
+        int first = lm.findFirstVisibleItemPosition();
+        int last = lm.findLastVisibleItemPosition();
+        if (first == RecyclerView.NO_POSITION) return;
+
+        float position01;
+        if (pageCount <= 1) {
+            position01 = 0f;
+        } else {
+            View firstChild = lm.findViewByPosition(first);
+            View lastChild = lm.findViewByPosition(last);
+            if (firstChild == null || lastChild == null) {
+                position01 = first / (float) (pageCount - 1);
+            } else {
+                float startTop = firstChild.getTop();
+                float endBottom = lastChild.getBottom();
+                float visibleSpan = (endBottom - startTop) > 0 ? (endBottom - startTop) : 1f;
+                float scrolled = -startTop;
+                float local01 = scrolled / visibleSpan;
+                if (local01 < 0) local01 = 0;
+                if (local01 > 1) local01 = 1;
+                float pageFloat = first + local01;
+                position01 = pageFloat / (float) (pageCount - 1);
+                if (position01 < 0) position01 = 0;
+                if (position01 > 1) position01 = 1;
+            }
+        }
+        pageSlider.setScrollFraction(position01, currentPage, pageCount);
     }
 
     @Nullable
@@ -177,43 +242,33 @@ public class PdfViewerActivity extends AppCompatActivity {
                 return outFile;
             }
         } catch (Exception e) {
-            FileLog.e("copyUriToCache failed: " + e);
             return null;
         }
     }
 
     private void openPdfAsync(File pdfFile) {
         try {
-            pfd = ParcelFileDescriptor.open(pdfFile,
-                    ParcelFileDescriptor.MODE_READ_ONLY);
+            pfd = ParcelFileDescriptor.open(pdfFile, ParcelFileDescriptor.MODE_READ_ONLY);
             pdfRenderer = new PdfRenderer(pfd);
             pageCount = pdfRenderer.getPageCount();
             mainHandler.post(this::onPdfReady);
         } catch (Exception e) {
-            FileLog.e("openPdfAsync failed: " + e);
-            mainHandler.post(() -> showError("Failed to open PDF"));
-        }
-    }
-
-    private void loadPdfTextAsync(File pdfFile) {
-        try {
-            PdfTextExtractor.Result r = PdfTextExtractor.extract(pdfFile);
-            mainHandler.post(() -> FileLog.i("Text loaded: "
-                    + (r != null ? r.pageCount : 0) + " pages"));
-        } catch (Exception e) {
-            FileLog.e("loadPdfTextAsync failed: " + e);
+            mainHandler.post(this::showError);
         }
     }
 
     private void onPdfReady() {
         progressBar.setVisibility(View.GONE);
-        tvStatus.setText(pageCount + " pages");
+        currentPage = 1;
         adapter.notifyDataSetChanged();
+        if (pageSlider != null) {
+            pageSlider.setScrollFraction(0f, 1, pageCount);
+        }
     }
 
-    private void showError(String msg) {
+    private void showError() {
         progressBar.setVisibility(View.GONE);
-        tvStatus.setText(msg);
+        Toast.makeText(this, "Failed to open PDF", Toast.LENGTH_SHORT).show();
     }
 
     private void renderPageIfNeeded(final int pageIndex) {
@@ -235,20 +290,18 @@ public class PdfViewerActivity extends AppCompatActivity {
                     bmp = Bitmap.createBitmap(PAGE_WIDTH_PX, PAGE_HEIGHT_PX,
                             Bitmap.Config.ARGB_8888);
                     bmp.eraseColor(Color.WHITE);
-                    page.render(bmp, null, null,
-                            PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY);
+                    page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY);
                     page.close();
                 }
                 bitmapCache.put(pageIndex, bmp);
                 ok = true;
                 final int idx = pageIndex;
-                mainHandler.post(() -> adapter.notifyItemChanged(idx));
-            } catch (Exception e) {
-                FileLog.e("Render failed for page " + pageIndex);
+                mainHandler.post(() -> {
+                    if (adapter != null) adapter.notifyItemChanged(idx);
+                });
+            } catch (Exception ignored) {
             } finally {
-                if (!ok && bmp != null && !bmp.isRecycled()) {
-                    bmp.recycle();
-                }
+                if (!ok && bmp != null && !bmp.isRecycled()) bmp.recycle();
                 synchronized (inFlightRenders) {
                     inFlightRenders.remove(pageIndex);
                 }
@@ -275,8 +328,7 @@ public class PdfViewerActivity extends AppCompatActivity {
 
             LinearLayout.LayoutParams wrapperParams = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-            );
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
             int marginPx = (int) (12 * context.getResources().getDisplayMetrics().density);
             wrapperParams.setMargins(0, marginPx, 0, marginPx);
             wrapper.setLayoutParams(wrapperParams);
@@ -300,7 +352,7 @@ public class PdfViewerActivity extends AppCompatActivity {
             if (cached != null && !cached.isRecycled()) {
                 holder.imageView.setImageBitmap(cached);
             } else {
-                holder.imageView.setImageDrawable(null);
+                holder.imageView.setTag(position);
                 renderPageIfNeeded(position);
             }
         }
@@ -319,12 +371,168 @@ public class PdfViewerActivity extends AppCompatActivity {
         }
     }
 
-    /**
-     * Zoom container.
-     *  - transform applied at DRAW time only (Matrix + dispatchDraw)
-     *  - no setScaleX/Y or setTranslationX/Y — those force re-layout
-     *  - hardware layer set once, never toggled
-     */
+    private interface OnPageSeek {
+        void onSeek(float position01);
+    }
+
+    private static class PageSliderView extends View {
+
+        private final Paint trackPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint thumbPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint labelPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF trackRect = new RectF();
+        private final RectF thumbRect = new RectF();
+        private final Path thumbPath = new Path();
+
+        private final float density;
+        private final float trackWidth;
+        private final float thumbHeight;
+        private final float thumbWidth;
+
+        private float scrollFraction = 0f;
+        private int currentPage = 1;
+        private int totalPages = 0;
+
+        private boolean dragging = false;
+        private OnPageSeek listener;
+
+        PageSliderView(Context c) {
+            super(c);
+            density = c.getResources().getDisplayMetrics().density;
+            trackWidth = 3f * density;
+            thumbWidth = 34f * density;
+            thumbHeight = 32f * density;
+
+            trackPaint.setColor(0x55FFFFFF);
+            trackPaint.setStyle(Paint.Style.FILL);
+
+            thumbPaint.setColor(0xFF00FF00);
+            thumbPaint.setStyle(Paint.Style.FILL);
+            thumbPaint.setShadowLayer(4f * density, 0f, 1f * density, 0x88000000);
+            setLayerType(LAYER_TYPE_SOFTWARE, null);
+
+            labelPaint.setColor(0xFF000000);
+            labelPaint.setTextSize(10f * density);
+            labelPaint.setTypeface(Typeface.MONOSPACE);
+            labelPaint.setTextAlign(Paint.Align.CENTER);
+            labelPaint.setFakeBoldText(true);
+        }
+
+        void setListener(OnPageSeek l) { this.listener = l; }
+
+        void setScrollFraction(float fraction, int current, int total) {
+            if (dragging) {
+                this.currentPage = current;
+                this.totalPages = total;
+                invalidate();
+                return;
+            }
+            if (fraction < 0f) fraction = 0f;
+            if (fraction > 1f) fraction = 1f;
+            if (fraction == scrollFraction && current == currentPage && total == totalPages) return;
+            scrollFraction = fraction;
+            currentPage = current;
+            totalPages = total;
+            invalidate();
+        }
+
+        private void computeTrackRect() {
+            float cx = getWidth() / 2f;
+            float top = thumbHeight / 2f + 8f * density;
+            float bottom = getHeight() - thumbHeight / 2f - 8f * density;
+            if (bottom < top) bottom = top + 1f;
+            trackRect.set(cx - trackWidth / 2f, top, cx + trackWidth / 2f, bottom);
+        }
+
+        private void computeThumbRect() {
+            float cx = getWidth() / 2f;
+            float trackTop = trackRect.top;
+            float trackBottom = trackRect.bottom;
+            float usable = trackBottom - trackTop;
+            float centerY = trackTop + scrollFraction * usable;
+            thumbRect.set(
+                    cx - thumbWidth / 2f,
+                    centerY - thumbHeight / 2f,
+                    cx + thumbWidth / 2f,
+                    centerY + thumbHeight / 2f);
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            computeTrackRect();
+            computeThumbRect();
+
+            canvas.drawRoundRect(trackRect, trackWidth / 2f, trackWidth / 2f, trackPaint);
+
+            thumbPath.reset();
+            float corner = 8f * density;
+            thumbPath.addRoundRect(thumbRect, corner, corner, Path.Direction.CW);
+            canvas.drawPath(thumbPath, thumbPaint);
+
+            if (totalPages > 0) {
+                String label = currentPage + "/" + totalPages;
+                float textY = thumbRect.centerY()
+                        - (labelPaint.descent() + labelPaint.ascent()) / 2f;
+                canvas.drawText(label, thumbRect.centerX(), textY, labelPaint);
+            }
+        }
+
+        @Override
+        public boolean onTouchEvent(MotionEvent event) {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN: {
+                    float y = event.getY();
+                    computeTrackRect();
+                    computeThumbRect();
+                    boolean insideThumb = thumbRect.contains(event.getX(), y);
+                    boolean nearTrack = Math.abs(event.getX() - getWidth() / 2f)
+                            < thumbWidth;
+                    if (!insideThumb && !nearTrack) {
+                        return false;
+                    }
+                    dragging = true;
+                    if (getParent() != null) {
+                        getParent().requestDisallowInterceptTouchEvent(true);
+                    }
+                    applyTouchY(y);
+                    return true;
+                }
+                case MotionEvent.ACTION_MOVE: {
+                    if (!dragging) return false;
+                    applyTouchY(event.getY());
+                    return true;
+                }
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL: {
+                    dragging = false;
+                    if (getParent() != null) {
+                        getParent().requestDisallowInterceptTouchEvent(false);
+                    }
+                    return true;
+                }
+            }
+            return super.onTouchEvent(event);
+        }
+
+        private void applyTouchY(float y) {
+            computeTrackRect();
+            float usable = trackRect.bottom - trackRect.top;
+            if (usable <= 0) return;
+            float f = (y - trackRect.top) / usable;
+            if (f < 0f) f = 0f;
+            if (f > 1f) f = 1f;
+            scrollFraction = f;
+            if (totalPages > 0) {
+                int page = (int) Math.round(f * (totalPages - 1)) + 1;
+                if (page < 1) page = 1;
+                if (page > totalPages) page = totalPages;
+                currentPage = page;
+            }
+            invalidate();
+            if (listener != null) listener.onSeek(f);
+        }
+    }
+
     private static class ZoomableFrameLayout extends FrameLayout {
         private static final float MAX_SCALE = 5.0f;
 
@@ -332,8 +540,7 @@ public class PdfViewerActivity extends AppCompatActivity {
         private float translationX = 0f;
         private float translationY = 0f;
 
-        // Reused every frame — zero allocations.
-        private final android.graphics.Matrix drawMatrix = new android.graphics.Matrix();
+        private final Matrix drawMatrix = new Matrix();
 
         private float lastTouchX, lastTouchY;
         private boolean isPanning = false;
@@ -341,7 +548,7 @@ public class PdfViewerActivity extends AppCompatActivity {
 
         private final ScaleGestureDetector scaleDetector;
 
-        public ZoomableFrameLayout(@NonNull Context context) {
+        ZoomableFrameLayout(@NonNull Context context) {
             super(context);
             setClipChildren(false);
             setClipToPadding(false);
@@ -403,8 +610,9 @@ public class PdfViewerActivity extends AppCompatActivity {
                         float dy = event.getY() - lastTouchY;
                         translationX += dx;
                         translationY += dy;
+                        clampTranslation();
                         updateMatrix();
-                        invalidate();     // draw only, no layout
+                        invalidate();
                         lastTouchX = event.getX();
                         lastTouchY = event.getY();
                     }
@@ -433,14 +641,32 @@ public class PdfViewerActivity extends AppCompatActivity {
             return true;
         }
 
+        private void clampTranslation() {
+            if (scale <= 1.0f) {
+                translationX = 0f;
+                translationY = 0f;
+                return;
+            }
+            int w = getWidth();
+            int h = getHeight();
+            float maxX = (w * scale - w) / 2f;
+            float maxY = (h * scale - h) / 2f;
+            if (maxX < 0) maxX = 0;
+            if (maxY < 0) maxY = 0;
+            if (translationX > maxX) translationX = maxX;
+            if (translationX < -maxX) translationX = -maxX;
+            if (translationY > maxY) translationY = maxY;
+            if (translationY < -maxY) translationY = -maxY;
+        }
+
         private void updateMatrix() {
             drawMatrix.reset();
-            drawMatrix.postScale(scale, scale);
+            drawMatrix.postScale(scale, scale, getWidth() / 2f, getHeight() / 2f);
             drawMatrix.postTranslate(translationX, translationY);
         }
 
         @Override
-        protected void dispatchDraw(android.graphics.Canvas canvas) {
+        protected void dispatchDraw(Canvas canvas) {
             if (scale == 1f && translationX == 0f && translationY == 0f) {
                 super.dispatchDraw(canvas);
                 return;
@@ -478,10 +704,12 @@ public class PdfViewerActivity extends AppCompatActivity {
                     scale = 1.0f;
                     translationX = 0f;
                     translationY = 0f;
+                } else {
+                    clampTranslation();
                 }
 
                 updateMatrix();
-                invalidate();     // draw only — no measure, no layout
+                invalidate();
                 return true;
             }
 
