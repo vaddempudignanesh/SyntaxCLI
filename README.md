@@ -30,7 +30,13 @@ I am introducing my next project:
 
 <img src="https://img.shields.io/badge/Size-2.7%20MB-green?style=flat-square" alt="Size">
 <img src="https://img.shields.io/badge/Platform-Android%208.0%2B-green?style=flat-square" alt="Platform">
-<img src="https://img.shields.io/badge/License-Open%20Source-green?style=flat-square" alt="License">
+<img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License">
+
+<br><br>
+
+<a href="https://github.com/vaddempudignanesh/SyntaxCLI/releases/download/v2.0/SyntaxCLI-V2.0.apk">
+  <img src="https://img.shields.io/badge/Download-SyntaxCLI%20v2.0-brightgreen?style=for-the-badge&logo=android" alt="Download SyntaxCLI v2.0">
+</a>
 
 </div>
 
@@ -63,7 +69,7 @@ I am introducing my next project:
 - **Keyboard / IME** — full custom keyboard with gesture triggers
 - **Gesture Triggers** — launch apps or run actions from swipe patterns
 - **Calendar** — CLI-styled calendar integrated into the launcher
-- **Keyboard** — full emoji picker built into the IME
+- **Emoji Keyboard** — full emoji picker built into the IME
 
 </td>
 </tr>
@@ -302,7 +308,7 @@ I am introducing my next project:
 
 ---
 
-### Keyboard & Gesture Triggers
+### Emoji Keyboard & Gesture Triggers
 
 <div align="center">
 
@@ -389,6 +395,14 @@ I am introducing my next project:
 ---
 
 ## Installation
+
+### Direct download
+
+The easiest way to install is to grab the latest APK from the badge at the top of this page, or use the link below:
+
+**[Download SyntaxCLI v2.0 APK](https://github.com/vaddempudignanesh/SyntaxCLI/releases/download/v2.0/SyntaxCLI-V2.0.apk)**
+
+### Build from source
 
 1. Clone the repository:
 
