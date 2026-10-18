@@ -63,7 +63,7 @@ I am introducing my next project:
 - **Keyboard / IME** — full custom keyboard with gesture triggers
 - **Gesture Triggers** — launch apps or run actions from swipe patterns
 - **Calendar** — CLI-styled calendar integrated into the launcher
-- **Emoji Keyboard** — full emoji picker built into the IME
+- **Keyboard** — full emoji picker built into the IME
 
 </td>
 </tr>
@@ -302,7 +302,7 @@ I am introducing my next project:
 
 ---
 
-### Emoji Keyboard & Gesture Triggers
+### Keyboard & Gesture Triggers
 
 <div align="center">
 
