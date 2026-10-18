@@ -79,6 +79,7 @@ import vaddempudi.gnanesh.syntaxcli.permissionhandler.StorageAdapter;
 import vaddempudi.gnanesh.syntaxcli.permissionhandler.StoragePermissionHelper;
 
 public class FileManagerActivity extends AppCompatActivity {
+    public static final String EXTRA_OPEN_PATH = "open_path";
     private static final String HOME_DIR = Environment.getExternalStorageDirectory().getAbsolutePath();
 
     private static final int SORT_NAME_ASC   = 0;
@@ -181,14 +182,22 @@ public class FileManagerActivity extends AppCompatActivity {
 
         rootAvailable = false;
         rootGranted = false;
-
         if (!handleIncomingIntent(getIntent())) {
             loadDirectory(currentDir);
+
+            String openPath = getIntent().getStringExtra(EXTRA_OPEN_PATH);
+            if (openPath != null) {
+                File f = new File(openPath);
+                if (f.exists()) {
+                    openFileWithMime(f, getMimeType(f));
+                }
+            }
         }
     }
 
     private boolean isIncomingFileIntent(Intent intent) {
         if (intent == null) return false;
+        if (intent.hasExtra(EXTRA_OPEN_PATH)) return true;
         String a = intent.getAction();
         return Intent.ACTION_VIEW.equals(a)
                 || Intent.ACTION_SEND.equals(a)

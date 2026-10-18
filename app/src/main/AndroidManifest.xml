@@ -89,6 +89,48 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <!-- ==================================================================
+             SINGLE EXTERNAL ENTRY POINT
+             All ACTION_VIEW / ACTION_EDIT / ACTION_SEND / ACTION_SEND_MULTIPLE
+             intents land here. IntentRouterActivity resolves the real file
+             path + type, decides which internal activity to launch, and
+             finishes itself. No other activity in the app declares an
+             intent-filter for content — that guarantees only one handler
+             is ever advertised, and it always routes correctly.
+             ================================================================== -->
+        <activity
+            android:name=".intent.IntentRouterActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Transparent">
+
+            <intent-filter android:label="SyntaxCLI — Open file">
+                <action android:name="android.intent.action.VIEW" />
+                <action android:name="android.intent.action.EDIT" />
+                <action android:name="android.intent.action.OPEN_DOCUMENT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="file" />
+                <data android:scheme="content" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+
+            <intent-filter android:label="SyntaxCLI — Open file">
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+
+            <intent-filter android:label="SyntaxCLI — Open files">
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+        </activity>
+
         <!-- ============ LAUNCHER ============ -->
         <activity
             android:name=".LauncherActivity"
@@ -173,49 +215,6 @@
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
 
-        <!-- ============ TUIXT ACTIVITY ============ -->
-        <activity
-            android:name=".commands.tuixt.TuixtActivity"
-            android:excludeFromRecents="true"
-            android:label="@string/tuixt_label"
-            android:noHistory="true"
-            android:theme="@style/Custom.Solid"
-            android:windowSoftInputMode="stateAlwaysVisible|adjustResize"
-            android:exported="true">
-            <meta-data
-                android:name="androidx.core.app.PARENT_ACTIVITY"
-                android:value=".LauncherActivity" />
-
-            <!-- Text content: label distinguishes from FileManager's text handler -->
-            <intent-filter android:label="SyntaxCLI — Text Editor">
-                <action android:name="android.intent.action.VIEW" />
-                <action android:name="android.intent.action.EDIT" />
-                <data android:mimeType="text/*" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-
-            <!-- Source/config files by extension -->
-            <intent-filter android:label="SyntaxCLI — Text Editor">
-                <action android:name="android.intent.action.VIEW" />
-                <action android:name="android.intent.action.EDIT" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:host="*" android:pathPattern=".*\\.js" android:scheme="file" />
-                <data android:host="*" android:pathPattern=".*\\.htm" android:scheme="file" />
-                <data android:host="*" android:pathPattern=".*\\.html" android:scheme="file" />
-                <data android:host="*" android:pathPattern=".*\\.xhtml" android:scheme="file" />
-                <data android:host="*" android:pathPattern=".*\\.php" android:scheme="file" />
-                <data android:host="*" android:pathPattern=".*\\.ini" android:scheme="file" />
-                <data android:host="*" android:pathPattern=".*\\.sh" android:scheme="file" />
-                <data android:host="*" android:pathPattern=".*\\.log" android:scheme="file" />
-                <data android:host="*" android:pathPattern=".*\\.db" android:scheme="file" />
-                <data android:host="*" android:pathPattern=".*\\.conf" android:scheme="file" />
-                <data android:host="*" android:pathPattern=".*\\.cfg" android:scheme="file" />
-                <data android:host="*" android:pathPattern=".*\\.txt" android:scheme="file" />
-                <data android:host="*" android:pathPattern=".*\\.xml" android:scheme="file" />
-            </intent-filter>
-        </activity>
-
-        <!-- ============ NOTIFICATION SERVICES ============ -->
         <service
             android:name=".managers.notifications.NotificationService"
             android:label="@string/notification_reader"
@@ -229,7 +228,6 @@
             android:name=".managers.notifications.NotificationMonitorService"
             android:exported="false" />
 
-        <!-- ============ OTHER ACTIVITIES ============ -->
         <activity
             android:name=".calculator.CalculatorActivity"
             android:theme="@style/Theme.Transparent"
@@ -242,66 +240,19 @@
 
         <activity
             android:name=".musicplayer.MusicPlayerActivity"
-            android:exported="true"
+            android:exported="false"
             android:label="@string/music_player_label"
             android:theme="@style/MusicTheme"
             android:launchMode="standard"
             android:taskAffinity="ohi.andre.consolelauncher.music"
             android:documentLaunchMode="intoExisting"
             android:configChanges="orientation|screenSize|keyboardHidden"
-            android:windowSoftInputMode="adjustResize">
-
-            <!-- Audio by mime type -->
-            <intent-filter android:priority="100" android:label="SyntaxCLI — Music Player">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:mimeType="audio/*" />
-            </intent-filter>
-
-            <!-- Audio by file extension -->
-            <intent-filter android:priority="100" android:label="SyntaxCLI — Music Player">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.mp3"  />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.m4a"  />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.aac"  />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.ogg"  />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.oga"  />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.opus" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.wav"  />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.flac" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.amr"  />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.mid"  />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.midi" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.wma"  />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.mp2"  />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.mka"  />
-            </intent-filter>
-
-            <!-- content:// audio from other apps -->
-            <intent-filter android:priority="100" android:label="SyntaxCLI — Music Player">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="content" />
-                <data android:mimeType="audio/*" />
-            </intent-filter>
-
-            <!-- Share target -->
-            <intent-filter android:priority="100" android:label="SyntaxCLI — Music Player">
-                <action android:name="android.intent.action.SEND" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="audio/*" />
-            </intent-filter>
-        </activity>
+            android:windowSoftInputMode="adjustResize" />
 
         <activity
             android:name=".ime.GestureActionEditorActivity"
             android:exported="false"
             android:label="Gesture Actions" />
-
 
         <activity
             android:name=".alarm.TimerRingActivity"
@@ -317,90 +268,12 @@
             android:name=".gallery.GalleryActivity"
             android:label="@string/gallery_app_label"
             android:theme="@style/GalleryTheme"
-            android:exported="true"
+            android:exported="false"
             android:launchMode="standard"
             android:taskAffinity="ohi.andre.consolelauncher.gallery"
             android:documentLaunchMode="intoExisting"
             android:configChanges="orientation|screenSize|keyboardHidden"
-            android:windowSoftInputMode="adjustResize">
-
-            <!-- Images -->
-            <intent-filter android:priority="100" android:label="SyntaxCLI — Gallery (images)">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:mimeType="image/*" />
-            </intent-filter>
-
-            <!-- Videos -->
-            <intent-filter android:priority="100" android:label="SyntaxCLI — Gallery (videos)">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:mimeType="video/*" />
-            </intent-filter>
-
-            <!-- Image extensions -->
-            <intent-filter android:priority="100" android:label="SyntaxCLI — Gallery (images)">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="file"   android:host="*" android:pathPattern=".*\\.jpg"  />
-                <data android:scheme="file"   android:host="*" android:pathPattern=".*\\.jpeg" />
-                <data android:scheme="file"   android:host="*" android:pathPattern=".*\\.png"  />
-                <data android:scheme="file"   android:host="*" android:pathPattern=".*\\.gif"  />
-                <data android:scheme="file"   android:host="*" android:pathPattern=".*\\.bmp"  />
-                <data android:scheme="file"   android:host="*" android:pathPattern=".*\\.webp" />
-                <data android:scheme="file"   android:host="*" android:pathPattern=".*\\.heic" />
-                <data android:scheme="file"   android:host="*" android:pathPattern=".*\\.heif" />
-            </intent-filter>
-
-            <!-- Video extensions -->
-            <intent-filter android:priority="100" android:label="SyntaxCLI — Gallery (videos)">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="file"   android:host="*" android:pathPattern=".*\\.mp4"  />
-                <data android:scheme="file"   android:host="*" android:pathPattern=".*\\.mkv"  />
-                <data android:scheme="file"   android:host="*" android:pathPattern=".*\\.webm" />
-                <data android:scheme="file"   android:host="*" android:pathPattern=".*\\.avi"  />
-                <data android:scheme="file"   android:host="*" android:pathPattern=".*\\.mov"  />
-                <data android:scheme="file"   android:host="*" android:pathPattern=".*\\.3gp"  />
-                <data android:scheme="file"   android:host="*" android:pathPattern=".*\\.m4v"  />
-                <data android:scheme="file"   android:host="*" android:pathPattern=".*\\.flv"  />
-                <data android:scheme="file"   android:host="*" android:pathPattern=".*\\.wmv"  />
-            </intent-filter>
-
-            <!-- content:// images -->
-            <intent-filter android:priority="100" android:label="SyntaxCLI — Gallery (images)">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="content" />
-                <data android:mimeType="image/*" />
-            </intent-filter>
-
-            <!-- content:// videos -->
-            <intent-filter android:priority="100" android:label="SyntaxCLI — Gallery (videos)">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="content" />
-                <data android:mimeType="video/*" />
-            </intent-filter>
-
-            <!-- Share targets -->
-            <intent-filter android:priority="100" android:label="SyntaxCLI — Gallery (images)">
-                <action android:name="android.intent.action.SEND" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="image/*" />
-            </intent-filter>
-            <intent-filter android:priority="100" android:label="SyntaxCLI — Gallery (videos)">
-                <action android:name="android.intent.action.SEND" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="video/*" />
-            </intent-filter>
-        </activity>
+            android:windowSoftInputMode="adjustResize" />
 
         <activity
             android:name=".gallery.ImageViewerActivity"
@@ -408,7 +281,13 @@
             android:exported="false"
             android:screenOrientation="portrait"/>
 
-        <!-- ============ ALARM ============ -->
+        <activity
+            android:name=".gallery.FullscreenViewerActivity"
+            android:theme="@style/Theme.AppCompat.NoActionBar"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:screenOrientation="portrait"
+            android:exported="false" />
+
         <activity
             android:name=".alarm.AlarmActivity"
             android:exported="false"
@@ -470,66 +349,16 @@
             android:name=".browser.AuraBrowserActivity"
             android:label="@string/browser_label"
             android:theme="@style/Theme.Transparent"
-            android:exported="true"
+            android:exported="false"
             android:launchMode="standard"
             android:taskAffinity="ohi.andre.consolelauncher.browser"
             android:documentLaunchMode="intoExisting"
             android:configChanges="orientation|screenSize|keyboardHidden|keyboard|navigation"
-            android:windowSoftInputMode="adjustResize">
-
-            <intent-filter android:label="SyntaxCLI — Browser">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="http" />
-                <data android:scheme="https" />
-            </intent-filter>
-
-            <intent-filter android:label="SyntaxCLI — Web Search">
-                <action android:name="android.intent.action.WEB_SEARCH" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="" />
-            </intent-filter>
-
-            <intent-filter android:label="SyntaxCLI — Web Search">
-                <action android:name="android.intent.action.SEARCH" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-            <meta-data
-                android:name="android.app.searchable"
-                android:resource="@xml/searchable" />
-
-            <intent-filter android:label="SyntaxCLI — Browser">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="about" />
-            </intent-filter>
-
-            <intent-filter android:label="SyntaxCLI — Browser (local HTML)">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="file" />
-                <data android:mimeType="text/html" />
-                <data android:mimeType="text/plain" />
-                <data android:mimeType="application/xhtml+xml" />
-            </intent-filter>
-
-            <intent-filter android:label="SyntaxCLI — Browser (content HTML)">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="content" />
-                <data android:mimeType="text/html" />
-                <data android:mimeType="application/xhtml+xml" />
-            </intent-filter>
-        </activity>
+            android:windowSoftInputMode="adjustResize" />
 
         <activity
             android:name=".filemanager.FileManagerActivity"
-            android:exported="true"
+            android:exported="false"
             android:theme="@style/Theme.AppCompat.NoActionBar"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:taskAffinity="ohi.andre.consolelauncher.filemanager"
@@ -537,97 +366,8 @@
             android:launchMode="standard"
             android:excludeFromRecents="false"
             android:windowSoftInputMode="adjustResize"
-            android:hardwareAccelerated="true">
+            android:hardwareAccelerated="true" />
 
-            <!-- Text files -->
-            <intent-filter android:priority="100" android:label="SyntaxCLI — File Manager (text)">
-                <action android:name="android.intent.action.VIEW" />
-                <action android:name="android.intent.action.EDIT" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="text/*" />
-            </intent-filter>
-
-            <!-- PDF -->
-            <intent-filter android:priority="100" android:label="SyntaxCLI — File Manager (PDF)">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="application/pdf" />
-            </intent-filter>
-
-            <!-- Office docs -->
-            <intent-filter android:priority="100" android:label="SyntaxCLI — File Manager (Office)">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="application/msword" />
-                <data android:mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
-                <data android:mimeType="application/vnd.ms-excel" />
-                <data android:mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
-                <data android:mimeType="application/vnd.ms-powerpoint" />
-                <data android:mimeType="application/vnd.openxmlformats-officedocument.presentationml.presentation" />
-                <data android:mimeType="application/rtf" />
-            </intent-filter>
-
-            <!-- File extensions -->
-            <intent-filter android:priority="100" android:label="SyntaxCLI — File Manager (by extension)">
-                <action android:name="android.intent.action.VIEW" />
-                <action android:name="android.intent.action.EDIT" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.txt" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.log" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.md" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.json" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.xml" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.html" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.htm" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.css" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.js" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.py" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.java" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.kt" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.c" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.cpp" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.h" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.sh" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.bat" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.properties" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.config" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.cfg" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.conf" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.ini" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.yml" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.yaml" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.csv" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.pdf" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.doc" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.docx" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.xls" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.xlsx" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.ppt" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.pptx" />
-            </intent-filter>
-
-            <!-- Content URIs -->
-            <intent-filter android:priority="100" android:label="SyntaxCLI — File Manager (content)">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:scheme="content" />
-                <data android:mimeType="*/*" />
-            </intent-filter>
-
-            <!-- Share targets -->
-            <intent-filter android:priority="100" android:label="SyntaxCLI — File Manager (share)">
-                <action android:name="android.intent.action.SEND" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="*/*" />
-            </intent-filter>
-            <intent-filter android:priority="100" android:label="SyntaxCLI — File Manager (share)">
-                <action android:name="android.intent.action.SEND_MULTIPLE" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="*/*" />
-            </intent-filter>
-        </activity>
-
-        <!-- ============ FAKE LAUNCHER ============ -->
         <activity
             android:name=".tuils.stuff.FakeLauncherActivity"
             android:enabled="false"
@@ -642,14 +382,6 @@
         <meta-data
             android:name="com.google.android.gms.version"
             android:value="12451000" />
-
-        <!-- ============ FULLSCREEN VIEWER ============ -->
-        <activity
-            android:name=".gallery.FullscreenViewerActivity"
-            android:theme="@style/Theme.AppCompat.NoActionBar"
-            android:configChanges="orientation|screenSize|keyboardHidden"
-            android:screenOrientation="portrait"
-            android:exported="false" />
 
     </application>
 

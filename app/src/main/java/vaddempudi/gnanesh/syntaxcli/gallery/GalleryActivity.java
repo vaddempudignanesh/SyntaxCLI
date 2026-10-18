@@ -194,6 +194,7 @@ public class GalleryActivity extends AppCompatActivity {
     private boolean launchedFromExternalIntent = false;
     private String pendingInitialPath;
 
+    private boolean pendingOpenAfterLoad = false;
 
     private final ActivityResultLauncher<String[]> requestMultiplePermissionsLauncher =
             registerForActivityResult(new ActivityResultContracts.RequestMultiplePermissions(),
@@ -497,7 +498,9 @@ public class GalleryActivity extends AppCompatActivity {
 
                     transientLoading = false;
                     refreshCurrentList();
-                    tryOpenPendingInitialPath();
+                    recyclerView.post(() -> {
+                        if (pendingInitialPath != null) tryOpenPendingInitialPath();
+                    });
                 }
 
 
@@ -1010,19 +1013,31 @@ public class GalleryActivity extends AppCompatActivity {
 
     private void tryOpenPendingInitialPath() {
         if (pendingInitialPath == null) return;
-        if (screenAdapter == null || screenAdapter.getItemCount() == 0) return;
+
+        // If the adapter has no items yet, mark that we must retry
+        // once the repository finishes loading the first page.
+        if (screenAdapter == null || screenAdapter.getItemCount() == 0) {
+            pendingOpenAfterLoad = true;
+            return;
+        }
 
         String path = pendingInitialPath;
-        pendingInitialPath = null;
 
-        boolean present = false;
+        // Ensure the file is in the adapter's list — if not, insert it
+        // synchronously so openFullscreenViewer() sees it.
         List<GalleryMediaItem> current = screenAdapter.getItems();
+        boolean present = false;
         for (GalleryMediaItem m : current) {
-            if (m.path.equals(path)) { present = true; break; }
+            if (m.path != null && m.path.equals(path)) { present = true; break; }
         }
+
         if (!present) {
             File f = new File(path);
-            if (!f.exists()) return;
+            if (!f.exists()) {
+                pendingInitialPath = null;
+                pendingOpenAfterLoad = false;
+                return;
+            }
             GalleryMediaItem mi = new GalleryMediaItem(
                     f.getAbsolutePath().hashCode(),
                     path,
@@ -1031,16 +1046,32 @@ public class GalleryActivity extends AppCompatActivity {
                     f.lastModified() / 1000L,
                     isVideoPath(path) ? GalleryMediaItem.TYPE_VIDEO
                             : GalleryMediaItem.TYPE_IMAGE);
-            List<GalleryMediaItem> merged = new ArrayList<>(current);
-            merged.add(0, mi);
+
+            List<GalleryMediaItem> merged = new ArrayList<>(current.size() + 1);
+            merged.add(mi);
+            merged.addAll(current);
+
+            // submitList is async; we don't rely on it having landed yet —
+            // openFullscreenViewer will read the CURRENT list, but we also
+            // push the synthetic item into the "current" snapshot below.
             screenAdapter.submitList(merged);
+            current = merged;
         }
 
+        // Reset to ALL filter so the viewer's list covers this file.
         currentFilter = FilterMode.ALL;
         currentAlbum = null;
         showAlbums = false;
         whatsappOnly = false;
-        recyclerView.post(() -> openFullscreenViewer(path));
+
+        pendingInitialPath = null;
+        pendingOpenAfterLoad = false;
+
+        // Post one frame so RecyclerView has a chance to apply the list,
+        // but openFullscreenViewer is idempotent — it will re-insert
+        // the path if the list it reads doesn't contain it.
+        final String openPath = path;
+        recyclerView.post(() -> openFullscreenViewer(openPath));
     }
 
 
@@ -2303,21 +2334,62 @@ public class GalleryActivity extends AppCompatActivity {
     private void openFullscreenViewer(String path) {
         if (fullscreenViewPager != null) fullscreenViewPager.setUserInputEnabled(true);
 
-        // ★ Save grid scroll so back returns to the same row.
+        // Save grid scroll so back returns to the same row.
         GridLayoutManager glm = (GridLayoutManager) recyclerView.getLayoutManager();
         savedGridScrollPosition = glm != null
                 ? glm.findFirstVisibleItemPosition() : -1;
 
+        // Build the list from the adapter's CURRENT items.
         fullscreenMediaPaths.clear();
-        int currentIndex = 0;
         List<GalleryMediaItem> current = screenAdapter.getItems();
+
+        // If the requested path isn't in the list, insert it at index 0
+        // so we never fall back to "open the first file".
+        boolean present = false;
+        for (GalleryMediaItem item : current) {
+            if (item.path != null && item.path.equals(path)) { present = true; break; }
+        }
+
+        if (!present) {
+            File f = new File(path);
+            if (!f.exists()) {
+                Toast.makeText(this, "File not found", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            GalleryMediaItem mi = new GalleryMediaItem(
+                    f.getAbsolutePath().hashCode(),
+                    path,
+                    f.getName(),
+                    f.getParent() != null ? f.getParent() : "",
+                    f.lastModified() / 1000L,
+                    isVideoPath(path) ? GalleryMediaItem.TYPE_VIDEO
+                            : GalleryMediaItem.TYPE_IMAGE);
+
+            List<GalleryMediaItem> merged = new ArrayList<>(current.size() + 1);
+            merged.add(mi);
+            merged.addAll(current);
+            screenAdapter.submitList(merged);
+            current = merged;
+        }
+
+        // Build fullscreenMediaPaths with the target at the correct index.
+        int currentIndex = -1;
         for (int i = 0; i < current.size(); i++) {
             GalleryMediaItem item = current.get(i);
-            if (!item.isTrashed) {
-                fullscreenMediaPaths.add(item.path);
-                if (item.path.equals(path)) currentIndex = fullscreenMediaPaths.size() - 1;
+            if (item.isTrashed) continue;
+            if (item.path != null && item.path.equals(path)) {
+                currentIndex = fullscreenMediaPaths.size();
             }
+            fullscreenMediaPaths.add(item.path);
         }
+
+        // Safety net: if the target somehow still isn't in the list
+        // (e.g. it was trashed), append it explicitly and open at that index.
+        if (currentIndex < 0) {
+            fullscreenMediaPaths.add(0, path);
+            currentIndex = 0;
+        }
+
         if (fullscreenMediaPaths.isEmpty()) {
             Toast.makeText(this, "No media to view", Toast.LENGTH_SHORT).show();
             return;
