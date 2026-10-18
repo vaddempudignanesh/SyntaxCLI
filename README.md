@@ -3,7 +3,7 @@
 # SyntaxCLI
 
 <a href="https://github.com/vaddempudignanesh/AURA-CTRL-LSPosed/">
-  <img src="https://img.shields.io/badge/Also%20by%20me-AURA--CTRL--LSPosed-blue?style=for-the-badge" alt="AURA-CTRL-LSPosed">
+  <img src="https://img.shields.io/badge/Also%20by%20me-Creator--of--AURA--CTRL--LSPosed-blue?style=for-the-badge" alt="AURA-CTRL-LSPosed">
 </a>
 
 <br><br>
