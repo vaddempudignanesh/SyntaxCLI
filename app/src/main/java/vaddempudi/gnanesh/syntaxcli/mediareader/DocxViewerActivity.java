@@ -1,6 +1,5 @@
 package vaddempudi.gnanesh.syntaxcli.mediareader;
 
-import android.animation.ValueAnimator;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -26,12 +25,14 @@ import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
 import android.view.View;
 import android.view.ViewConfiguration;
+import android.view.VelocityTracker;
+import android.view.animation.DecelerateInterpolator;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
-import android.widget.ScrollView;
+import android.widget.Scroller;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -51,7 +52,7 @@ public class DocxViewerActivity extends AppCompatActivity {
     public static final String EXTRA_DOCX_PATH = "docx_path";
 
     private ProgressBar progressBar;
-    private ZoomableView zoomView;
+    private ZoomableScrollHost zoomHost;
 
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final Handler ui = new Handler(Looper.getMainLooper());
@@ -71,8 +72,8 @@ public class DocxViewerActivity extends AppCompatActivity {
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(BG_OUTER);
 
-        zoomView = new ZoomableView(this);
-        root.addView(zoomView, new FrameLayout.LayoutParams(
+        zoomHost = new ZoomableScrollHost(this);
+        root.addView(zoomHost, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
         progressBar = new ProgressBar(this);
@@ -158,7 +159,7 @@ public class DocxViewerActivity extends AppCompatActivity {
         }
         flushTextRow(pageCard, segment);
 
-        zoomView.setContent(column, pageCount);
+        zoomHost.setDocument(column, pageCount);
     }
 
     private LinearLayout newPageCard() {
@@ -337,27 +338,57 @@ public class DocxViewerActivity extends AppCompatActivity {
         super.onDestroy();
         io.shutdownNow();
         ui.removeCallbacksAndMessages(null);
-        if (zoomView != null) zoomView.release();
+        if (zoomHost != null) zoomHost.release();
     }
 
     // =====================================================================
-    // ZoomableView
+    // ZoomableScrollHost — one touch engine, one coordinate space.
     //
-    // Gesture routing rule (IMPORTANT — this is what fixes the flicker):
-    //   * The MotionEvent stream is fed to the ScaleGestureDetector and
-    //     GestureDetector EXACTLY ONCE per event, from dispatchTouchEvent().
-    //   * onTouchEvent() must NOT feed the ScaleGestureDetector again.
-    //     Feeding it twice corrupts its internal span history, which makes
-    //     getScaleFactor() jittery and produces the multi-times zoom flicker.
-    //   * onScale() applies the factor incrementally (scale * factor) rather
-    //     than re-deriving from startScale, so no base drift can accumulate.
+    // Layout:
+    //   0: UnboundedFrameLayout (contentLayer) — hosts the document column,
+    //      measured with UNSPECIFIED height so it can be taller than the
+    //      viewport. Drawn through the matrix in dispatchDraw.
+    //   1: PageSlider — right-edge thumb, never scaled.
+    //
+    // Matrix:
+    //   screenY = ty + (contentY - viewH/2) * scale + viewH/2
+    //   contentY is measured from the document's top (y = 0..childH).
+    //
+    // Scroll-at-1x and pan-while-zoomed both just modify (tx, ty):
+    //   scale == 1 : drag moves ty (bounded so content top/bottom stay at
+    //                viewport edges). Horizontal is 0.
+    //   scale  > 1 : drag moves (tx, ty), bounded so content top/bottom can
+    //                reach viewport edges (no blank).
+    //
+    // Gesture feed rule (fixes flicker): ScaleGestureDetector + GestureDetector
+    // are fed EXACTLY ONCE per MotionEvent, only in dispatchTouchEvent. Never
+    // again in onTouchEvent. Feeding twice corrupts the detector's internal
+    // span history and makes getScaleFactor() jitter -> zoom flicker.
+    //
+    // Smooth-scroll rule (fixes jerky vertical scroll): the intercept does
+    // not steal the first MOVE. It waits until the finger passes touchSlop,
+    // then applies the *entire* delta from ACTION_DOWN in one shot and sets
+    // lastX/lastY to the current position. No frame is dropped, and an
+    // inner HorizontalScrollView can't consume a vertical drag first.
+    //
+    // Fling rule (adds inertial scroll): implemented with android.widget.Scroller
+    // using its native fling model (distance ~ velocity^2, ~1.5s decay). This
+    // gives the same physics as a ScrollView, so fast flick + release glides
+    // and stops at the content edges.
     // =====================================================================
-    static class ZoomableView extends FrameLayout {
+    static class ZoomableScrollHost extends FrameLayout {
 
         private static final float HARD_MAX_SCALE   = 100f;
         private static final float ABSOLUTE_MIN     = 0.5f;
         private static final float MIN_SNAP_SCALE   = 1.0f;
         private static final float DOUBLE_TAP_SCALE = 2.5f;
+
+        private static final int MIN_FLING_VELOCITY = 30;    // px/s
+        private static final int MAX_FLING_VELOCITY = 20000; // px/s
+
+        private final UnboundedFrameLayout contentLayer;
+        private View content;
+        private PageSliderView pageSlider;
 
         private float scale = 1f;
         private float tx = 0f, ty = 0f;
@@ -366,21 +397,29 @@ public class DocxViewerActivity extends AppCompatActivity {
         private final ScaleGestureDetector scaleDetector;
         private final GestureDetector tapDetector;
 
-        private ScrollView vScroll;
-        private PageSliderView pageSlider;
+        private VelocityTracker velocityTracker;
+        private final Scroller scroller;
 
         private float downX, downY;
         private float lastX, lastY;
         private boolean isPanning = false;
         private boolean intercepting = false;
+        private boolean isPinching = false;
+        private boolean slopExceeded = false;
         private int touchSlop;
 
-        ZoomableView(@NonNull Context c) {
+        private boolean flinging = false;
+
+        ZoomableScrollHost(@NonNull Context c) {
             super(c);
             setClipChildren(true);
-            setClipToPadding(true);
             setWillNotDraw(false);
             touchSlop = ViewConfiguration.get(c).getScaledTouchSlop();
+            scroller = new Scroller(c);
+            contentLayer = new UnboundedFrameLayout(c);
+            contentLayer.setClipChildren(true);
+            addView(contentLayer, new LayoutParams(
+                    LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
 
             scaleDetector = new ScaleGestureDetector(c, new ScaleListener());
             scaleDetector.setQuickScaleEnabled(false);
@@ -395,62 +434,76 @@ public class DocxViewerActivity extends AppCompatActivity {
             });
         }
 
-        void setContent(View content, int pageCount) {
-            removeAllViews();
+        private static class UnboundedFrameLayout extends FrameLayout {
+            UnboundedFrameLayout(Context c) { super(c); }
 
-            vScroll = new ScrollView(getContext());
-            vScroll.setVerticalScrollBarEnabled(false);
-            vScroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
-            vScroll.setFillViewport(true);
-            vScroll.addView(content, new ScrollView.LayoutParams(
-                    ScrollView.LayoutParams.MATCH_PARENT,
-                    ScrollView.LayoutParams.WRAP_CONTENT));
+            @Override
+            protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+                int parentW = MeasureSpec.getSize(widthMeasureSpec);
+                if (MeasureSpec.getMode(widthMeasureSpec) == MeasureSpec.UNSPECIFIED) {
+                    parentW = getResources().getDisplayMetrics().widthPixels;
+                }
 
-            addView(vScroll, new LayoutParams(
-                    LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
+                int childWidthSpec  = MeasureSpec.makeMeasureSpec(parentW, MeasureSpec.EXACTLY);
+                int childHeightSpec = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED);
+
+                int maxChildH = 0;
+                int count = getChildCount();
+                for (int i = 0; i < count; i++) {
+                    View child = getChildAt(i);
+                    if (child.getVisibility() == GONE) continue;
+                    child.measure(childWidthSpec, childHeightSpec);
+                    maxChildH = Math.max(maxChildH, child.getMeasuredHeight());
+                }
+
+                int w = resolveSize(parentW, widthMeasureSpec);
+                setMeasuredDimension(w, maxChildH);
+            }
+        }
+
+        void setDocument(View doc, int pageCount) {
+            this.content = doc;
+            contentLayer.removeAllViews();
+            contentLayer.addView(doc, new FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT));
+
+            if (pageSlider != null) removeView(pageSlider);
 
             FrameLayout.LayoutParams sliderLp = new FrameLayout.LayoutParams(
                     dp(40), LayoutParams.MATCH_PARENT);
             sliderLp.gravity = Gravity.END;
-
             pageSlider = new PageSliderView(getContext());
             pageSlider.setListener(position01 -> {
-                if (pageCount <= 1) {
-                    vScroll.scrollTo(0, 0);
-                    return;
+                cancelFling();
+                float range = maxScrollY();
+                ty = -position01 * range;
+                if (scale > MIN_SNAP_SCALE + 0.001f) {
+                    tx = 0f;
+                    clampPan();
+                } else {
+                    clampScroll();
                 }
-                int range = scrollRange();
-                int targetY = (int) (position01 * range);
-                vScroll.scrollTo(0, targetY);
+                applyMatrix();
+                invalidate();
             });
             pageSlider.setScrollFraction(0f, 1, pageCount);
             addView(pageSlider, sliderLp);
-
-            vScroll.getViewTreeObserver().addOnScrollChangedListener(() -> {
-                if (pageSlider == null) return;
-                int range = scrollRange();
-                float fraction = range > 0
-                        ? Math.max(0f, Math.min(1f, vScroll.getScrollY() / (float) range))
-                        : 0f;
-                int page = Math.min(pageCount,
-                        (int) Math.floor(fraction * pageCount) + 1);
-                pageSlider.setScrollFraction(fraction, page, pageCount);
-            });
-        }
-
-        private int scrollRange() {
-            if (vScroll == null || vScroll.getChildCount() == 0) return 0;
-            return Math.max(0,
-                    vScroll.getChildAt(0).getHeight() - vScroll.getHeight());
         }
 
         private int dp(int v) {
             return (int) (getResources().getDisplayMetrics().density * v);
         }
 
-        // -----------------------------------------------------------------
-        // Feed detectors ONCE per event, and only here.
-        // -----------------------------------------------------------------
+        private float contentHeight() {
+            return content == null ? 0f : content.getHeight();
+        }
+
+        private float maxScrollY() {
+            return Math.max(0f, contentHeight() - getHeight());
+        }
+
+
         @Override
         public boolean dispatchTouchEvent(MotionEvent ev) {
             scaleDetector.onTouchEvent(ev);
@@ -458,28 +511,47 @@ public class DocxViewerActivity extends AppCompatActivity {
 
             final int action = ev.getActionMasked();
 
-            // While a pinch is active, we own the stream — swallow it so the
-            // inner ScrollViews / HorizontalScrollViews don't fight us.
+            if (action == MotionEvent.ACTION_DOWN) {
+                cancelFling();
+            }
+
             if (scaleDetector.isInProgress()) {
+                isPinching = true;
                 isPanning = false;
-                intercepting = false;
-                return true;
+                intercepting = true;
+
+                if (getParent() != null) {
+                    getParent().requestDisallowInterceptTouchEvent(true);
+                }
             }
 
-            // Always reset gesture state on gesture end, regardless of who
-            // consumed the event, otherwise a swallowed UP leaves us stuck.
-            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+            // Let onTouchEvent process ACTION_UP before resetting gesture state.
+            boolean handled = super.dispatchTouchEvent(ev);
+
+            if (action == MotionEvent.ACTION_UP
+                    || action == MotionEvent.ACTION_CANCEL) {
+
+                isPinching = false;
                 isPanning = false;
                 intercepting = false;
-                if (getParent() != null)
+                slopExceeded = false;
+
+                if (getParent() != null) {
                     getParent().requestDisallowInterceptTouchEvent(false);
+                }
             }
 
-            return super.dispatchTouchEvent(ev);
+            return handled;
         }
+
 
         @Override
         public boolean onInterceptTouchEvent(MotionEvent ev) {
+            if (isPinching || scaleDetector.isInProgress()) {
+                intercepting = true;
+                return true;
+            }
+
             switch (ev.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
                     downX = ev.getX();
@@ -488,38 +560,75 @@ public class DocxViewerActivity extends AppCompatActivity {
                     lastY = downY;
                     isPanning = false;
                     intercepting = false;
+                    slopExceeded = false;
+                    startVelocityTracking(ev);
                     return false;
 
                 case MotionEvent.ACTION_POINTER_DOWN:
-                    // Two fingers → steal for pan/zoom pipeline.
                     intercepting = true;
                     isPanning = false;
-                    if (getParent() != null)
+                    addVelocitySample(ev);
+                    if (getParent() != null) {
                         getParent().requestDisallowInterceptTouchEvent(true);
+                    }
                     return true;
 
-                case MotionEvent.ACTION_MOVE:
-                    // Zoomed in → steal single-finger drag for panning.
-                    if (scale > MIN_SNAP_SCALE + 0.01f && ev.getPointerCount() == 1) {
+                case MotionEvent.ACTION_MOVE: {
+                    addVelocitySample(ev);
+                    if (ev.getPointerCount() != 1) return intercepting;
+
+                    if (!slopExceeded) {
+                        float ddx = Math.abs(ev.getX() - downX);
+                        float ddy = Math.abs(ev.getY() - downY);
+                        if (ddx < touchSlop && ddy < touchSlop) {
+                            return false;
+                        }
+                        slopExceeded = true;
+
+                        float dx = ev.getX() - lastX;
+                        float dy = ev.getY() - lastY;
+                        if (scale <= MIN_SNAP_SCALE + 0.001f) {
+                            ty += dy;
+                            clampScroll();
+                        } else {
+                            tx += dx;
+                            ty += dy;
+                            clampPan();
+                        }
+                        applyMatrix();
+                        invalidate();
+
+                        lastX = ev.getX();
+                        lastY = ev.getY();
+                        isPanning = true;
                         intercepting = true;
+
+                        if (getParent() != null) {
+                            getParent().requestDisallowInterceptTouchEvent(true);
+                        }
                         return true;
                     }
-                    return intercepting;
+
+                    intercepting = true;
+                    return true;
+                }
             }
             return intercepting;
         }
 
         @Override
         public boolean onTouchEvent(MotionEvent ev) {
-            // NOTE: do NOT call scaleDetector.onTouchEvent(ev) here.
-            // It was already fed in dispatchTouchEvent(). Feeding it twice
-            // is what caused the zoom-in/zoom-out flickering.
+            addVelocitySample(ev);
 
             switch (ev.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
+                    downX = ev.getX();
+                    downY = ev.getY();
                     lastX = ev.getX();
                     lastY = ev.getY();
-                    isPanning = scale > MIN_SNAP_SCALE + 0.01f;
+                    slopExceeded = false;
+                    isPanning = true;
+                    startVelocityTracking(ev);
                     return true;
 
                 case MotionEvent.ACTION_POINTER_DOWN:
@@ -527,15 +636,19 @@ public class DocxViewerActivity extends AppCompatActivity {
                     return true;
 
                 case MotionEvent.ACTION_MOVE:
-                    if (isPanning && !scaleDetector.isInProgress()
-                            && scale > MIN_SNAP_SCALE + 0.01f
+                    if (isPanning && !isPinching
                             && ev.getPointerCount() == 1) {
                         float dx = ev.getX() - lastX;
                         float dy = ev.getY() - lastY;
-                        tx += dx;
-                        ty += dy;
-                        clampTranslation();
-                        rebuildMatrix();
+                        if (scale <= MIN_SNAP_SCALE + 0.001f) {
+                            ty += dy;
+                            clampScroll();
+                        } else {
+                            tx += dx;
+                            ty += dy;
+                            clampPan();
+                        }
+                        applyMatrix();
                         invalidate();
                         lastX = ev.getX();
                         lastY = ev.getY();
@@ -543,54 +656,232 @@ public class DocxViewerActivity extends AppCompatActivity {
                     return true;
 
                 case MotionEvent.ACTION_POINTER_UP: {
-                    int idx = ev.getActionIndex();
-                    int keep = idx == 0 ? 1 : 0;
+                    int lifted = ev.getActionIndex();
+                    int keep = lifted == 0 ? 1 : 0;
                     if (keep < ev.getPointerCount()) {
                         lastX = ev.getX(keep);
                         lastY = ev.getY(keep);
-                        isPanning = scale > MIN_SNAP_SCALE + 0.01f;
+                        isPanning = false;
                     }
                     return true;
                 }
 
-                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_UP: {
+                    if (slopExceeded && !isPinching && isPanning) {
+                        startFling();
+                    }
+                    isPanning = false;
+                    intercepting = false;
+                    slopExceeded = false;
+                    stopVelocityTracking();
+                    if (getParent() != null) {
+                        getParent().requestDisallowInterceptTouchEvent(false);
+                    }
+                    return true;
+                }
+
                 case MotionEvent.ACTION_CANCEL:
                     isPanning = false;
                     intercepting = false;
-                    if (getParent() != null)
+                    slopExceeded = false;
+                    stopVelocityTracking();
+                    if (getParent() != null) {
                         getParent().requestDisallowInterceptTouchEvent(false);
+                    }
                     return true;
             }
             return true;
         }
 
-        /** Direct zoom (called from pinch). Idempotent per frame. */
-        private void zoomTo(float targetScale, float focusX, float focusY) {
-            targetScale = Math.max(ABSOLUTE_MIN, Math.min(targetScale, HARD_MAX_SCALE));
+        // ---- velocity tracking ----
+        private void startVelocityTracking(MotionEvent ev) {
+            stopVelocityTracking();
+            velocityTracker = VelocityTracker.obtain();
+            velocityTracker.clear();
+            velocityTracker.addMovement(ev);
+        }
 
-            float prev = scale;
-            if (Math.abs(targetScale - prev) < 0.0005f) return;
+        private void addVelocitySample(MotionEvent ev) {
+            if (velocityTracker != null) velocityTracker.addMovement(ev);
+        }
+
+        private void stopVelocityTracking() {
+            if (velocityTracker != null) {
+                velocityTracker.recycle();
+                velocityTracker = null;
+            }
+        }
+
+        // ---- fling ----
+        private void cancelFling() {
+            if (flinging) {
+                scroller.forceFinished(true);
+                flinging = false;
+            }
+        }
+
+
+        private void startFling() {
+            if (velocityTracker == null) return;
+
+            velocityTracker.computeCurrentVelocity(1000, MAX_FLING_VELOCITY);
+
+            int vx = (int) velocityTracker.getXVelocity();
+            int vy = (int) velocityTracker.getYVelocity();
+
+            if (scale <= MIN_SNAP_SCALE + 0.001f) {
+                // Normal zoom: convert finger velocity to scroll-offset velocity.
+                if (Math.abs(vy) < MIN_FLING_VELOCITY) return;
+
+                float range = maxScrollY();
+                if (range <= 0f) return;
+
+                int startY = Math.max(0,
+                        Math.min((int) range, Math.round(-ty)));
+
+                scroller.forceFinished(true);
+                scroller.fling(
+                        0, startY,
+                        0, -vy,
+                        0, 0,
+                        0, (int) range
+                );
+
+                flinging = true;
+                postInvalidateOnAnimation();
+
+            } else {
+                // Zoomed: pan naturally in the direction of the finger's velocity.
+                if (Math.abs(vx) < MIN_FLING_VELOCITY
+                        && Math.abs(vy) < MIN_FLING_VELOCITY) {
+                    return;
+                }
+
+                float viewW = getWidth();
+                float viewH = getHeight();
+                float childH = contentHeight();
+
+                if (viewW <= 0f || viewH <= 0f || childH <= 0f) return;
+
+                float topScreenNoTy =
+                        (-viewH / 2f) * scale + viewH / 2f;
+
+                float bottomScreenNoTy =
+                        (childH - viewH / 2f) * scale + viewH / 2f;
+
+                float tyA = -topScreenNoTy;
+                float tyB = viewH - bottomScreenNoTy;
+
+                int tyMin = (int) Math.ceil(Math.min(tyA, tyB));
+                int tyMax = (int) Math.floor(Math.max(tyA, tyB));
+
+                float scaledContentW = viewW * scale;
+
+                int txMin;
+                int txMax;
+
+                if (scaledContentW <= viewW) {
+                    txMin = 0;
+                    txMax = 0;
+                } else {
+                    int maxX = (int) Math.ceil(
+                            (scaledContentW - viewW) / 2f);
+
+                    txMin = -maxX;
+                    txMax = maxX;
+                }
+
+                scroller.forceFinished(true);
+                scroller.fling(
+                        Math.round(tx), Math.round(ty),
+                        vx, vy,
+                        txMin, txMax,
+                        tyMin, tyMax
+                );
+
+                flinging = true;
+                postInvalidateOnAnimation();
+            }
+        }
+
+
+
+        @Override
+        public void computeScroll() {
+            if (!flinging) return;
+
+            if (scroller.computeScrollOffset()) {
+                if (scale <= MIN_SNAP_SCALE + 0.001f) {
+                    ty = -scroller.getCurrY();
+                    tx = 0f;
+                    clampScroll();
+                } else {
+                    tx = scroller.getCurrX();
+                    ty = scroller.getCurrY();
+                    clampPan();
+                }
+
+                applyMatrix();
+                postInvalidateOnAnimation();
+            } else {
+                flinging = false;
+            }
+        }
+
+
+        // ---- zoom ----
+
+        private void zoomTo(float targetScale, float focusX, float focusY) {
+            targetScale = Math.max(
+                    ABSOLUTE_MIN,
+                    Math.min(targetScale, HARD_MAX_SCALE)
+            );
+
+            float previousScale = scale;
+            if (Math.abs(targetScale - previousScale) < 0.0005f) return;
+
+            cancelFling();
 
             float cx = getWidth() / 2f;
             float cy = getHeight() / 2f;
 
-            float contentX = (focusX - cx - tx) / prev;
-            float contentY = (focusY - cy - ty) / prev;
+            // Preserve the exact document point beneath the pinch focus.
+            float contentX = (focusX - cx - tx) / previousScale;
+            float contentY = (focusY - cy - ty) / previousScale;
 
-            tx = focusX - cx - contentX * targetScale;
-            ty = focusY - cy - contentY * targetScale;
+            float newTx = focusX - cx - contentX * targetScale;
+            float newTy = focusY - cy - contentY * targetScale;
+
             scale = targetScale;
+            tx = newTx;
+            ty = newTy;
 
-            if (scale >= MIN_SNAP_SCALE) {
-                clampTranslation();
+            if (scale < MIN_SNAP_SCALE - 0.001f) {
+                // Do not clamp using 1x bounds while temporarily zoomed out.
+                // snapBackToMin() will restore a valid 1x position.
+                tx = 0f;
+            } else if (scale <= MIN_SNAP_SCALE + 0.001f) {
+                scale = MIN_SNAP_SCALE;
+                tx = 0f;
+                clampScroll();
+            } else {
+                clampPan();
             }
-            rebuildMatrix();
+
+            applyMatrix();
             invalidate();
         }
 
-        /** Double-tap animation. */
+
+
         private void animateZoomTo(float targetScale, float focusX, float focusY) {
-            final float finalTarget = Math.max(MIN_SNAP_SCALE, Math.min(targetScale, HARD_MAX_SCALE));
+            cancelFling();
+
+            final float finalTarget = Math.max(
+                    MIN_SNAP_SCALE,
+                    Math.min(targetScale, HARD_MAX_SCALE)
+            );
+
             final float startScale = scale;
             final float startTx = tx;
             final float startTy = ty;
@@ -604,107 +895,212 @@ public class DocxViewerActivity extends AppCompatActivity {
             final float endTx = focusX - cx - contentX * finalTarget;
             final float endTy = focusY - cy - contentY * finalTarget;
 
-            ValueAnimator anim = ValueAnimator.ofFloat(0f, 1f);
-            anim.setDuration(220);
+            android.animation.ValueAnimator anim =
+                    android.animation.ValueAnimator.ofFloat(0f, 1f);
+
+            anim.setDuration(240);
+            anim.setInterpolator(new android.view.animation.DecelerateInterpolator());
+
             anim.addUpdateListener(a -> {
                 float f = (float) a.getAnimatedValue();
+
                 scale = startScale + (finalTarget - startScale) * f;
                 tx = startTx + (endTx - startTx) * f;
                 ty = startTy + (endTy - startTy) * f;
-                if (scale > MIN_SNAP_SCALE) clampTranslation();
-                rebuildMatrix();
+
+                if (scale > MIN_SNAP_SCALE) {
+                    clampPan();
+                }
+
+                applyMatrix();
                 invalidate();
             });
+
+            anim.addListener(new android.animation.AnimatorListenerAdapter() {
+                @Override
+                public void onAnimationEnd(android.animation.Animator animation) {
+                    scale = finalTarget;
+                    tx = endTx;
+                    ty = endTy;
+
+                    if (scale <= MIN_SNAP_SCALE + 0.001f) {
+                        scale = MIN_SNAP_SCALE;
+                        tx = 0f;
+                        clampScroll();
+                    } else {
+                        clampPan();
+                    }
+
+                    applyMatrix();
+                    invalidate();
+                }
+            });
+
             anim.start();
         }
 
-        /** Rubber-band snap-back to 1.0 when pinch ends below 1.0. */
+
+
         private void snapBackToMin() {
-            if (scale >= MIN_SNAP_SCALE - 0.001f) return;
+            if (scale >= MIN_SNAP_SCALE - 0.001f) {
+                scale = MIN_SNAP_SCALE;
+                tx = 0f;
+                clampScroll();
+                applyMatrix();
+                invalidate();
+                return;
+            }
+
+            cancelFling();
 
             final float startScale = scale;
             final float startTx = tx;
             final float startTy = ty;
 
-            ValueAnimator anim = ValueAnimator.ofFloat(0f, 1f);
-            anim.setDuration(180);
+            // Preserve the document point currently at the viewport center.
+            final float contentY = -startTy / startScale;
+            final float targetTy = -contentY;
+
+            android.animation.ValueAnimator anim =
+                    android.animation.ValueAnimator.ofFloat(0f, 1f);
+
+            anim.setDuration(200);
+            anim.setInterpolator(new android.view.animation.DecelerateInterpolator());
+
             anim.addUpdateListener(a -> {
                 float f = (float) a.getAnimatedValue();
+
                 scale = startScale + (MIN_SNAP_SCALE - startScale) * f;
                 tx = startTx * (1f - f);
-                ty = startTy * (1f - f);
-                if (scale <= MIN_SNAP_SCALE + 0.001f) {
+                ty = startTy + (targetTy - startTy) * f;
+
+                // Avoid 1x clamping while the animation is still below 1x.
+                if (scale >= MIN_SNAP_SCALE) {
                     scale = MIN_SNAP_SCALE;
                     tx = 0f;
-                    ty = 0f;
+                    clampScroll();
                 }
-                rebuildMatrix();
+
+                applyMatrix();
                 invalidate();
             });
+
+            anim.addListener(new android.animation.AnimatorListenerAdapter() {
+                @Override
+                public void onAnimationEnd(android.animation.Animator animation) {
+                    scale = MIN_SNAP_SCALE;
+                    tx = 0f;
+                    ty = targetTy;
+                    clampScroll();
+                    applyMatrix();
+                    invalidate();
+                }
+
+                @Override
+                public void onAnimationCancel(android.animation.Animator animation) {
+                    // Do not force the document back to the top on cancellation.
+                }
+            });
+
             anim.start();
         }
 
-        /**
-         * Clamp so the scaled content still intersects the viewport.
-         */
-        private void clampTranslation() {
-            if (scale <= MIN_SNAP_SCALE + 0.001f) {
-                if (scale <= MIN_SNAP_SCALE) { tx = 0f; ty = 0f; }
-                return;
-            }
 
-            float viewW = getWidth();
-            float viewH = getHeight();
-            if (viewW <= 0 || viewH <= 0) return;
-
-            float childH = viewH;
-            if (vScroll != null && vScroll.getChildCount() > 0) {
-                childH = vScroll.getChildAt(0).getHeight();
-            }
-
-            float maxX = Math.max(0f, (viewW * scale - viewW) / 2f);
-            float maxY = Math.max(0f, (childH * scale - viewH) / 2f);
-
-            if (tx >  maxX) tx =  maxX;
-            if (tx < -maxX) tx = -maxX;
-            if (ty >  maxY) ty =  maxY;
-            if (ty < -maxY) ty = -maxY;
+        // ---- clamping ----
+        private void clampScroll() {
+            float range = maxScrollY();
+            if (ty > 0f) ty = 0f;
+            if (ty < -range) ty = -range;
         }
 
-        private void rebuildMatrix() {
+        private void clampPan() {
+            float viewW = getWidth();
+            float viewH = getHeight();
+            float childH = contentHeight();
+            if (viewW <= 0 || viewH <= 0 || childH <= 0) return;
+
+            float topScreenNoTy    = (-viewH / 2f) * scale + viewH / 2f;
+            float bottomScreenNoTy = (childH - viewH / 2f) * scale + viewH / 2f;
+
+            float tyA = 0f - topScreenNoTy;
+            float tyB = viewH - bottomScreenNoTy;
+            float tyMin = Math.min(tyA, tyB);
+            float tyMax = Math.max(tyA, tyB);
+
+            float scaledContentH = childH * scale;
+            if (scaledContentH <= viewH) {
+                float mid = (tyMin + tyMax) / 2f;
+                tyMin = tyMax = mid;
+            }
+
+            if (ty > tyMax) ty = tyMax;
+            if (ty < tyMin) ty = tyMin;
+
+            float scaledContentW = viewW * scale;
+            if (scaledContentW <= viewW) {
+                tx = 0f;
+            } else {
+                float maxX = (scaledContentW - viewW) / 2f;
+                if (tx >  maxX) tx =  maxX;
+                if (tx < -maxX) tx = -maxX;
+            }
+        }
+
+        private void applyMatrix() {
             float cx = getWidth() / 2f;
             float cy = getHeight() / 2f;
             matrix.reset();
             matrix.postScale(scale, scale, cx, cy);
             matrix.postTranslate(tx, ty);
+            invalidate();
         }
 
         @Override
         protected void dispatchDraw(Canvas canvas) {
-            if (scale == 1f && tx == 0f && ty == 0f) {
-                super.dispatchDraw(canvas);
-                return;
-            }
             int save = canvas.save();
             canvas.concat(matrix);
-            super.dispatchDraw(canvas);
+            if (contentLayer.getVisibility() == VISIBLE) {
+                int cs = canvas.save();
+                canvas.translate(contentLayer.getLeft(), contentLayer.getTop());
+                contentLayer.draw(canvas);
+                canvas.restoreToCount(cs);
+            }
             canvas.restoreToCount(save);
+
+            if (pageSlider != null && pageSlider.getVisibility() == VISIBLE) {
+                int cs = canvas.save();
+                canvas.translate(pageSlider.getLeft(), pageSlider.getTop());
+                pageSlider.draw(canvas);
+                canvas.restoreToCount(cs);
+            }
+
+            if (pageSlider != null) {
+                float range = maxScrollY();
+                float fraction = range > 0
+                        ? Math.max(0f, Math.min(1f, (-ty) / range))
+                        : 0f;
+                int totalPages = pageSlider.getTotalPages();
+                if (totalPages > 0) {
+                    int page = Math.min(totalPages,
+                            (int) Math.floor(fraction * totalPages) + 1);
+                    pageSlider.setScrollFraction(fraction, page, totalPages);
+                }
+            }
         }
 
         void release() {
-            setOnTouchListener(null);
+            cancelFling();
+            stopVelocityTracking();
         }
 
         private class ScaleListener extends ScaleGestureDetector.SimpleOnScaleGestureListener {
             @Override public boolean onScaleBegin(@NonNull ScaleGestureDetector d) {
                 isPanning = false;
+                cancelFling();
                 return true;
             }
 
             @Override public boolean onScale(@NonNull ScaleGestureDetector d) {
-                // Incremental: apply this event's factor to the CURRENT scale.
-                // Do NOT recompute from startScale — that reintroduces base
-                // drift if the detector ever jitters.
                 float desired = scale * d.getScaleFactor();
                 zoomTo(desired, d.getFocusX(), d.getFocusY());
                 return true;
@@ -715,11 +1111,16 @@ public class DocxViewerActivity extends AppCompatActivity {
                     snapBackToMin();
                 } else {
                     isPanning = true;
+                    lastX = d.getFocusX();
+                    lastY = d.getFocusY();
                 }
             }
         }
     }
 
+    // =====================================================================
+    // PageSliderView — unchanged behaviour; getTotalPages() drives the label.
+    // =====================================================================
     private interface OnPageSeek {
         void onSeek(float position01);
     }
@@ -768,6 +1169,8 @@ public class DocxViewerActivity extends AppCompatActivity {
         }
 
         void setListener(OnPageSeek l) { this.listener = l; }
+
+        int getTotalPages() { return totalPages; }
 
         void setScrollFraction(float fraction, int current, int total) {
             if (dragging) {
