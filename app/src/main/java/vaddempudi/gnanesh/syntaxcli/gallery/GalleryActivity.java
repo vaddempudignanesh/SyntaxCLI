@@ -106,6 +106,12 @@ public class GalleryActivity extends AppCompatActivity {
     private RelativeLayout fullscreenOverlay;
     private ViewPager2 fullscreenViewPager;
     private View fullscreenInfoHeader;
+
+    private static final long SINGLE_TAP_DELAY_MS = 260L;
+
+    private int savedGridScrollPosition = -1;
+
+    private Runnable savedPosSync;
     private TextView fullscreenInfoName, fullscreenInfoDetails, fullscreenInfoPath;
     private LinearLayout fullscreenBottomBar;
     private LinearLayout videoControlContainer;
@@ -157,8 +163,6 @@ public class GalleryActivity extends AppCompatActivity {
     private boolean autoScrollActive = false;
     private int autoScrollDx = 0, autoScrollDy = 0;
     private final List<GalleryMediaItem> cachedMedia = new ArrayList<>();
-    // Media belonging ONLY to the currently selected physical album.
-// Never mix this with cachedMedia/global gallery media.
     private final List<GalleryMediaItem> albumMedia = new ArrayList<>();
     private FullscreenAdapter fullscreenAdapter;
     private final List<String> fullscreenMediaPaths = new ArrayList<>();
@@ -180,6 +184,7 @@ public class GalleryActivity extends AppCompatActivity {
     private GestureDetector overlayVideoGestureDetector;
     private android.view.View.OnTouchListener volumeBrightnessHandler;
     private Runnable pendingChromeTapRunnable = null;
+    private int lastSeekTargetMs = -1;
     private boolean chromeDoubleTapArmed = false;
     private float playbackSpeedBeforeLongPress = 1.0f;
     private boolean isLandscape = false;
@@ -839,6 +844,16 @@ public class GalleryActivity extends AppCompatActivity {
         }
     }
 
+    private void scheduleSingleTapOrCancel() {
+        cancelPendingChromeTap();
+        pendingChromeTapRunnable = () -> {
+            pendingChromeTapRunnable = null;
+            boolean newVisible = !fullscreenChromeVisible;
+            if (newVisible) showAllControlsWithTimeout();
+            else hideAllControls();
+        };
+        videoHandler.postDelayed(pendingChromeTapRunnable, SINGLE_TAP_DELAY_MS);
+    }
 
     private Set<String> loadBinPaths() {
         if (prefs == null) return new HashSet<>();
@@ -2046,7 +2061,6 @@ public class GalleryActivity extends AppCompatActivity {
 
                     @Override public boolean onDoubleTap(MotionEvent e) {
                         cancelPendingChromeTap();
-                        onFullscreenTap();
                         if (!currentFullscreenPageIsVideo || currentFullscreenVideo == null) return false;
                         float tapX = e.getX();
                         float w = fullscreenOverlay.getWidth();
@@ -2289,6 +2303,11 @@ public class GalleryActivity extends AppCompatActivity {
     private void openFullscreenViewer(String path) {
         if (fullscreenViewPager != null) fullscreenViewPager.setUserInputEnabled(true);
 
+        // ★ Save grid scroll so back returns to the same row.
+        GridLayoutManager glm = (GridLayoutManager) recyclerView.getLayoutManager();
+        savedGridScrollPosition = glm != null
+                ? glm.findFirstVisibleItemPosition() : -1;
+
         fullscreenMediaPaths.clear();
         int currentIndex = 0;
         List<GalleryMediaItem> current = screenAdapter.getItems();
@@ -2348,6 +2367,10 @@ public class GalleryActivity extends AppCompatActivity {
 
     private void closeFullscreenViewer() {
         cancelPendingChromeTap();
+        if (savedPosSync != null) {
+            videoHandler.removeCallbacks(savedPosSync);
+            savedPosSync = null;
+        }
         if (currentFullscreenVideo != null) {
             fullscreenViewPager.setUserInputEnabled(true);
             try { currentFullscreenVideo.stopPlayback(); } catch (Exception ignored) {}
@@ -2358,6 +2381,7 @@ public class GalleryActivity extends AppCompatActivity {
         isOverlayVideoPlaying = false;
         overlayControlsVisible = false;
         overlayPendingSeekMs = -1;
+        lastSeekTargetMs = -1;
         savedVideoPositionMs = -1;
         savedVideoPath = null;
         savedVideoWasPlaying = false;
@@ -2385,6 +2409,15 @@ public class GalleryActivity extends AppCompatActivity {
         View topNav = findViewById(R.id.topNavBar);
         if (topNav != null) topNav.setVisibility(View.VISIBLE);
         updateTopNavBar();
+
+        if (savedGridScrollPosition >= 0 && recyclerView != null) {
+            GridLayoutManager glm = (GridLayoutManager) recyclerView.getLayoutManager();
+            if (glm != null) {
+                final int restore = savedGridScrollPosition;
+                recyclerView.post(() -> glm.scrollToPositionWithOffset(restore, 0));
+            }
+        }
+        savedGridScrollPosition = -1;
     }
 
     private void updateFullscreenInfo(int position) {
@@ -2541,6 +2574,8 @@ public class GalleryActivity extends AppCompatActivity {
             restoreMs = savedVideoPositionMs;
             restorePlaying = savedVideoWasPlaying;
         }
+        // ★ Reset the seek-accumulator whenever a new video is attached.
+        lastSeekTargetMs = -1;
         if (restoreMs > 0) {
             vv.seekToSafe(restoreMs);
             overlayPendingSeekMs = restoreMs;
@@ -2551,7 +2586,6 @@ public class GalleryActivity extends AppCompatActivity {
             else { vv.pause(); isOverlayVideoPlaying = false; }
         } catch (Exception ignored) {}
     }
-
     private void syncOverlayPlayPauseIcon() {
         boolean playing = false;
         if (currentFullscreenVideo != null) {
@@ -2569,17 +2603,35 @@ public class GalleryActivity extends AppCompatActivity {
         if (currentFullscreenVideo == null) return;
         int dur = currentFullscreenVideo.getSafeDuration();
         if (dur <= 0) return;
-        int current = getEffectivePositionMs();
-        int target = Math.max(0, Math.min(current + deltaMs, dur));
+
+        // Base = the larger of (a) actual player position, (b) last commanded target.
+        // This prevents "stuck at 15 s" when the player hasn't caught up yet.
+        int actual = currentFullscreenVideo.getSafePosition();
+        if (actual < 0) actual = 0;
+        int base = Math.max(actual, lastSeekTargetMs >= 0 ? lastSeekTargetMs : 0);
+
+        int target = Math.max(0, Math.min(base + deltaMs, dur));
+
+        lastSeekTargetMs = target;
         overlayPendingSeekMs = target;
+        savedVideoPositionMs = target;
+        savedVideoPath = currentFullscreenVideoPosition >= 0
+                && currentFullscreenVideoPosition < fullscreenMediaPaths.size()
+                ? fullscreenMediaPaths.get(currentFullscreenVideoPosition) : null;
+        savedVideoWasPlaying = isOverlayVideoPlaying;
+
         boolean seeked = currentFullscreenVideo.seekToSafe(target);
+
         if (videoTimeCurrent != null) videoTimeCurrent.setText(formatTime(target));
         if (videoSeekBar != null) {
             int progress = (int) ((target / (float) dur) * 1000);
             if (videoSeekBar.getProgress() != progress) videoSeekBar.setProgress(progress);
         }
+
         long clearDelay = seeked ? 350L : 60L;
         videoHandler.postDelayed(() -> overlayPendingSeekMs = -1, clearDelay);
+
+        scheduleSavedPositionSync();
     }
 
     private int getEffectivePositionMs() {
@@ -2609,6 +2661,7 @@ public class GalleryActivity extends AppCompatActivity {
     private void toggleOverlayPlayPause() {
         if (currentFullscreenVideo == null) return;
         overlayPendingSeekMs = -1;
+        lastSeekTargetMs = -1;
         boolean playing = false;
         try { playing = currentFullscreenVideo.isPlaying(); } catch (Exception ignored) {}
 
@@ -2657,7 +2710,19 @@ public class GalleryActivity extends AppCompatActivity {
         if (dur <= 0) return;
         if (cur < 0) cur = 0;
         if (cur > dur) cur = dur;
-        if (overlayPendingSeekMs >= 0 && overlayPendingSeekMs <= dur) cur = overlayPendingSeekMs;
+
+        // If a pending seek is in flight, keep the UI on the pending target
+        // until the player catches up — but only for ~600 ms.
+        if (overlayPendingSeekMs >= 0 && overlayPendingSeekMs <= dur) {
+            cur = overlayPendingSeekMs;
+        } else {
+            // Player has caught up — clear the commanded target so the next
+            // skip bases off the real position again.
+            if (lastSeekTargetMs >= 0
+                    && Math.abs(cur - lastSeekTargetMs) <= 500) {
+                lastSeekTargetMs = -1;
+            }
+        }
 
         if (videoTimeCurrent != null) videoTimeCurrent.setText(formatTime(cur));
         if (videoTimeTotal != null) videoTimeTotal.setText(formatTime(dur));
@@ -2665,13 +2730,33 @@ public class GalleryActivity extends AppCompatActivity {
             int progress = (int) ((cur / (float) dur) * 1000);
             if (videoSeekBar.getProgress() != progress) videoSeekBar.setProgress(progress);
         }
+
+        if (currentFullscreenVideoPosition >= 0
+                && currentFullscreenVideoPosition < fullscreenMediaPaths.size()) {
+            savedVideoPath = fullscreenMediaPaths.get(currentFullscreenVideoPosition);
+            savedVideoPositionMs = cur;
+        }
+    }
+
+    private void scheduleSavedPositionSync() {
+        if (savedPosSync != null) videoHandler.removeCallbacks(savedPosSync);
+        savedPosSync = () -> {
+            if (currentFullscreenVideo == null) return;
+            int p = currentFullscreenVideo.getSafePosition();
+            if (p >= 0) {
+                savedVideoPositionMs = p;
+                savedVideoPath = currentFullscreenVideoPosition >= 0
+                        && currentFullscreenVideoPosition < fullscreenMediaPaths.size()
+                        ? fullscreenMediaPaths.get(currentFullscreenVideoPosition) : null;
+                savedVideoWasPlaying = isOverlayVideoPlaying;
+            }
+            videoHandler.postDelayed(savedPosSync, 500L);
+        };
+        videoHandler.postDelayed(savedPosSync, 500L);
     }
 
     private void onFullscreenTap() {
-        cancelPendingChromeTap();
-        boolean newVisible = !fullscreenChromeVisible;
-        if (newVisible) showAllControlsWithTimeout();
-        else hideAllControls();
+        scheduleSingleTapOrCancel();
     }
 
     private void cancelPendingChromeTap() {
@@ -2955,8 +3040,10 @@ public class GalleryActivity extends AppCompatActivity {
                             && Math.abs(event.getX() - startX[0]) < DEAD_ZONE_PX;
                     if (wasTap) {
                         if (suppressNextUpTap[0]) suppressNextUpTap[0] = false;
-                        else onFullscreenTap();
-                    } else suppressNextUpTap[0] = false;
+                        else scheduleSingleTapOrCancel();   // ← delayed, not immediate
+                    } else {
+                        suppressNextUpTap[0] = false;
+                    }
 
                     committed[0] = false;
                     accumulator[0] = 0f;
@@ -2971,7 +3058,6 @@ public class GalleryActivity extends AppCompatActivity {
         fullscreenOverlay.setOnTouchListener(handler);
         this.volumeBrightnessHandler = handler;
     }
-
     private String getCachedCanonical(String path) {
         if (path == null) return null;
         String cached = canonicalAlbumCache.get(path);
@@ -3035,6 +3121,11 @@ public class GalleryActivity extends AppCompatActivity {
             try { currentFullscreenVideo.stopPlayback(); } catch (Exception ignored) {}
             currentFullscreenVideo = null;
         }
+        if (savedPosSync != null) {
+            videoHandler.removeCallbacks(savedPosSync);
+            savedPosSync = null;
+        }
+        cancelPendingChromeTap();
         videoHandler.removeCallbacksAndMessages(null);
         mediaRefreshHandler.removeCallbacksAndMessages(null);
         hideMediaHudImmediately();

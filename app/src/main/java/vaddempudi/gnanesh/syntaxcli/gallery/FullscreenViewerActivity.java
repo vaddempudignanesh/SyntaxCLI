@@ -14,6 +14,7 @@ import android.widget.SeekBar;
 import android.widget.TextView;
 
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.recyclerview.widget.RecyclerView;
 import androidx.viewpager2.widget.ViewPager2;
 
 import android.graphics.Color;
@@ -87,6 +88,10 @@ public class FullscreenViewerActivity extends AppCompatActivity {
         log("========================================================");
         setContentView(R.layout.activity_fullscreen_viewer);
 
+        ViewPager2 vpPre = findViewById(R.id.fullscreenViewPager);
+        if (vpPre != null) {
+            killPagerScrollBars(vpPre);
+        }
         decorView = getWindow().getDecorView();
         setImmersiveFullscreen();
 
@@ -211,6 +216,7 @@ public class FullscreenViewerActivity extends AppCompatActivity {
                 + " callback=" + Integer.toHexString(System.identityHashCode(callback)));
 
         viewPager.setAdapter(adapter);
+        killPagerScrollBars(viewPager);
         viewPager.setCurrentItem(currentPosition, false);
         viewPager.setOffscreenPageLimit(1);
 
@@ -256,6 +262,31 @@ public class FullscreenViewerActivity extends AppCompatActivity {
             showControls();
         }
     }
+
+
+    private void killPagerScrollBars(ViewPager2 vp) {
+        if (vp == null) return;
+        vp.setVerticalScrollBarEnabled(false);
+        vp.setHorizontalScrollBarEnabled(false);
+        // ViewPager2 lazily creates its internal RecyclerView.
+        // Post a callback so we hit it after layout has run.
+        vp.post(() -> {
+            try {
+                RecyclerView rv = (RecyclerView) vp.getChildAt(0);
+                if (rv != null) {
+                    rv.setVerticalScrollBarEnabled(false);
+                    rv.setHorizontalScrollBarEnabled(false);
+                    rv.setOverScrollMode(View.OVER_SCROLL_NEVER);
+                    // Some Android versions still draw the fade edges.
+                    // Disable them on the RecyclerView's View too.
+                    rv.setScrollbarFadingEnabled(false);
+                    rv.setVerticalFadingEdgeEnabled(false);
+                    rv.setHorizontalFadingEdgeEnabled(false);
+                }
+            } catch (Exception ignored) {}
+        });
+    }
+
 
     private void showControls() {
         if (!isActivityAlive()) return;
