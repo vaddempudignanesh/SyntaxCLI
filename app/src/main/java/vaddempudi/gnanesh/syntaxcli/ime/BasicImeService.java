@@ -182,6 +182,7 @@ public class BasicImeService extends InputMethodService
         };
     }
 
+
     @Override
     public void onStartInputView(EditorInfo info, boolean restarting) {
         super.onStartInputView(info, restarting);
@@ -211,6 +212,13 @@ public class BasicImeService extends InputMethodService
         }
     }
 
+    @Override
+    public void onStartInput(EditorInfo attribute, boolean restarting) {
+        super.onStartInput(attribute, restarting);
+        if (keyboardView != null) {
+            keyboardView.refreshWallpaper();
+        }
+    }
 
     @Override
     public void onFinishInputView(boolean finishingInput) {

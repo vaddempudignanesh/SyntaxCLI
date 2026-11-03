@@ -71,23 +71,29 @@ public class EmojiPaletteView extends LinearLayout {
 
     private void build() {
         List<EmojiData.Category> cats = EmojiData.categories();
-        if (cats == null || cats.isEmpty()) { /* …unchanged guard… */ return; }
+        if (cats == null || cats.isEmpty()) { return; }
 
         EmojiGridCache cache = EmojiGridCache.get(getContext());
-        // Make sure the picker callback is wired (also set from BasicImeService)
         cache.setPicker(listener);
 
-        // Tab strip
+        ImeColorStore cs = ImeColorStore.get(getContext());
+        int tabBarColor = (cs.getEmojiTabAlpha() << 24)
+                | (cs.getBgColor() & 0x00FFFFFF);
+
         HorizontalScrollView tabScroll = new HorizontalScrollView(getContext());
         tabScroll.setHorizontalScrollBarEnabled(false);
         tabScroll.setLayoutParams(new LinearLayout.LayoutParams(
                 LayoutParams.MATCH_PARENT, dp(TAB_ROW_HEIGHT_DP)));
+        GradientDrawable barBg = new GradientDrawable();
+        barBg.setColor(tabBarColor);
+        barBg.setCornerRadius(dp(4));
+        barBg.setStroke(dp(1), 0xFF1F3F1F);
+        tabScroll.setBackground(barBg);
         tabRow = new LinearLayout(getContext());
         tabRow.setOrientation(HORIZONTAL);
         tabScroll.addView(tabRow);
         addView(tabScroll);
 
-        // Scroll area
         emojiScroll = new ScrollView(getContext());
         emojiScroll.setLayoutParams(new LinearLayout.LayoutParams(
                 LayoutParams.MATCH_PARENT, 0, 1f));
@@ -106,7 +112,6 @@ public class EmojiPaletteView extends LinearLayout {
 
         addView(buildBottomBar());
 
-        // Tabs
         for (int i = 0; i < cats.size(); i++) {
             final int idx = i;
             final EmojiData.Category cat = cats.get(i);
@@ -130,7 +135,6 @@ public class EmojiPaletteView extends LinearLayout {
 
         sectionTopPx = new int[cats.size()];
 
-        // ★ Attach cached grids — synchronous, instant, no allocations
         emojiContent.removeAllViews();
         for (int i = 0; i < cats.size(); i++) {
             emojiContent.addView(makeHeader(cats.get(i).name));
@@ -140,11 +144,34 @@ public class EmojiPaletteView extends LinearLayout {
 
         highlightTabs();
 
-        // Measure header positions AFTER layout, then jump to active tab
         emojiContent.post(() -> {
             measureSectionTops();
             scrollToSection(activeIndex);
         });
+    }
+
+    private void highlightTabs() {
+        ImeColorStore cs = ImeColorStore.get(getContext());
+        int themeBg   = cs.getBgColor();
+        int tabAlpha  = cs.getEmojiTabAlpha();
+        int tabColor  = (tabAlpha << 24) | (themeBg & 0x00FFFFFF);
+
+        for (int i = 0; i < tabRow.getChildCount(); i++) {
+            TextView tab = (TextView) tabRow.getChildAt(i);
+            GradientDrawable bg = new GradientDrawable();
+            bg.setCornerRadius(dp(4));
+            if (i == activeIndex) {
+                bg.setColor(KeyboardConfig.COLOR_EMOJI_CATEGORY_SEL);
+                bg.setStroke(dp(1), KeyboardConfig.COLOR_EMOJI_CATEGORY_TEXT);
+                tab.setBackground(bg);
+                tab.setTextColor(0xFF000000);
+            } else {
+                bg.setColor(tabColor);
+                bg.setStroke(dp(1), 0xFF1F3F1F);
+                tab.setBackground(bg);
+                tab.setTextColor(KeyboardConfig.COLOR_EMOJI_CATEGORY_TEXT);
+            }
+        }
     }
 
     /** Show headers immediately so the panel isn't blank while grids build. */
@@ -211,24 +238,6 @@ public class EmojiPaletteView extends LinearLayout {
         }
     }
 
-    private void highlightTabs() {
-        for (int i = 0; i < tabRow.getChildCount(); i++) {
-            TextView tab = (TextView) tabRow.getChildAt(i);
-            GradientDrawable bg = new GradientDrawable();
-            bg.setCornerRadius(dp(4));
-            if (i == activeIndex) {
-                bg.setColor(KeyboardConfig.COLOR_EMOJI_CATEGORY_SEL);
-                bg.setStroke(dp(1), KeyboardConfig.COLOR_EMOJI_CATEGORY_TEXT);
-                tab.setBackground(bg);
-                tab.setTextColor(0xFF000000);
-            } else {
-                bg.setColor(0xFF0A0A0A);
-                bg.setStroke(dp(1), 0xFF1F3F1F);
-                tab.setBackground(bg);
-                tab.setTextColor(KeyboardConfig.COLOR_EMOJI_CATEGORY_TEXT);
-            }
-        }
-    }
 
     private void scrollToSection(int sectionIndex) {
         if (emojiScroll == null || sectionTopPx == null) return;

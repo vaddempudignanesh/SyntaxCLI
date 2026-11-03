@@ -3,19 +3,15 @@ package vaddempudi.gnanesh.syntaxcli.ime;
 import android.content.Context;
 import android.content.SharedPreferences;
 
-/**
- * RAM cache of the active keyboard theme colors.
- *
- * READ operations are pure in-memory. WRITE operations happen ONLY when
- * the user explicitly saves from the gesture editor (single I/O per save).
- */
 public final class ImeColorStore {
 
-    private static final String PREFS = "ime_color_store";
-    private static final String K_TEXT = "key_text_color";
-    private static final String K_BG   = "key_bg_color";
-    private static final String K_WP   = "key_wallpaper_enabled";
-    private static final String K_WP_DIM = "key_wallpaper_dim"; // 0..100
+    private static final String PREFS   = "ime_color_store";
+    private static final String K_TEXT  = "key_text_color";
+    private static final String K_BG    = "key_bg_color";
+    private static final String K_WP    = "key_wallpaper_enabled";
+    private static final String K_WP_DIM= "key_wallpaper_dim";
+    private static final String K_WP_IMG= "key_wallpaper_image";
+    private static final String K_TAB_A = "emoji_tab_alpha";
 
     private static volatile ImeColorStore INSTANCE;
     private static final Object LOCK = new Object();
@@ -24,16 +20,20 @@ public final class ImeColorStore {
     private volatile int bgColor;
     private volatile boolean wallpaperEnabled;
     private volatile int wallpaperDim;
+    private volatile String wallpaperImagePath;
+    private volatile int emojiTabAlpha;
 
     private final SharedPreferences prefs;
 
     private ImeColorStore(Context ctx) {
         prefs = ctx.getApplicationContext()
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        textColor = prefs.getInt(K_TEXT, KeyboardConfig.COLOR_TEXT);
-        bgColor   = prefs.getInt(K_BG,   KeyboardConfig.COLOR_BACKGROUND);
-        wallpaperEnabled = prefs.getBoolean(K_WP, false);
-        wallpaperDim     = prefs.getInt(K_WP_DIM, 70);
+        textColor          = prefs.getInt(K_TEXT, KeyboardConfig.COLOR_TEXT);
+        bgColor            = prefs.getInt(K_BG,   KeyboardConfig.COLOR_BACKGROUND);
+        wallpaperEnabled   = prefs.getBoolean(K_WP, false);
+        wallpaperDim       = prefs.getInt(K_WP_DIM, KeyboardConfig.DEFAULT_WALLPAPER_DIM);
+        wallpaperImagePath = prefs.getString(K_WP_IMG, null);
+        emojiTabAlpha      = prefs.getInt(K_TAB_A, 255);
     }
 
     public static ImeColorStore get(Context ctx) {
@@ -45,22 +45,13 @@ public final class ImeColorStore {
         return INSTANCE;
     }
 
-    /** Pure RAM read — no I/O. */
     public int getTextColor() { return textColor; }
-
-    /** Pure RAM read — no I/O. */
     public int getBgColor()   { return bgColor; }
-
-    /** Pure RAM read — no I/O. */
     public boolean isWallpaperEnabled() { return wallpaperEnabled; }
-
-    /** Pure RAM read — no I/O. 0..100. */
     public int getWallpaperDim() { return wallpaperDim; }
+    public String getWallpaperImagePath() { return wallpaperImagePath; }
+    public int getEmojiTabAlpha() { return emojiTabAlpha; }
 
-    /**
-     * Commit the current pending colors to RAM and to disk.
-     * Call this only from the gesture editor when the user taps RESTART.
-     */
     public void save(int newTextColor, int newBgColor) {
         textColor = newTextColor;
         bgColor   = newBgColor;
@@ -70,13 +61,19 @@ public final class ImeColorStore {
                 .apply();
     }
 
-    /** Commit wallpaper settings. */
-    public void saveWallpaper(boolean enabled, int dim) {
-        wallpaperEnabled = enabled;
-        wallpaperDim     = Math.max(0, Math.min(100, dim));
+    public void saveWallpaper(boolean enabled, int dim, String imagePath) {
+        wallpaperEnabled   = enabled;
+        wallpaperDim       = Math.max(0, Math.min(100, dim));
+        wallpaperImagePath = imagePath;
         prefs.edit()
                 .putBoolean(K_WP, wallpaperEnabled)
                 .putInt(K_WP_DIM, wallpaperDim)
+                .putString(K_WP_IMG, imagePath)
                 .apply();
+    }
+
+    public void saveEmojiTabAlpha(int alpha) {
+        emojiTabAlpha = Math.max(0, Math.min(255, alpha));
+        prefs.edit().putInt(K_TAB_A, emojiTabAlpha).apply();
     }
 }

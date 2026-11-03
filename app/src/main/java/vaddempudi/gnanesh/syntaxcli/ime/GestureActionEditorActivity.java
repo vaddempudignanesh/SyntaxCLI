@@ -3,19 +3,16 @@ package vaddempudi.gnanesh.syntaxcli.ime;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
-import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.text.InputType;
-import android.view.ContextThemeWrapper;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
-import android.widget.PopupMenu;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.TextView;
@@ -24,8 +21,6 @@ import android.widget.Toast;
 import java.util.List;
 import java.util.UUID;
 
-import vaddempudi.gnanesh.syntaxcli.R;
-
 public class GestureActionEditorActivity extends Activity {
 
     private static final int BG     = 0xFF000000;
@@ -33,38 +28,44 @@ public class GestureActionEditorActivity extends Activity {
     private static final int DIM    = 0xFF00AA00;
     private static final int CARD_BG     = 0xFF0A0A0A;
     private static final int CARD_BORDER = 0xFF1F3F1F;
+    private static final int REQ_PICK_WALLPAPER = 4211;
 
-    private boolean pendingWallpaperEnabled;
-    private int pendingWallpaperDim;
-    private TextView wallpaperToggleLabel;
-    private SeekBar wallpaperDimSeek;
-    private TextView wallpaperDimLabel;
-
-    private LinearLayout list;
-
-    // Pending colors — committed only when RESTART is tapped
     private int pendingTextColor;
     private int pendingBgColor;
-    private boolean colorsDirty = false;
+    private boolean pendingWallpaperEnabled;
+    private int pendingWallpaperDim;
+    private String pendingWallpaperImagePath;
+    private int pendingTabAlpha;
 
     private View textSwatch;
     private View bgSwatch;
     private TextView textHexLabel;
     private TextView bgHexLabel;
 
-    private Button restartButton;
+    private TextView wallpaperToggleLabel;
+    private TextView wallpaperPickLabel;
+    private SeekBar wallpaperDimSeek;
+    private TextView wallpaperDimLabel;
+
+    private SeekBar tabAlphaSeek;
+    private TextView tabAlphaLabel;
+
+    private LinearLayout list;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         ImeColorStore store = ImeColorStore.get(this);
-        pendingTextColor = store.getTextColor();
-        pendingBgColor   = store.getBgColor();
-        pendingWallpaperEnabled = store.isWallpaperEnabled();
-        pendingWallpaperDim     = store.getWallpaperDim();
+        pendingTextColor          = store.getTextColor();
+        pendingBgColor            = store.getBgColor();
+        pendingWallpaperEnabled   = store.isWallpaperEnabled();
+        pendingWallpaperDim       = store.getWallpaperDim();
+        pendingWallpaperImagePath = store.getWallpaperImagePath();
+        pendingTabAlpha           = store.getEmojiTabAlpha();
         build();
         renderList();
     }
+
     private void build() {
         ScrollView scroll = new ScrollView(this);
         scroll.setBackgroundColor(BG);
@@ -74,7 +75,6 @@ public class GestureActionEditorActivity extends Activity {
         root.setPadding(dp(16), dp(16), dp(16), dp(24));
         root.setBackgroundColor(BG);
 
-        // ── Title ──
         TextView title = new TextView(this);
         title.setText("GESTURE ACTIONS");
         title.setTextColor(GREEN);
@@ -83,16 +83,13 @@ public class GestureActionEditorActivity extends Activity {
         root.addView(title);
 
         TextView sub = new TextView(this);
-        sub.setText("Assign an action to a key. Long-press that key on the keyboard to run it.\n" +
-                "Long-press SPACE to open this screen.");
+        sub.setText("Assign an action to a key. Long-press that key on the keyboard to run it.\n"
+                + "Long-press SPACE to open this screen.");
         sub.setTextColor(DIM);
         sub.setTextSize(11);
         sub.setPadding(0, dp(8), 0, dp(16));
         root.addView(sub);
 
-        // ═══════════════════════════════════════════════════════════
-        //  THEME COLORS CARD
-        // ═══════════════════════════════════════════════════════════
         LinearLayout themeCard = new LinearLayout(this);
         themeCard.setOrientation(LinearLayout.VERTICAL);
         themeCard.setPadding(dp(14), dp(14), dp(14), dp(14));
@@ -113,42 +110,51 @@ public class GestureActionEditorActivity extends Activity {
         themeHeader.setTypeface(Typeface.MONOSPACE);
         themeCard.addView(themeHeader);
 
-        // -- Text color row --
         LinearLayout textRow = makeColorRow(
                 "Text color",
                 pendingTextColor,
                 c -> {
                     pendingTextColor = c;
-                    colorsDirty = true;
-                    refreshColorPreviews();
+                    ImeColorStore.get(this).save(pendingTextColor, pendingBgColor);
+                    refreshPreviews();
                 });
         themeCard.addView(textRow);
         textSwatch = textRow.findViewWithTag("swatch");
         textHexLabel = textRow.findViewWithTag("hex");
 
-        // -- Background color row --
         LinearLayout bgRow = makeColorRow(
                 "Background color",
                 pendingBgColor,
                 c -> {
                     pendingBgColor = c;
-                    colorsDirty = true;
-                    refreshColorPreviews();
+                    ImeColorStore.get(this).save(pendingTextColor, pendingBgColor);
+                    refreshPreviews();
                 });
         themeCard.addView(bgRow);
         bgSwatch = bgRow.findViewWithTag("swatch");
         bgHexLabel = bgRow.findViewWithTag("hex");
 
-
-        // ── Wallpaper row ─────────────────────────────────────────
-        LinearLayout wpRow = new LinearLayout(this);
-        wpRow.setOrientation(LinearLayout.VERTICAL);
-        LinearLayout.LayoutParams wpLp = new LinearLayout.LayoutParams(
+        LinearLayout wallCard = new LinearLayout(this);
+        wallCard.setOrientation(LinearLayout.VERTICAL);
+        wallCard.setPadding(dp(14), dp(14), dp(14), dp(14));
+        GradientDrawable wallBg = new GradientDrawable();
+        wallBg.setColor(0xFF050A05);
+        wallBg.setCornerRadius(dp(8));
+        wallBg.setStroke(dp(1), GREEN);
+        wallCard.setBackground(wallBg);
+        LinearLayout.LayoutParams wallLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        wpLp.topMargin = dp(14);
-        wpRow.setLayoutParams(wpLp);
+        wallLp.topMargin = dp(6);
+        wallLp.bottomMargin = dp(16);
+        root.addView(wallCard, wallLp);
 
-        // Toggle title (tappable)
+        TextView wallHeader = new TextView(this);
+        wallHeader.setText("▌ WALLPAPER & TAB BUTTON");
+        wallHeader.setTextColor(GREEN);
+        wallHeader.setTextSize(13);
+        wallHeader.setTypeface(Typeface.MONOSPACE);
+        wallCard.addView(wallHeader);
+
         wallpaperToggleLabel = new TextView(this);
         wallpaperToggleLabel.setTextSize(13);
         wallpaperToggleLabel.setTypeface(Typeface.MONOSPACE);
@@ -162,12 +168,40 @@ public class GestureActionEditorActivity extends Activity {
         wallpaperToggleLabel.setClickable(true);
         wallpaperToggleLabel.setOnClickListener(v -> {
             pendingWallpaperEnabled = !pendingWallpaperEnabled;
-            colorsDirty = true;
-            refreshColorPreviews();
+            ImeColorStore.get(this).saveWallpaper(
+                    pendingWallpaperEnabled, pendingWallpaperDim, pendingWallpaperImagePath);
+            refreshPreviews();
         });
-        wpRow.addView(wallpaperToggleLabel);
+        LinearLayout.LayoutParams wpTogLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        wpTogLp.topMargin = dp(10);
+        wallCard.addView(wallpaperToggleLabel, wpTogLp);
 
-        // Dim slider row
+        wallpaperPickLabel = new TextView(this);
+        wallpaperPickLabel.setTextSize(12);
+        wallpaperPickLabel.setTypeface(Typeface.MONOSPACE);
+        wallpaperPickLabel.setTextColor(GREEN);
+        wallpaperPickLabel.setPadding(dp(10), dp(8), dp(10), dp(8));
+        GradientDrawable pickBg = new GradientDrawable();
+        pickBg.setColor(0xFF0A0A0A);
+        pickBg.setCornerRadius(dp(6));
+        pickBg.setStroke(dp(1), CARD_BORDER);
+        wallpaperPickLabel.setBackground(pickBg);
+        wallpaperPickLabel.setClickable(true);
+        wallpaperPickLabel.setOnClickListener(v -> openImagePicker());
+        wallpaperPickLabel.setOnLongClickListener(v -> {
+            pendingWallpaperImagePath = null;
+            ImeColorStore.get(this).saveWallpaper(
+                    pendingWallpaperEnabled, pendingWallpaperDim, null);
+            refreshPreviews();
+            Toast.makeText(this, "Switched to system wallpaper", Toast.LENGTH_SHORT).show();
+            return true;
+        });
+        LinearLayout.LayoutParams pickLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        pickLp.topMargin = dp(8);
+        wallCard.addView(wallpaperPickLabel, pickLp);
+
         LinearLayout dimRow = new LinearLayout(this);
         dimRow.setOrientation(LinearLayout.HORIZONTAL);
         dimRow.setGravity(Gravity.CENTER_VERTICAL);
@@ -196,14 +230,14 @@ public class GestureActionEditorActivity extends Activity {
         wallpaperDimSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar sb, int p, boolean u) {
                 pendingWallpaperDim = p;
-                colorsDirty = true;
-                refreshColorPreviews();
+                ImeColorStore.get(GestureActionEditorActivity.this).saveWallpaper(
+                        pendingWallpaperEnabled, pendingWallpaperDim, pendingWallpaperImagePath);
+                refreshPreviews();
             }
             @Override public void onStartTrackingTouch(SeekBar sb) { }
             @Override public void onStopTrackingTouch(SeekBar sb) { }
         });
-        dimRow.addView(wallpaperDimSeek, new LinearLayout.LayoutParams(
-                0, dp(48), 1f));
+        dimRow.addView(wallpaperDimSeek, new LinearLayout.LayoutParams(0, dp(48), 1f));
 
         wallpaperDimLabel = new TextView(this);
         wallpaperDimLabel.setTextColor(DIM);
@@ -213,37 +247,62 @@ public class GestureActionEditorActivity extends Activity {
         dimRow.addView(wallpaperDimLabel, new LinearLayout.LayoutParams(
                 dp(44), ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        wpRow.addView(dimRow);
-        themeCard.addView(wpRow);
+        wallCard.addView(dimRow);
 
-        // -- Dirty warning --
-        TextView warn = new TextView(this);
-        warn.setText("Tap RESTART to apply changes");
-        warn.setTextColor(0xFFFFAA00);
-        warn.setTextSize(11);
-        warn.setTypeface(Typeface.MONOSPACE);
-        warn.setPadding(0, dp(10), 0, 0);
-        themeCard.addView(warn);
-        this.dirtyWarning = warn;
+        View divider = new View(this);
+        divider.setBackgroundColor(0xFF1F3F1F);
+        LinearLayout.LayoutParams divLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(1));
+        divLp.topMargin = dp(14);
+        divLp.bottomMargin = dp(10);
+        wallCard.addView(divider, divLp);
 
-        // -- Restart button --
-        restartButton = new Button(this);
-        restartButton.setText("RESTART");
-        restartButton.setTextColor(0xFF000000);
-        restartButton.setBackgroundColor(GREEN);
-        restartButton.setTypeface(Typeface.MONOSPACE);
-        restartButton.setEnabled(false);
-        restartButton.setOnClickListener(v -> {
-            ImeColorStore store = ImeColorStore.get(this);
-            store.save(pendingTextColor, pendingBgColor);
-            store.saveWallpaper(pendingWallpaperEnabled, pendingWallpaperDim);
-            Toast.makeText(this, "Saved. Applied…", Toast.LENGTH_SHORT).show();
-            recreate();
+        LinearLayout tabAlphaRow = new LinearLayout(this);
+        tabAlphaRow.setOrientation(LinearLayout.HORIZONTAL);
+        tabAlphaRow.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams tabLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
+        tabLp.topMargin = dp(4);
+        tabAlphaRow.setLayoutParams(tabLp);
+
+        TextView tabTag = new TextView(this);
+        tabTag.setText("TAB ALPHA");
+        tabTag.setTextColor(GREEN);
+        tabTag.setTextSize(12);
+        tabTag.setTypeface(Typeface.MONOSPACE);
+        tabAlphaRow.addView(tabTag, new LinearLayout.LayoutParams(
+                dp(90), ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        tabAlphaSeek = new SeekBar(this);
+        tabAlphaSeek.setMax(255);
+        tabAlphaSeek.setProgress(pendingTabAlpha);
+        tabAlphaSeek.setSplitTrack(false);
+        tabAlphaSeek.setPadding(dp(12), 0, dp(12), 0);
+        tabAlphaSeek.setProgressTintList(android.content.res.ColorStateList.valueOf(GREEN));
+        tabAlphaSeek.setThumbTintList(android.content.res.ColorStateList.valueOf(GREEN));
+        tabAlphaSeek.setProgressBackgroundTintList(
+                android.content.res.ColorStateList.valueOf(0xFF444444));
+        tabAlphaSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar sb, int p, boolean u) {
+                pendingTabAlpha = p;
+                ImeColorStore.get(GestureActionEditorActivity.this).saveEmojiTabAlpha(p);
+                refreshPreviews();
+            }
+            @Override public void onStartTrackingTouch(SeekBar sb) { }
+            @Override public void onStopTrackingTouch(SeekBar sb) { }
         });
-        LinearLayout.LayoutParams rLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        rLp.topMargin = dp(12);
-        themeCard.addView(restartButton, rLp);
+        tabAlphaRow.addView(tabAlphaSeek, new LinearLayout.LayoutParams(0, dp(48), 1f));
+
+        tabAlphaLabel = new TextView(this);
+        tabAlphaLabel.setTextColor(DIM);
+        tabAlphaLabel.setTextSize(11);
+        tabAlphaLabel.setTypeface(Typeface.MONOSPACE);
+        tabAlphaLabel.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        tabAlphaRow.addView(tabAlphaLabel, new LinearLayout.LayoutParams(
+                dp(52), ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        wallCard.addView(tabAlphaRow);
+
         LinearLayout actionsCard = new LinearLayout(this);
         actionsCard.setOrientation(LinearLayout.VERTICAL);
         actionsCard.setPadding(dp(14), dp(14), dp(14), dp(14));
@@ -272,15 +331,9 @@ public class GestureActionEditorActivity extends Activity {
 
         scroll.addView(root);
         setContentView(scroll);
-        refreshColorPreviews();
+        refreshPreviews();
     }
 
-    private TextView dirtyWarning;
-
-    /**
-     * Builds a row: "Text color" label, a tappable color-preview swatch,
-     * a hex readout, and wires the tap to open the RGB picker.
-     */
     private LinearLayout makeColorRow(String label, int currentColor,
                                       ColorPickedCallback onPicked) {
         LinearLayout row = new LinearLayout(this);
@@ -306,8 +359,7 @@ public class GestureActionEditorActivity extends Activity {
         sg.setCornerRadius(dp(6));
         sg.setStroke(dp(2), GREEN);
         swatch.setBackground(sg);
-        LinearLayout.LayoutParams swLp =
-                new LinearLayout.LayoutParams(dp(44), dp(44));
+        LinearLayout.LayoutParams swLp = new LinearLayout.LayoutParams(dp(44), dp(44));
         swLp.leftMargin = dp(10);
         swLp.rightMargin = dp(10);
         row.addView(swatch, swLp);
@@ -346,7 +398,7 @@ public class GestureActionEditorActivity extends Activity {
         swatch.setBackground(g);
     }
 
-    private void refreshColorPreviews() {
+    private void refreshPreviews() {
         if (textSwatch != null) {
             updateSwatch(textSwatch, pendingTextColor);
             if (textHexLabel != null) textHexLabel.setText(hex(pendingTextColor));
@@ -355,13 +407,19 @@ public class GestureActionEditorActivity extends Activity {
             updateSwatch(bgSwatch, pendingBgColor);
             if (bgHexLabel != null) bgHexLabel.setText(hex(pendingBgColor));
         }
-
-        // ★ Wallpaper row
         if (wallpaperToggleLabel != null) {
             wallpaperToggleLabel.setText(pendingWallpaperEnabled
                     ? "WALLPAPER:  ON   (tap to disable)"
                     : "WALLPAPER:  OFF  (tap to enable)");
             wallpaperToggleLabel.setTextColor(pendingWallpaperEnabled ? 0xFFFFAA00 : GREEN);
+        }
+        if (wallpaperPickLabel != null) {
+            String src = (pendingWallpaperImagePath == null || pendingWallpaperImagePath.isEmpty())
+                    ? "SOURCE:  SYSTEM WALLPAPER  (tap to pick, long-press to reset)"
+                    : "SOURCE:  CUSTOM IMAGE  (tap to change)";
+            wallpaperPickLabel.setText(src);
+            wallpaperPickLabel.setEnabled(pendingWallpaperEnabled);
+            wallpaperPickLabel.setAlpha(pendingWallpaperEnabled ? 1f : 0.4f);
         }
         if (wallpaperDimSeek != null) {
             wallpaperDimSeek.setEnabled(pendingWallpaperEnabled);
@@ -371,20 +429,59 @@ public class GestureActionEditorActivity extends Activity {
             wallpaperDimLabel.setText(pendingWallpaperDim + "%");
             wallpaperDimLabel.setAlpha(pendingWallpaperEnabled ? 1f : 0.4f);
         }
+        if (tabAlphaSeek != null) tabAlphaSeek.setProgress(pendingTabAlpha);
+        if (tabAlphaLabel != null) {
+            int pct = Math.round(pendingTabAlpha * 100f / 255f);
+            tabAlphaLabel.setText(pct + "%");
+        }
+    }
 
-        if (restartButton != null) restartButton.setEnabled(colorsDirty);
-        if (dirtyWarning != null) {
-            dirtyWarning.setVisibility(colorsDirty ? View.VISIBLE : View.GONE);
+    private void openImagePicker() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("image/*");
+        try {
+            startActivityForResult(i, REQ_PICK_WALLPAPER);
+        } catch (Exception e) {
+            Toast.makeText(this, "No gallery app found", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_PICK_WALLPAPER && resultCode == RESULT_OK && data != null) {
+            android.net.Uri uri = data.getData();
+            if (uri == null) return;
+            try {
+                getContentResolver().takePersistableUriPermission(
+                        uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            } catch (Exception ignored) { }
+            try {
+                java.io.File dst = new java.io.File(getFilesDir(), "kbd_wallpaper.jpg");
+                try (java.io.InputStream in = getContentResolver().openInputStream(uri);
+                     java.io.OutputStream out = new java.io.FileOutputStream(dst)) {
+                    if (in == null) throw new java.io.IOException("null stream");
+                    byte[] buf = new byte[8192];
+                    int n;
+                    while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                }
+                pendingWallpaperImagePath = dst.getAbsolutePath();
+                pendingWallpaperEnabled = true;
+                ImeColorStore.get(this).saveWallpaper(
+                        pendingWallpaperEnabled, pendingWallpaperDim, pendingWallpaperImagePath);
+                Toast.makeText(this, "Custom wallpaper set", Toast.LENGTH_SHORT).show();
+                recreate();
+            } catch (Exception e) {
+                Toast.makeText(this, "Failed to read image: " + e.getMessage(),
+                        Toast.LENGTH_LONG).show();
+            }
         }
     }
 
     private static String hex(int c) {
         return String.format("#%06X", 0xFFFFFF & c);
     }
-
-    // ═══════════════════════════════════════════════════════════════
-    //  Actions list (unchanged logic, restyled to fit inside a card)
-    // ═══════════════════════════════════════════════════════════════
 
     private void renderList() {
         list.removeAllViews();
@@ -398,7 +495,6 @@ public class GestureActionEditorActivity extends Activity {
             list.addView(empty);
             return;
         }
-
         for (KeyAction a : actions) {
             LinearLayout row = new LinearLayout(this);
             row.setOrientation(LinearLayout.VERTICAL);
@@ -409,14 +505,13 @@ public class GestureActionEditorActivity extends Activity {
             rowBg.setStroke(dp(1), CARD_BORDER);
             row.setBackground(rowBg);
             LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT);
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             rlp.setMargins(0, dp(4), 0, dp(4));
             row.setLayoutParams(rlp);
 
             TextView line1 = new TextView(this);
-            line1.setText("KEY: [" + a.keyChar + "]  →  " +
-                    (a.type == KeyAction.TYPE_APP_LAUNCH ? "LAUNCH " : "TYPE ") + a.payload);
+            line1.setText("KEY: [" + a.keyChar + "]  →  "
+                    + (a.type == KeyAction.TYPE_APP_LAUNCH ? "LAUNCH " : "TYPE ") + a.payload);
             line1.setTextColor(GREEN);
             line1.setTypeface(Typeface.MONOSPACE);
             line1.setTextSize(13);
@@ -538,9 +633,7 @@ public class GestureActionEditorActivity extends Activity {
         pickAppBtn.setVisibility(existing != null && existing.type == KeyAction.TYPE_APP_LAUNCH
                 ? View.VISIBLE : View.GONE);
         pickAppBtn.setOnClickListener(v ->
-                AppPickerDialog.show(this, (pkg, label) -> {
-                    payloadInput.setText(pkg);
-                }));
+                AppPickerDialog.show(this, (pkg, label) -> payloadInput.setText(pkg)));
         root.addView(pickAppBtn);
 
         Runnable refreshTypeUi = () -> {
@@ -566,39 +659,35 @@ public class GestureActionEditorActivity extends Activity {
                 .create();
 
         dlg.setOnShowListener(d -> {
-            dlg.getButton(android.app.AlertDialog.BUTTON_POSITIVE)
-                    .setTextColor(GREEN);
-            dlg.getButton(android.app.AlertDialog.BUTTON_POSITIVE)
-                    .setOnClickListener(v -> {
-                        String key = keyInput.getText().toString().trim();
-                        String payload = payloadInput.getText().toString().trim();
-                        if (key.isEmpty() || payload.isEmpty()) {
-                            Toast.makeText(this, "Key and payload required",
-                                    Toast.LENGTH_SHORT).show();
-                            return;
-                        }
-                        if (key.length() > 1) key = key.substring(0, 1);
+            dlg.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setTextColor(GREEN);
+            dlg.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+                String key = keyInput.getText().toString().trim();
+                String payload = payloadInput.getText().toString().trim();
+                if (key.isEmpty() || payload.isEmpty()) {
+                    Toast.makeText(this, "Key and payload required", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                if (key.length() > 1) key = key.substring(0, 1);
 
-                        KeyAction dup = GestureActionStore.get(this).byKeyChar(key);
-                        if (dup != null && (existing == null || !dup.id.equals(existing.id))) {
-                            Toast.makeText(this,
-                                    "Key '" + key + "' already bound to another action",
-                                    Toast.LENGTH_LONG).show();
-                            return;
-                        }
+                KeyAction dup = GestureActionStore.get(this).byKeyChar(key);
+                if (dup != null && (existing == null || !dup.id.equals(existing.id))) {
+                    Toast.makeText(this, "Key '" + key + "' already bound to another action",
+                            Toast.LENGTH_LONG).show();
+                    return;
+                }
 
-                        KeyAction a = new KeyAction(
-                                existing != null ? existing.id : UUID.randomUUID().toString(),
-                                key, type[0], payload);
+                KeyAction a = new KeyAction(
+                        existing != null ? existing.id : UUID.randomUUID().toString(),
+                        key, type[0], payload);
 
-                        if (existing != null) {
-                            GestureActionStore.get(this).replace(existing.id, a);
-                        } else {
-                            GestureActionStore.get(this).add(a);
-                        }
-                        renderList();
-                        dlg.dismiss();
-                    });
+                if (existing != null) {
+                    GestureActionStore.get(this).replace(existing.id, a);
+                } else {
+                    GestureActionStore.get(this).add(a);
+                }
+                renderList();
+                dlg.dismiss();
+            });
         });
         dlg.show();
     }
