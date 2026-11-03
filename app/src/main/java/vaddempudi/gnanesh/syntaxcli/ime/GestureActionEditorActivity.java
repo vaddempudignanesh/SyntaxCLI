@@ -29,26 +29,30 @@ public class GestureActionEditorActivity extends Activity {
     private static final int CARD_BG     = 0xFF0A0A0A;
     private static final int CARD_BORDER = 0xFF1F3F1F;
     private static final int REQ_PICK_WALLPAPER = 4211;
+    private static final int REQ_PICK_VIDEO     = 4212;
 
     private int pendingTextColor;
     private int pendingBgColor;
+    private int pendingKeyAlpha;
+
     private boolean pendingWallpaperEnabled;
     private int pendingWallpaperDim;
     private String pendingWallpaperImagePath;
-    private int pendingTabAlpha;
+    private String pendingWallpaperVideoPath;
 
     private View textSwatch;
     private View bgSwatch;
     private TextView textHexLabel;
     private TextView bgHexLabel;
 
+    private SeekBar keyAlphaSeek;
+    private TextView keyAlphaLabel;
+
     private TextView wallpaperToggleLabel;
-    private TextView wallpaperPickLabel;
+    private TextView wallpaperImageLabel;
+    private TextView wallpaperVideoLabel;
     private SeekBar wallpaperDimSeek;
     private TextView wallpaperDimLabel;
-
-    private SeekBar tabAlphaSeek;
-    private TextView tabAlphaLabel;
 
     private LinearLayout list;
 
@@ -58,10 +62,11 @@ public class GestureActionEditorActivity extends Activity {
         ImeColorStore store = ImeColorStore.get(this);
         pendingTextColor          = store.getTextColor();
         pendingBgColor            = store.getBgColor();
+        pendingKeyAlpha           = store.getKeyAlpha();
         pendingWallpaperEnabled   = store.isWallpaperEnabled();
         pendingWallpaperDim       = store.getWallpaperDim();
         pendingWallpaperImagePath = store.getWallpaperImagePath();
-        pendingTabAlpha           = store.getEmojiTabAlpha();
+        pendingWallpaperVideoPath = store.getWallpaperVideoPath();
         build();
         renderList();
     }
@@ -134,6 +139,52 @@ public class GestureActionEditorActivity extends Activity {
         bgSwatch = bgRow.findViewWithTag("swatch");
         bgHexLabel = bgRow.findViewWithTag("hex");
 
+        LinearLayout keyAlphaRow = new LinearLayout(this);
+        keyAlphaRow.setOrientation(LinearLayout.HORIZONTAL);
+        keyAlphaRow.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams kaLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
+        kaLp.topMargin = dp(8);
+        keyAlphaRow.setLayoutParams(kaLp);
+
+        TextView kaTag = new TextView(this);
+        kaTag.setText("KEY ALPHA");
+        kaTag.setTextColor(GREEN);
+        kaTag.setTextSize(12);
+        kaTag.setTypeface(Typeface.MONOSPACE);
+        keyAlphaRow.addView(kaTag, new LinearLayout.LayoutParams(
+                dp(90), ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        keyAlphaSeek = new SeekBar(this);
+        keyAlphaSeek.setMax(255);
+        keyAlphaSeek.setProgress(pendingKeyAlpha);
+        keyAlphaSeek.setSplitTrack(false);
+        keyAlphaSeek.setPadding(dp(12), 0, dp(12), 0);
+        keyAlphaSeek.setProgressTintList(android.content.res.ColorStateList.valueOf(GREEN));
+        keyAlphaSeek.setThumbTintList(android.content.res.ColorStateList.valueOf(GREEN));
+        keyAlphaSeek.setProgressBackgroundTintList(
+                android.content.res.ColorStateList.valueOf(0xFF444444));
+        keyAlphaSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar sb, int p, boolean u) {
+                pendingKeyAlpha = p;
+                ImeColorStore.get(GestureActionEditorActivity.this).saveKeyAlpha(p);
+                refreshPreviews();
+            }
+            @Override public void onStartTrackingTouch(SeekBar sb) { }
+            @Override public void onStopTrackingTouch(SeekBar sb) { }
+        });
+        keyAlphaRow.addView(keyAlphaSeek, new LinearLayout.LayoutParams(0, dp(48), 1f));
+
+        keyAlphaLabel = new TextView(this);
+        keyAlphaLabel.setTextColor(DIM);
+        keyAlphaLabel.setTextSize(11);
+        keyAlphaLabel.setTypeface(Typeface.MONOSPACE);
+        keyAlphaLabel.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        keyAlphaRow.addView(keyAlphaLabel, new LinearLayout.LayoutParams(
+                dp(52), ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        themeCard.addView(keyAlphaRow);
+
         LinearLayout wallCard = new LinearLayout(this);
         wallCard.setOrientation(LinearLayout.VERTICAL);
         wallCard.setPadding(dp(14), dp(14), dp(14), dp(14));
@@ -149,7 +200,7 @@ public class GestureActionEditorActivity extends Activity {
         root.addView(wallCard, wallLp);
 
         TextView wallHeader = new TextView(this);
-        wallHeader.setText("▌ WALLPAPER & TAB BUTTON");
+        wallHeader.setText("▌ WALLPAPER");
         wallHeader.setTextColor(GREEN);
         wallHeader.setTextSize(13);
         wallHeader.setTypeface(Typeface.MONOSPACE);
@@ -168,8 +219,7 @@ public class GestureActionEditorActivity extends Activity {
         wallpaperToggleLabel.setClickable(true);
         wallpaperToggleLabel.setOnClickListener(v -> {
             pendingWallpaperEnabled = !pendingWallpaperEnabled;
-            ImeColorStore.get(this).saveWallpaper(
-                    pendingWallpaperEnabled, pendingWallpaperDim, pendingWallpaperImagePath);
+            saveWallpaper();
             refreshPreviews();
         });
         LinearLayout.LayoutParams wpTogLp = new LinearLayout.LayoutParams(
@@ -177,30 +227,53 @@ public class GestureActionEditorActivity extends Activity {
         wpTogLp.topMargin = dp(10);
         wallCard.addView(wallpaperToggleLabel, wpTogLp);
 
-        wallpaperPickLabel = new TextView(this);
-        wallpaperPickLabel.setTextSize(12);
-        wallpaperPickLabel.setTypeface(Typeface.MONOSPACE);
-        wallpaperPickLabel.setTextColor(GREEN);
-        wallpaperPickLabel.setPadding(dp(10), dp(8), dp(10), dp(8));
-        GradientDrawable pickBg = new GradientDrawable();
-        pickBg.setColor(0xFF0A0A0A);
-        pickBg.setCornerRadius(dp(6));
-        pickBg.setStroke(dp(1), CARD_BORDER);
-        wallpaperPickLabel.setBackground(pickBg);
-        wallpaperPickLabel.setClickable(true);
-        wallpaperPickLabel.setOnClickListener(v -> openImagePicker());
-        wallpaperPickLabel.setOnLongClickListener(v -> {
+        wallpaperImageLabel = new TextView(this);
+        wallpaperImageLabel.setTextSize(12);
+        wallpaperImageLabel.setTypeface(Typeface.MONOSPACE);
+        wallpaperImageLabel.setTextColor(GREEN);
+        wallpaperImageLabel.setPadding(dp(10), dp(8), dp(10), dp(8));
+        GradientDrawable imgBg = new GradientDrawable();
+        imgBg.setColor(0xFF0A0A0A);
+        imgBg.setCornerRadius(dp(6));
+        imgBg.setStroke(dp(1), CARD_BORDER);
+        wallpaperImageLabel.setBackground(imgBg);
+        wallpaperImageLabel.setClickable(true);
+        wallpaperImageLabel.setOnClickListener(v -> openImagePicker());
+        wallpaperImageLabel.setOnLongClickListener(v -> {
             pendingWallpaperImagePath = null;
-            ImeColorStore.get(this).saveWallpaper(
-                    pendingWallpaperEnabled, pendingWallpaperDim, null);
+            saveWallpaper();
             refreshPreviews();
-            Toast.makeText(this, "Switched to system wallpaper", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Image source cleared", Toast.LENGTH_SHORT).show();
             return true;
         });
-        LinearLayout.LayoutParams pickLp = new LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams imgLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        pickLp.topMargin = dp(8);
-        wallCard.addView(wallpaperPickLabel, pickLp);
+        imgLp.topMargin = dp(8);
+        wallCard.addView(wallpaperImageLabel, imgLp);
+
+        wallpaperVideoLabel = new TextView(this);
+        wallpaperVideoLabel.setTextSize(12);
+        wallpaperVideoLabel.setTypeface(Typeface.MONOSPACE);
+        wallpaperVideoLabel.setTextColor(GREEN);
+        wallpaperVideoLabel.setPadding(dp(10), dp(8), dp(10), dp(8));
+        GradientDrawable vidBg = new GradientDrawable();
+        vidBg.setColor(0xFF0A0A0A);
+        vidBg.setCornerRadius(dp(6));
+        vidBg.setStroke(dp(1), CARD_BORDER);
+        wallpaperVideoLabel.setBackground(vidBg);
+        wallpaperVideoLabel.setClickable(true);
+        wallpaperVideoLabel.setOnClickListener(v -> openVideoPicker());
+        wallpaperVideoLabel.setOnLongClickListener(v -> {
+            pendingWallpaperVideoPath = null;
+            saveWallpaper();
+            refreshPreviews();
+            Toast.makeText(this, "Video source cleared", Toast.LENGTH_SHORT).show();
+            return true;
+        });
+        LinearLayout.LayoutParams vidLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        vidLp.topMargin = dp(8);
+        wallCard.addView(wallpaperVideoLabel, vidLp);
 
         LinearLayout dimRow = new LinearLayout(this);
         dimRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -230,8 +303,7 @@ public class GestureActionEditorActivity extends Activity {
         wallpaperDimSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar sb, int p, boolean u) {
                 pendingWallpaperDim = p;
-                ImeColorStore.get(GestureActionEditorActivity.this).saveWallpaper(
-                        pendingWallpaperEnabled, pendingWallpaperDim, pendingWallpaperImagePath);
+                saveWallpaper();
                 refreshPreviews();
             }
             @Override public void onStartTrackingTouch(SeekBar sb) { }
@@ -248,60 +320,6 @@ public class GestureActionEditorActivity extends Activity {
                 dp(44), ViewGroup.LayoutParams.WRAP_CONTENT));
 
         wallCard.addView(dimRow);
-
-        View divider = new View(this);
-        divider.setBackgroundColor(0xFF1F3F1F);
-        LinearLayout.LayoutParams divLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(1));
-        divLp.topMargin = dp(14);
-        divLp.bottomMargin = dp(10);
-        wallCard.addView(divider, divLp);
-
-        LinearLayout tabAlphaRow = new LinearLayout(this);
-        tabAlphaRow.setOrientation(LinearLayout.HORIZONTAL);
-        tabAlphaRow.setGravity(Gravity.CENTER_VERTICAL);
-        LinearLayout.LayoutParams tabLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
-        tabLp.topMargin = dp(4);
-        tabAlphaRow.setLayoutParams(tabLp);
-
-        TextView tabTag = new TextView(this);
-        tabTag.setText("TAB ALPHA");
-        tabTag.setTextColor(GREEN);
-        tabTag.setTextSize(12);
-        tabTag.setTypeface(Typeface.MONOSPACE);
-        tabAlphaRow.addView(tabTag, new LinearLayout.LayoutParams(
-                dp(90), ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        tabAlphaSeek = new SeekBar(this);
-        tabAlphaSeek.setMax(255);
-        tabAlphaSeek.setProgress(pendingTabAlpha);
-        tabAlphaSeek.setSplitTrack(false);
-        tabAlphaSeek.setPadding(dp(12), 0, dp(12), 0);
-        tabAlphaSeek.setProgressTintList(android.content.res.ColorStateList.valueOf(GREEN));
-        tabAlphaSeek.setThumbTintList(android.content.res.ColorStateList.valueOf(GREEN));
-        tabAlphaSeek.setProgressBackgroundTintList(
-                android.content.res.ColorStateList.valueOf(0xFF444444));
-        tabAlphaSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override public void onProgressChanged(SeekBar sb, int p, boolean u) {
-                pendingTabAlpha = p;
-                ImeColorStore.get(GestureActionEditorActivity.this).saveEmojiTabAlpha(p);
-                refreshPreviews();
-            }
-            @Override public void onStartTrackingTouch(SeekBar sb) { }
-            @Override public void onStopTrackingTouch(SeekBar sb) { }
-        });
-        tabAlphaRow.addView(tabAlphaSeek, new LinearLayout.LayoutParams(0, dp(48), 1f));
-
-        tabAlphaLabel = new TextView(this);
-        tabAlphaLabel.setTextColor(DIM);
-        tabAlphaLabel.setTextSize(11);
-        tabAlphaLabel.setTypeface(Typeface.MONOSPACE);
-        tabAlphaLabel.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
-        tabAlphaRow.addView(tabAlphaLabel, new LinearLayout.LayoutParams(
-                dp(52), ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        wallCard.addView(tabAlphaRow);
 
         LinearLayout actionsCard = new LinearLayout(this);
         actionsCard.setOrientation(LinearLayout.VERTICAL);
@@ -332,6 +350,14 @@ public class GestureActionEditorActivity extends Activity {
         scroll.addView(root);
         setContentView(scroll);
         refreshPreviews();
+    }
+
+    private void saveWallpaper() {
+        ImeColorStore.get(this).saveWallpaper(
+                pendingWallpaperEnabled,
+                pendingWallpaperDim,
+                pendingWallpaperImagePath,
+                pendingWallpaperVideoPath);
     }
 
     private LinearLayout makeColorRow(String label, int currentColor,
@@ -407,19 +433,32 @@ public class GestureActionEditorActivity extends Activity {
             updateSwatch(bgSwatch, pendingBgColor);
             if (bgHexLabel != null) bgHexLabel.setText(hex(pendingBgColor));
         }
+        if (keyAlphaSeek != null) keyAlphaSeek.setProgress(pendingKeyAlpha);
+        if (keyAlphaLabel != null) {
+            int pct = Math.round(pendingKeyAlpha * 100f / 255f);
+            keyAlphaLabel.setText(pct + "%");
+        }
         if (wallpaperToggleLabel != null) {
             wallpaperToggleLabel.setText(pendingWallpaperEnabled
                     ? "WALLPAPER:  ON   (tap to disable)"
                     : "WALLPAPER:  OFF  (tap to enable)");
             wallpaperToggleLabel.setTextColor(pendingWallpaperEnabled ? 0xFFFFAA00 : GREEN);
         }
-        if (wallpaperPickLabel != null) {
+        if (wallpaperImageLabel != null) {
             String src = (pendingWallpaperImagePath == null || pendingWallpaperImagePath.isEmpty())
-                    ? "SOURCE:  SYSTEM WALLPAPER  (tap to pick, long-press to reset)"
-                    : "SOURCE:  CUSTOM IMAGE  (tap to change)";
-            wallpaperPickLabel.setText(src);
-            wallpaperPickLabel.setEnabled(pendingWallpaperEnabled);
-            wallpaperPickLabel.setAlpha(pendingWallpaperEnabled ? 1f : 0.4f);
+                    ? "IMAGE SOURCE:  SYSTEM WALLPAPER  (tap to pick, long-press to clear)"
+                    : "IMAGE SOURCE:  CUSTOM IMAGE  (tap to change)";
+            wallpaperImageLabel.setText(src);
+            wallpaperImageLabel.setEnabled(pendingWallpaperEnabled);
+            wallpaperImageLabel.setAlpha(pendingWallpaperEnabled ? 1f : 0.4f);
+        }
+        if (wallpaperVideoLabel != null) {
+            String src = (pendingWallpaperVideoPath == null || pendingWallpaperVideoPath.isEmpty())
+                    ? "VIDEO SOURCE:  NONE  (tap to pick MP4, long-press to clear)"
+                    : "VIDEO SOURCE:  CUSTOM MP4  (tap to change)";
+            wallpaperVideoLabel.setText(src);
+            wallpaperVideoLabel.setEnabled(pendingWallpaperEnabled);
+            wallpaperVideoLabel.setAlpha(pendingWallpaperEnabled ? 1f : 0.4f);
         }
         if (wallpaperDimSeek != null) {
             wallpaperDimSeek.setEnabled(pendingWallpaperEnabled);
@@ -428,11 +467,6 @@ public class GestureActionEditorActivity extends Activity {
         if (wallpaperDimLabel != null) {
             wallpaperDimLabel.setText(pendingWallpaperDim + "%");
             wallpaperDimLabel.setAlpha(pendingWallpaperEnabled ? 1f : 0.4f);
-        }
-        if (tabAlphaSeek != null) tabAlphaSeek.setProgress(pendingTabAlpha);
-        if (tabAlphaLabel != null) {
-            int pct = Math.round(pendingTabAlpha * 100f / 255f);
-            tabAlphaLabel.setText(pct + "%");
         }
     }
 
@@ -447,16 +481,29 @@ public class GestureActionEditorActivity extends Activity {
         }
     }
 
+    private void openVideoPicker() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("video/*");
+        try {
+            startActivityForResult(i, REQ_PICK_VIDEO);
+        } catch (Exception e) {
+            Toast.makeText(this, "No video picker found", Toast.LENGTH_SHORT).show();
+        }
+    }
+
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == REQ_PICK_WALLPAPER && resultCode == RESULT_OK && data != null) {
-            android.net.Uri uri = data.getData();
-            if (uri == null) return;
-            try {
-                getContentResolver().takePersistableUriPermission(
-                        uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            } catch (Exception ignored) { }
+        if (resultCode != RESULT_OK || data == null) return;
+        android.net.Uri uri = data.getData();
+        if (uri == null) return;
+        try {
+            getContentResolver().takePersistableUriPermission(
+                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        } catch (Exception ignored) { }
+
+        if (requestCode == REQ_PICK_WALLPAPER) {
             try {
                 java.io.File dst = new java.io.File(getFilesDir(), "kbd_wallpaper.jpg");
                 try (java.io.InputStream in = getContentResolver().openInputStream(uri);
@@ -467,13 +514,33 @@ public class GestureActionEditorActivity extends Activity {
                     while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
                 }
                 pendingWallpaperImagePath = dst.getAbsolutePath();
+                pendingWallpaperVideoPath = null;
                 pendingWallpaperEnabled = true;
-                ImeColorStore.get(this).saveWallpaper(
-                        pendingWallpaperEnabled, pendingWallpaperDim, pendingWallpaperImagePath);
-                Toast.makeText(this, "Custom wallpaper set", Toast.LENGTH_SHORT).show();
+                saveWallpaper();
+                Toast.makeText(this, "Custom image set", Toast.LENGTH_SHORT).show();
                 recreate();
             } catch (Exception e) {
                 Toast.makeText(this, "Failed to read image: " + e.getMessage(),
+                        Toast.LENGTH_LONG).show();
+            }
+        } else if (requestCode == REQ_PICK_VIDEO) {
+            try {
+                java.io.File dst = new java.io.File(getFilesDir(), "kbd_wallpaper.mp4");
+                try (java.io.InputStream in = getContentResolver().openInputStream(uri);
+                     java.io.OutputStream out = new java.io.FileOutputStream(dst)) {
+                    if (in == null) throw new java.io.IOException("null stream");
+                    byte[] buf = new byte[8192];
+                    int n;
+                    while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                }
+                pendingWallpaperVideoPath = dst.getAbsolutePath();
+                pendingWallpaperImagePath = null;
+                pendingWallpaperEnabled = true;
+                saveWallpaper();
+                Toast.makeText(this, "Custom video set", Toast.LENGTH_SHORT).show();
+                recreate();
+            } catch (Exception e) {
+                Toast.makeText(this, "Failed to read video: " + e.getMessage(),
                         Toast.LENGTH_LONG).show();
             }
         }

@@ -1,6 +1,5 @@
 package vaddempudi.gnanesh.syntaxcli.ime;
 
-
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Paint;
@@ -14,9 +13,6 @@ import android.view.View;
 
 import java.util.ArrayList;
 import java.util.List;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
-import android.graphics.Matrix;
 
 public class BasicKeyboardView extends View {
 
@@ -53,12 +49,6 @@ public class BasicKeyboardView extends View {
     private boolean symbols2 = false;
     private boolean symbols3 = false;
 
-    private Bitmap wallpaperBitmap;
-    private String wallpaperBitmapPath;   // path of the currently loaded bitmap
-    private final Paint wallpaperBitmapPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final RectF wallpaperDst = new RectF();
-
-
     private final Paint wallpaperDimPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint keyPaint    = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint borderPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -92,11 +82,8 @@ public class BasicKeyboardView extends View {
         textPaint.setTextAlign(Paint.Align.CENTER);
         textPaint.setColor(colors.getTextColor());
 
-        if (colors.isWallpaperEnabled()) {
-            reloadWallpaperBitmap(colors);
-        } else {
-            setBackgroundColor(colors.getBgColor());
-        }
+        setBackgroundColor(0);
+
         setFocusableInTouchMode(true);
 
         repeatRunnable = new Runnable() {
@@ -186,9 +173,6 @@ public class BasicKeyboardView extends View {
     protected void onSizeChanged(int w, int h, int ow, int oh) {
         super.onSizeChanged(w, h, ow, oh);
         rebuildHitKeys();
-        if (ImeColorStore.get(getContext()).isWallpaperEnabled()) {
-            reloadWallpaperBitmap(ImeColorStore.get(getContext()));
-        }
     }
 
     private void rebuildHitKeys() {
@@ -253,12 +237,7 @@ public class BasicKeyboardView extends View {
 
         ImeColorStore colors = ImeColorStore.get(getContext());
 
-        // ─── Wallpaper rendering ────────────────────────────────────────
         if (colors.isWallpaperEnabled()) {
-            if (wallpaperBitmap != null) {
-                drawCustomWallpaper(canvas);
-            }
-            // Dim overlay
             int dim = colors.getWallpaperDim();
             if (dim > 0) {
                 int alpha = Math.round(dim * 255f / 100f);
@@ -266,36 +245,59 @@ public class BasicKeyboardView extends View {
                         | (KeyboardConfig.COLOR_WALLPAPER_DIM_FILL & 0x00FFFFFF));
                 canvas.drawRect(0, 0, getWidth(), getHeight(), wallpaperDimPaint);
             }
+        } else {
+            wallpaperDimPaint.setColor(colors.getBgColor());
+            canvas.drawRect(0, 0, getWidth(), getHeight(), wallpaperDimPaint);
         }
 
+        int textColor = colors.getTextColor();
+        int keyAlpha  = colors.getKeyAlpha();
 
         int keyFill;
-        int textColor   = colors.getTextColor();
-
+        int base = colors.getBgColor();
         if (colors.isWallpaperEnabled()) {
-            int base = colors.getBgColor();
-            int alpha = 0xB0;
-            keyFill = (alpha << 24) | (base & 0x00FFFFFF);
+            keyFill = (keyAlpha << 24) | (base & 0x00FFFFFF);
         } else {
-            keyFill = colors.getBgColor();
+            keyFill = base;
         }
 
         int specialFill = blend(keyFill, 0xFF000000, 0.35f);
+        if (colors.isWallpaperEnabled()) {
+            specialFill = (keyAlpha << 24) | (specialFill & 0x00FFFFFF);
+        }
 
         int pressedFill = blend(keyFill, textColor, 0.45f);
+        if (colors.isWallpaperEnabled()) {
+            pressedFill = (keyAlpha << 24) | (pressedFill & 0x00FFFFFF);
+        }
 
         textPaint.setColor(textColor);
 
         float radius = KeyboardConfig.KEY_CORNER_RADIUS_DP * density;
 
-        for (HitKey hk : hitKeys) {
-            if (hk == pressed)                              keyPaint.setColor(pressedFill);
-            else if (hk.key.code != BasicKey.CODE_NONE)     keyPaint.setColor(specialFill);
-            else                                            keyPaint.setColor(keyFill);
+        int borderColor = KeyboardConfig.COLOR_BORDER;
+        int borderAlpha = (borderColor >>> 24) & 0xFF;
+        int finalBorderAlpha = (borderAlpha * keyAlpha) / 255;
+        borderPaint.setColor((finalBorderAlpha << 24) | (borderColor & 0x00FFFFFF));
 
-            keyRect.set(hk.rect);
-            canvas.drawRoundRect(keyRect, radius, radius, keyPaint);
-            canvas.drawRoundRect(keyRect, radius, radius, borderPaint);
+        boolean keysHidden = keyAlpha <= 0;
+
+        for (HitKey hk : hitKeys) {
+            if (keysHidden) {
+                keyPaint.setColor(pressedFill);
+                if (hk == pressed) {
+                    keyRect.set(hk.rect);
+                    canvas.drawRoundRect(keyRect, radius, radius, keyPaint);
+                }
+            } else {
+                if (hk == pressed)                          keyPaint.setColor(pressedFill);
+                else if (hk.key.code != BasicKey.CODE_NONE) keyPaint.setColor(specialFill);
+                else                                        keyPaint.setColor(keyFill);
+
+                keyRect.set(hk.rect);
+                canvas.drawRoundRect(keyRect, radius, radius, keyPaint);
+                canvas.drawRoundRect(keyRect, radius, radius, borderPaint);
+            }
 
             String label;
             if (hk.key.code == BasicKey.CODE_SHIFT && shiftLocked) {
@@ -323,77 +325,6 @@ public class BasicKeyboardView extends View {
         }
     }
 
-    /** Loads the custom wallpaper bitmap if the user picked one. */
-    private void reloadWallpaperBitmap(ImeColorStore colors) {
-        String path = colors.getWallpaperImagePath();
-        if (path == null || path.isEmpty()) {
-            wallpaperBitmap = null;
-            wallpaperBitmapPath = null;
-            return;
-        }
-        if (path.equals(wallpaperBitmapPath) && wallpaperBitmap != null) return;
-
-        try {
-            // Decode scaled-down to avoid OOM on huge images.
-            BitmapFactory.Options bounds = new BitmapFactory.Options();
-            bounds.inJustDecodeBounds = true;
-            BitmapFactory.decodeFile(path, bounds);
-
-            int reqW = Math.max(1, getWidth() > 0 ? getWidth() : 1080);
-            int reqH = Math.max(1, getHeight() > 0 ? getHeight() : 500);
-
-            int sample = 1;
-            while ((bounds.outWidth / sample) > reqW * 2
-                    || (bounds.outHeight / sample) > reqH * 2) {
-                sample *= 2;
-            }
-
-            BitmapFactory.Options opts = new BitmapFactory.Options();
-            opts.inSampleSize = sample;
-            Bitmap raw = BitmapFactory.decodeFile(path, opts);
-            if (raw == null) {
-                wallpaperBitmap = null;
-                wallpaperBitmapPath = null;
-                return;
-            }
-            wallpaperBitmap = raw;
-            wallpaperBitmapPath = path;
-        } catch (Throwable t) {
-            android.util.Log.e("BasicKeyboardView", "wallpaper load failed", t);
-            wallpaperBitmap = null;
-            wallpaperBitmapPath = null;
-        }
-    }
-
-    /** Center-crops the wallpaper bitmap to fill the keyboard area. */
-    private void drawCustomWallpaper(Canvas canvas) {
-        if (wallpaperBitmap == null) return;
-        int vw = getWidth();
-        int vh = getHeight();
-        if (vw <= 0 || vh <= 0) return;
-
-        int bw = wallpaperBitmap.getWidth();
-        int bh = wallpaperBitmap.getHeight();
-        if (bw <= 0 || bh <= 0) return;
-
-        // center-crop ("cover" semantics)
-        float scale = Math.max((float) vw / bw, (float) vh / bh);
-        float drawW = bw * scale;
-        float drawH = bh * scale;
-
-        wallpaperDst.set(
-                (vw - drawW) / 2f,
-                (vh - drawH) / 2f,
-                (vw + drawW) / 2f,
-                (vh + drawH) / 2f);
-
-        canvas.drawBitmap(wallpaperBitmap, null, wallpaperDst, wallpaperBitmapPaint);
-    }
-
-    public void refreshWallpaper() {
-        reloadWallpaperBitmap(ImeColorStore.get(getContext()));
-        invalidate();
-    }
     private static int blend(int dst, int src, float ratio) {
         if (ratio <= 0f) return dst;
         if (ratio >= 1f) return src;
@@ -541,6 +472,7 @@ public class BasicKeyboardView extends View {
             pendingLongPress = null;
         }
     }
+
     private void showBubbleFor(HitKey hk) {
         if (bubbleOverlay == null) return;
         if (hk == null || hk.key.code != BasicKey.CODE_NONE) {

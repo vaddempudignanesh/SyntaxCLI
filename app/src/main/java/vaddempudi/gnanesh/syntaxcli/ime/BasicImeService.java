@@ -1,10 +1,17 @@
 package vaddempudi.gnanesh.syntaxcli.ime;
 
+import android.content.Context;
+import android.graphics.SurfaceTexture;
 import android.inputmethodservice.InputMethodService;
+import android.media.MediaPlayer;
+import android.view.Gravity;
 import android.view.KeyEvent;
+import android.view.TextureView;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
+import android.widget.FrameLayout;
 
 public class BasicImeService extends InputMethodService
         implements EmojiPaletteView.PanelControl,
@@ -14,7 +21,11 @@ public class BasicImeService extends InputMethodService
     private KeyBubbleOverlay bubbleOverlay;
     private EmojiPaletteView emojiPanel;
 
-    // ─── PanelControl ───
+    private FrameLayout rootContainer;
+    private TextureView videoView;
+    private MediaPlayer mediaPlayer;
+    private String currentVideoPath;
+
     @Override
     public void closePanel() {
         if (keyboardView != null) setInputView(keyboardView);
@@ -35,7 +46,7 @@ public class BasicImeService extends InputMethodService
         ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL));
         ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_DEL));
     }
-    // ─── EmojiPickListener ───
+
     @Override
     public void onEmojiPicked(String emoji) {
         InputConnection ic = getCurrentInputConnection();
@@ -45,11 +56,7 @@ public class BasicImeService extends InputMethodService
     @Override
     public void onCreate() {
         super.onCreate();
-
-        // ★ Register the picker so cached cells dispatch to this service
         EmojiGridCache.get(this).setPicker(this);
-
-        // ★ Warm the cache in the background — no UI thread cost
         new Thread(() -> {
             try {
                 EmojiGridCache.get(this).warm();
@@ -58,21 +65,95 @@ public class BasicImeService extends InputMethodService
             }
         }, "emoji-warm").start();
     }
+
     @Override
     public View onCreateInputView() {
+        rootContainer = new FrameLayout(this);
+
         keyboardView = new BasicKeyboardView(this);
         bubbleOverlay = new KeyBubbleOverlay(this);
         keyboardView.setBubbleOverlay(bubbleOverlay);
         keyboardView.setListener(buildListener());
 
-        ImeColorStore colors = ImeColorStore.get(this);
-        if (colors.isWallpaperEnabled()) {
-            getWindow().getWindow().setBackgroundDrawableResource(android.R.color.transparent);
-        } else {
-            getWindow().getWindow().setBackgroundDrawable(
-                    new android.graphics.drawable.ColorDrawable(colors.getBgColor()));
+        rootContainer.addView(keyboardView, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        applyWallpaperWindowSettings();
+        rebuildWallpaperLayers();
+
+        return rootContainer;
+    }
+
+    private void rebuildWallpaperLayers() {
+        if (rootContainer == null) return;
+
+        if (videoView != null) {
+            rootContainer.removeView(videoView);
+            videoView = null;
         }
-        return keyboardView;
+        stopVideo();
+
+        ImeColorStore colors = ImeColorStore.get(this);
+
+        if (!colors.isWallpaperEnabled()) return;
+
+        if (colors.hasVideoWallpaper()) {
+            videoView = new TextureView(this);
+            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT);
+            lp.gravity = Gravity.BOTTOM;
+            rootContainer.addView(videoView, 0, lp);
+
+            videoView.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
+                @Override public void onSurfaceTextureAvailable(SurfaceTexture st, int w, int h) {
+                    startVideo(colors.getWallpaperVideoPath(), st);
+                }
+                @Override public void onSurfaceTextureSizeChanged(SurfaceTexture st, int w, int h) { }
+                @Override public boolean onSurfaceTextureDestroyed(SurfaceTexture st) {
+                    stopVideo();
+                    return true;
+                }
+                @Override public void onSurfaceTextureUpdated(SurfaceTexture st) { }
+            });
+        }
+
+        if (keyboardView != null) {
+            keyboardView.bringToFront();
+            keyboardView.invalidate();
+        }
+    }
+
+    private void startVideo(String path, SurfaceTexture st) {
+        if (path == null || path.isEmpty()) return;
+        if (currentVideoPath != null && currentVideoPath.equals(path) && mediaPlayer != null) {
+            try { mediaPlayer.setSurface(new android.view.Surface(st)); mediaPlayer.start(); } catch (Exception ignored) { }
+            return;
+        }
+        stopVideo();
+        try {
+            mediaPlayer = new MediaPlayer();
+            mediaPlayer.setDataSource(path);
+            mediaPlayer.setSurface(new android.view.Surface(st));
+            mediaPlayer.setLooping(true);
+            mediaPlayer.setVolume(0f, 0f);
+            mediaPlayer.setOnPreparedListener(MediaPlayer::start);
+            mediaPlayer.prepareAsync();
+            currentVideoPath = path;
+        } catch (Exception e) {
+            android.util.Log.e("BasicImeService", "video start failed", e);
+            stopVideo();
+        }
+    }
+
+    private void stopVideo() {
+        if (mediaPlayer != null) {
+            try { mediaPlayer.stop(); } catch (Exception ignored) { }
+            try { mediaPlayer.release(); } catch (Exception ignored) { }
+            mediaPlayer = null;
+        }
+        currentVideoPath = null;
     }
 
     private void showEmojiPanel() {
@@ -81,6 +162,7 @@ public class BasicImeService extends InputMethodService
         }
         setInputView(emojiPanel);
     }
+
     private void runAction(KeyAction a) {
         if (a == null) return;
         if (a.type == KeyAction.TYPE_TEXT) {
@@ -182,17 +264,18 @@ public class BasicImeService extends InputMethodService
         };
     }
 
-
     @Override
     public void onStartInputView(EditorInfo info, boolean restarting) {
         super.onStartInputView(info, restarting);
         setPage(0);
-        keyboardView = new BasicKeyboardView(this);
-        if (bubbleOverlay == null) bubbleOverlay = new KeyBubbleOverlay(this);
-        keyboardView.setBubbleOverlay(bubbleOverlay);
-        keyboardView.setListener(buildListener());
-        setInputView(keyboardView);
-        applyWallpaperWindowSettings();
+
+        if (rootContainer == null) {
+            onCreateInputView();
+        } else {
+            keyboardView.setListener(buildListener());
+            applyWallpaperWindowSettings();
+            rebuildWallpaperLayers();
+        }
     }
 
     @Override
@@ -216,8 +299,10 @@ public class BasicImeService extends InputMethodService
     public void onStartInput(EditorInfo attribute, boolean restarting) {
         super.onStartInput(attribute, restarting);
         if (keyboardView != null) {
-            keyboardView.refreshWallpaper();
+            keyboardView.invalidate();
         }
+        applyWallpaperWindowSettings();
+        rebuildWallpaperLayers();
     }
 
     @Override
@@ -225,6 +310,7 @@ public class BasicImeService extends InputMethodService
         super.onFinishInputView(finishingInput);
         setPage(0);
         if (bubbleOverlay != null) bubbleOverlay.hide();
+        stopVideo();
     }
 
     @Override
@@ -233,6 +319,7 @@ public class BasicImeService extends InputMethodService
             bubbleOverlay.hide();
             bubbleOverlay = null;
         }
+        stopVideo();
         super.onDestroy();
     }
 

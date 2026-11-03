@@ -77,8 +77,7 @@ public class EmojiPaletteView extends LinearLayout {
         cache.setPicker(listener);
 
         ImeColorStore cs = ImeColorStore.get(getContext());
-        int tabBarColor = (cs.getEmojiTabAlpha() << 24)
-                | (cs.getBgColor() & 0x00FFFFFF);
+        int tabBarColor = cs.getBgColor();
 
         HorizontalScrollView tabScroll = new HorizontalScrollView(getContext());
         tabScroll.setHorizontalScrollBarEnabled(false);
@@ -153,8 +152,7 @@ public class EmojiPaletteView extends LinearLayout {
     private void highlightTabs() {
         ImeColorStore cs = ImeColorStore.get(getContext());
         int themeBg   = cs.getBgColor();
-        int tabAlpha  = cs.getEmojiTabAlpha();
-        int tabColor  = (tabAlpha << 24) | (themeBg & 0x00FFFFFF);
+        int tabColor  = themeBg;
 
         for (int i = 0; i < tabRow.getChildCount(); i++) {
             TextView tab = (TextView) tabRow.getChildAt(i);
