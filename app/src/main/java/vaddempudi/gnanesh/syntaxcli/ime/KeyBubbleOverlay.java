@@ -56,7 +56,6 @@ public class KeyBubbleOverlay {
         params.gravity = Gravity.TOP | Gravity.START;
     }
 
-    /** Re-applies the current theme colors from ImeColorStore. */
     private void applyTheme() {
         ImeColorStore colors = ImeColorStore.get(context);
         int textColor = colors.getTextColor();
@@ -65,7 +64,11 @@ public class KeyBubbleOverlay {
         bubbleView.setTextColor(textColor);
 
         GradientDrawable bg = new GradientDrawable();
-        bg.setColor(bgColor);
+        if (colors.isWallpaperEnabled()) {
+            bg.setColor(0xD0000000); // translucent black
+        } else {
+            bg.setColor(bgColor);
+        }
         bg.setCornerRadius(KeyboardConfig.PREVIEW_CORNER_RADIUS_DP * density);
         bg.setStroke(
                 (int) (KeyboardConfig.PREVIEW_BORDER_WIDTH_DP * density),

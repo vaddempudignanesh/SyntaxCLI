@@ -50,6 +50,7 @@ public class BasicKeyboardView extends View {
     private boolean symbols2 = false;
     private boolean symbols3 = false;
 
+    private final Paint wallpaperDimPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint keyPaint    = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint borderPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint textPaint   = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -82,8 +83,9 @@ public class BasicKeyboardView extends View {
         textPaint.setTextAlign(Paint.Align.CENTER);
         textPaint.setColor(colors.getTextColor());
 
-        setBackgroundColor(colors.getBgColor());
-        setFocusable(true);
+        if (!colors.isWallpaperEnabled()) {
+            setBackgroundColor(colors.getBgColor());
+        }
         setFocusableInTouchMode(true);
 
         repeatRunnable = new Runnable() {
@@ -236,13 +238,30 @@ public class BasicKeyboardView extends View {
         super.onDraw(canvas);
 
         ImeColorStore colors = ImeColorStore.get(getContext());
-        int keyFill     = colors.getBgColor();
+
+        if (colors.isWallpaperEnabled()) {
+            int dim = colors.getWallpaperDim();
+            if (dim > 0) {
+                int alpha = Math.round(dim * 255f / 100f);
+                wallpaperDimPaint.setColor((alpha << 24) | (KeyboardConfig.COLOR_WALLPAPER_DIM_FILL & 0x00FFFFFF));
+                canvas.drawRect(0, 0, getWidth(), getHeight(), wallpaperDimPaint);
+            }
+        }
+
+
+        int keyFill;
         int textColor   = colors.getTextColor();
 
-        // Special keys (SHIFT, ⌫, ENTER, ?123) = darker than the base background
+        if (colors.isWallpaperEnabled()) {
+            int base = colors.getBgColor();
+            int alpha = 0xB0;
+            keyFill = (alpha << 24) | (base & 0x00FFFFFF);
+        } else {
+            keyFill = colors.getBgColor();
+        }
+
         int specialFill = blend(keyFill, 0xFF000000, 0.35f);
 
-        // Pressed key = tinted towards the user's TEXT color
         int pressedFill = blend(keyFill, textColor, 0.45f);
 
         textPaint.setColor(textColor);

@@ -64,6 +64,14 @@ public class BasicImeService extends InputMethodService
         bubbleOverlay = new KeyBubbleOverlay(this);
         keyboardView.setBubbleOverlay(bubbleOverlay);
         keyboardView.setListener(buildListener());
+
+        ImeColorStore colors = ImeColorStore.get(this);
+        if (colors.isWallpaperEnabled()) {
+            getWindow().getWindow().setBackgroundDrawableResource(android.R.color.transparent);
+        } else {
+            getWindow().getWindow().setBackgroundDrawable(
+                    new android.graphics.drawable.ColorDrawable(colors.getBgColor()));
+        }
         return keyboardView;
     }
 
@@ -178,14 +186,31 @@ public class BasicImeService extends InputMethodService
     public void onStartInputView(EditorInfo info, boolean restarting) {
         super.onStartInputView(info, restarting);
         setPage(0);
-
-        // Rebuild the keyboard so color changes from the gesture editor take effect.
         keyboardView = new BasicKeyboardView(this);
         if (bubbleOverlay == null) bubbleOverlay = new KeyBubbleOverlay(this);
         keyboardView.setBubbleOverlay(bubbleOverlay);
         keyboardView.setListener(buildListener());
         setInputView(keyboardView);
+        applyWallpaperWindowSettings();
     }
+
+    @Override
+    public void onWindowShown() {
+        super.onWindowShown();
+        applyWallpaperWindowSettings();
+    }
+
+    private void applyWallpaperWindowSettings() {
+        if (getWindow() == null) return;
+        ImeColorStore colors = ImeColorStore.get(this);
+        if (colors.isWallpaperEnabled()) {
+            getWindow().getWindow().setBackgroundDrawableResource(android.R.color.transparent);
+        } else {
+            getWindow().getWindow().setBackgroundDrawable(
+                    new android.graphics.drawable.ColorDrawable(colors.getBgColor()));
+        }
+    }
+
 
     @Override
     public void onFinishInputView(boolean finishingInput) {

@@ -31,6 +31,10 @@ public final class KeyboardConfig {
     public static final long REPEAT_START_MS             = 400L;
     public static final long REPEAT_INTERVAL_MS          = 80L;
 
+    public static final int    DEFAULT_WALLPAPER_DIM     = 70;
+    public static final int    COLOR_WALLPAPER_DIM_FILL  = 0xFF000000;
+
+
     public static final long SHIFT_DOUBLE_TAP_MS         = 300L;
 
     public static final float PREVIEW_SIZE_DP            = 62f;
