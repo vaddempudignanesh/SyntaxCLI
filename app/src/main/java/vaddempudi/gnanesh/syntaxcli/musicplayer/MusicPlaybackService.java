@@ -110,9 +110,42 @@ public class MusicPlaybackService extends Service {
         super.onDestroy();
     }
 
+    @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        // User swiped the activity away from recents.
+        // Send a stop to the activity (in case it's still alive briefly),
+        // then tear down the service completely so music stops.
+        try {
+            sendCmd(MusicPlayerActivity.CMD_PAUSE);
+        } catch (Exception ignored) { }
+
+        try {
+            if (mediaSession != null) {
+                mediaSession.setActive(false);
+            }
+        } catch (Exception ignored) { }
+
+        abandonAudioFocus();
+
+        try {
+            stopForeground(true);
+        } catch (Exception ignored) { }
+
+        try {
+            NotificationManager nm =
+                    (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            if (nm != null) nm.cancel(NOTIF_ID);
+        } catch (Exception ignored) { }
+
+        stopSelf();
+
+        super.onTaskRemoved(rootIntent);
+    }
+
     private void dispatchCmd(String cmd) {
         if (cmd == null) return;
         sendCmd(cmd);
+        // Always bring the activity up if it isn't guaranteed alive.
         if (!MusicPlayerActivity.alive) {
             try {
                 Intent open = new Intent(this, MusicPlayerActivity.class);
@@ -125,7 +158,6 @@ public class MusicPlaybackService extends Service {
             } catch (Exception ignored) { }
         }
     }
-
     private void initMediaSession() {
         try {
             mediaSession = new MediaSessionCompat(this, "SyntaxCLIMusicSession");

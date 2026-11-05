@@ -491,14 +491,14 @@ public class MainManager {
         final Shell.OnCommandResultListener result = new Shell.OnCommandResultListener() {
             @Override
             public void onCommandResult(int commandCode, int exitCode, List<String> output) {
-                if(commandCode == CD_CODE) {
+                if (commandCode == CD_CODE) {
                     interactive.addCommand("pwd", PWD_CODE, result);
-                } else if(commandCode == PWD_CODE && output.size() == 1) {
+                } else if (commandCode == PWD_CODE && output.size() == 1) {
                     File f = new File(output.get(0));
-                    if(f.exists()) {
+                    if (f.exists()) {
                         mainPack.currentDirectory = f;
-
-                        LocalBroadcastManager.getInstance(mContext.getApplicationContext()).sendBroadcast(new Intent(UIManager.ACTION_UPDATE_HINT));
+                        LocalBroadcastManager.getInstance(mContext.getApplicationContext())
+                                .sendBroadcast(new Intent(UIManager.ACTION_UPDATE_HINT));
                     }
                 }
             }
@@ -507,29 +507,25 @@ public class MainManager {
         @Override
         public boolean trigger(final MainPack info, final String input) throws Exception {
             final String trimmed = input.trim();
-            final String cmd = trimmed.split(" ")[0];
+            if (trimmed.isEmpty()) return false;
 
-            if (!BusyBoxInstaller.isInstalled(mContext)) {
-                String[] common = {"ping", "echo", "ls", "grep", "cat", "vi", "top", "ps", "ip"};
-                for (String c : common) {
-                    if (cmd.equalsIgnoreCase(c)) {
-                        Tuils.sendOutput(mContext, "Command not found. You can install BusyBox using: bbman -install", TerminalManager.CATEGORY_OUTPUT);
-                        return true;
-                    }
-                }
-            }
-
+            // The shell is always available on Android (/system/bin/sh).
+            // Send the command through. If it's not a real command, the shell
+            // itself prints "not found" with an accurate message.
             new StoppableThread() {
                 @Override
                 public void run() {
-                    if(input.trim().equalsIgnoreCase("su")) {
-                        if(Shell.SU.available()) LocalBroadcastManager.getInstance(mContext.getApplicationContext()).sendBroadcast(new Intent(UIManager.ACTION_ROOT));
+                    if (trimmed.equalsIgnoreCase("su")) {
+                        if (Shell.SU.available()) {
+                            LocalBroadcastManager.getInstance(mContext.getApplicationContext())
+                                    .sendBroadcast(new Intent(UIManager.ACTION_ROOT));
+                        }
                         interactive.addCommand("su");
-
-                    } else if(input.contains("cd ")) {
-                        interactive.addCommand(input, CD_CODE, result);
-                    } else interactive.addCommand(input);
-
+                    } else if (trimmed.startsWith("cd ") || trimmed.equals("cd")) {
+                        interactive.addCommand(trimmed, CD_CODE, result);
+                    } else {
+                        interactive.addCommand(input);
+                    }
                 }
             }.start();
 

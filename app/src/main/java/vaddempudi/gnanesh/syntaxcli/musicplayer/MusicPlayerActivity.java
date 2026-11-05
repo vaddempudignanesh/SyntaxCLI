@@ -94,7 +94,12 @@ public class MusicPlayerActivity extends AppCompatActivity {
     private static final int SORT_OLDEST = 1;
     private static final int SORT_AZ     = 2;
     private static final int SORT_ZA     = 3;
+    private static final int LOOP_ONE  = 0;
+    private static final int LOOP_ALL  = 1;
+    private static final int LOOP_ONCE = 2;
+    private int loopMode = LOOP_ALL;
 
+    private static final String KEY_LOOP_MODE = "loop_mode";
     private static final String PREFS = "music_player_prefs";
     private static final String KEY_PLAYLIST           = "active_playlist_ids";
     private static final String KEY_FILTER_ACTIVE      = "filter_active";
@@ -168,6 +173,8 @@ public class MusicPlayerActivity extends AppCompatActivity {
     private ImageView    btnNext;
     private SeekBar      seekBar;
 
+    private ImageView btnLoop;
+
     private String pendingCmdFromLaunch = null;
     private String pendingIncomingPath = null;
     private boolean launchedForIncomingFile = false;
@@ -217,7 +224,7 @@ public class MusicPlayerActivity extends AppCompatActivity {
         setVolumeControlStream(android.media.AudioManager.STREAM_MUSIC);
         buildUi();
         loadPlaylist();
-
+        updateLoopButton();
         int lastView = loadLastViewState();
         viewState = (lastView == VIEW_PLAYLIST && filterActive)
                 ? VIEW_PLAYLIST : VIEW_LIBRARY;
@@ -246,6 +253,7 @@ public class MusicPlayerActivity extends AppCompatActivity {
         } else {
             requestAudioPermission();
         }
+
     }
 
     @Override
@@ -263,8 +271,12 @@ public class MusicPlayerActivity extends AppCompatActivity {
         try {
             LocalBroadcastManager.getInstance(this).unregisterReceiver(ctrlReceiver);
         } catch (Exception ignored) { }
-        if (isFinishing()) releasePlayer();
-    }
+        if (isFinishing()) {
+            releasePlayer();
+            try {
+                stopService(new Intent(this, MusicPlaybackService.class));
+            } catch (Exception ignored) { }
+        }    }
 
     @Override
     public void onBackPressed() {
@@ -438,6 +450,16 @@ public class MusicPlayerActivity extends AppCompatActivity {
         ppLp.leftMargin = dp(4);
         navRow.addView(btnPlayPause, ppLp);
 
+        btnLoop = new ImageView(this);
+        btnLoop.setImageResource(R.drawable.ic_repeat);
+        btnLoop.setColorFilter(GREEN);
+        btnLoop.setOnClickListener(v -> cycleLoopMode());
+        LinearLayout.LayoutParams loopLp =
+                new LinearLayout.LayoutParams(dp(36), dp(36));
+        loopLp.leftMargin = dp(8);
+        navRow.addView(btnLoop, loopLp);
+        updateLoopButton();
+
         tvNowPlaying = new TextView(this);
         tvNowPlaying.setTextColor(GREEN);
         tvNowPlaying.setTextSize(12);
@@ -537,6 +559,19 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 filterActive = !activePlaylistIds.isEmpty();
             }
         }
+        try {
+            loopMode = getSharedPreferences(PREFS, MODE_PRIVATE)
+                    .getInt(KEY_LOOP_MODE, LOOP_ALL);
+        } catch (Exception ignored) { }
+    }
+
+    private void saveLoopMode() {
+        try {
+            getSharedPreferences(PREFS, MODE_PRIVATE)
+                    .edit()
+                    .putInt(KEY_LOOP_MODE, loopMode)
+                    .apply();
+        } catch (Exception ignored) { }
     }
 
     private void savePlaylist() {
@@ -798,15 +833,34 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 refreshList();
                 updateToolbar();
 
-                if (pendingStartLast) {
-                    pendingStartLast = false;
-                    List<Track> walk = resolvePlaybackList();
-                    playFromList(walk, lastPlayedId);
-                }
+                // If an explicit command came with the intent (notification tap, media button,
+// etc.), run ONLY that command. Otherwise, if start_hidden was set, resume
+// the last played track. Never both — that double-fires and cancels itself.
                 if (pendingCmdFromLaunch != null) {
                     String c = pendingCmdFromLaunch;
                     pendingCmdFromLaunch = null;
-                    handleControlCommand(c);
+                    pendingStartLast = false;               // ← cancel the auto-start
+                    if (CMD_PLAY.equals(c) || CMD_TOGGLE.equals(c)) {
+                        // If nothing is loaded yet, start the last played track first,
+                        // then apply the command (which will be a no-op toggle since it
+                        // was just started).
+                        if (player == null) {
+                            playFromList(resolvePlaybackList(), lastPlayedId);
+                        } else {
+                            handleControlCommand(c);
+                        }
+                    } else {
+                        // CMD_PAUSE, CMD_NEXT, CMD_PREV, CMD_START_LAST, CMD_OPEN_PLAYLIST …
+                        // If nothing is loaded, start playback then apply the command.
+                        if (player == null) {
+                            playFromList(resolvePlaybackList(), lastPlayedId);
+                        }
+                        handleControlCommand(c);
+                    }
+                } else if (pendingStartLast) {
+                    pendingStartLast = false;
+                    List<Track> walk = resolvePlaybackList();
+                    playFromList(walk, lastPlayedId);
                 }
                 maybeAutoPlayIncoming();
             });
@@ -1163,7 +1217,20 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 if (adapter != null) adapter.notifyDataSetChanged();
                 pushPlaybackStateToService();
             });
-            player.setOnCompletionListener(mp -> playNext());
+            player.setOnCompletionListener(mp -> {
+                switch (loopMode) {
+                    case LOOP_ONE:
+                        try { mp.seekTo(0); mp.start(); } catch (Exception ignored) { }
+                        break;
+                    case LOOP_ALL:
+                        playNext();
+                        break;
+                    case LOOP_ONCE:
+                    default:
+                        MusicPlayerActivity.this.runOnUiThread(this::stopPlaybackAndService);
+                        break;
+                }
+            });
             player.setOnErrorListener((mp, what, extra) -> {
                 Toast.makeText(this, "Playback error", Toast.LENGTH_SHORT).show();
                 return true;
@@ -1184,6 +1251,50 @@ public class MusicPlayerActivity extends AppCompatActivity {
             Toast.makeText(this, "Cannot play: " + e.getMessage(),
                     Toast.LENGTH_SHORT).show();
         }
+    }
+
+    private void stopPlaybackAndService() {
+        try { releasePlayer(); } catch (Exception ignored) { }
+        isPausedStatic = true;
+        isPaused = true;
+        if (btnPlayPause != null) {
+            btnPlayPause.setImageResource(R.drawable.ic_play_circle);
+            btnPlayPause.setColorFilter(GREEN);
+        }
+        if (bottomBar != null) bottomBar.setVisibility(View.GONE);
+        pushPlaybackStateToService();
+        try {
+            stopService(new Intent(this, MusicPlaybackService.class));
+        } catch (Exception ignored) { }
+    }
+
+    private void cycleLoopMode() {
+        loopMode = (loopMode + 1) % 3;
+        saveLoopMode();
+        updateLoopButton();
+        String label;
+        switch (loopMode) {
+            case LOOP_ONE:  break;
+            case LOOP_ALL:    break;
+            case LOOP_ONCE:     break;
+            default:                break;
+        }
+    }
+
+    private void updateLoopButton() {
+        if (btnLoop == null) return;
+        switch (loopMode) {
+            case LOOP_ONE:
+                btnLoop.setImageResource(R.drawable.ic_repeat_one);
+                break;
+            case LOOP_ALL:
+                btnLoop.setImageResource(R.drawable.ic_repeat);
+                break;
+            case LOOP_ONCE:
+                btnLoop.setImageResource(R.drawable.ic_repeat_off);
+                break;
+        }
+        btnLoop.setColorFilter(GREEN);
     }
 
     private void playFromList(List<Track> list, long preferredId) {
@@ -1246,6 +1357,13 @@ public class MusicPlayerActivity extends AppCompatActivity {
 
     private void handleControlCommand(String cmd) {
         if (cmd == null) return;
+
+        if (allTracks.isEmpty() && (CMD_PLAY.equals(cmd) || CMD_TOGGLE.equals(cmd))) {
+            pendingCmdFromLaunch = cmd;
+            pendingStartLast = false;
+            return;
+        }
+
         switch (cmd) {
             case CMD_PLAY:
                 if (player != null && !player.isPlaying() && isPaused) {

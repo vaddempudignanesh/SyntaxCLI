@@ -22,7 +22,21 @@ public class ShellHolder {
     Pattern p = Pattern.compile("^\\n");
 
     public Shell.Interactive build() {
+        String filesDir = context.getFilesDir().getAbsolutePath();
+        String cacheDir = context.getCacheDir().getAbsolutePath();
+        String path = filesDir + ":/system/bin:/system/xbin:/vendor/bin:/sbin";
+        String home = "/sdcard/t-ui";
+        try {
+            File hp = XMLPrefsManager.get(File.class, Behavior.home_path);
+            if (hp != null) home = hp.getAbsolutePath();
+        } catch (Throwable ignored) { }
+
         Shell.Interactive interactive = new Shell.Builder()
+                .addEnvironment("PATH",   path)
+                .addEnvironment("HOME",   home)
+                .addEnvironment("TMPDIR", cacheDir)
+                .addEnvironment("LANG",   "C")
+                .addEnvironment("USER",   "shell")
                 .setOnSTDOUTLineListener(line -> {
                     line = p.matcher(line).replaceAll(Tuils.EMPTYSTRING);
                     Tuils.sendOutput(context, line, TerminalManager.CATEGORY_OUTPUT);
@@ -32,12 +46,11 @@ public class ShellHolder {
                     Tuils.sendOutput(context, line, TerminalManager.CATEGORY_OUTPUT);
                 })
                 .open();
-        
+
         setupBusyBox(interactive);
-        interactive.addCommand("cd " + XMLPrefsManager.get(File.class, Behavior.home_path));
+        interactive.addCommand("cd '" + home + "'");
         return interactive;
     }
-
     private void setupBusyBox(Shell.Interactive interactive) {
         if (BusyBoxInstaller.isInstalled(context)) {
             String bbPath = BusyBoxInstaller.getBusyboxPath(context);
@@ -47,13 +60,39 @@ public class ShellHolder {
 
                 // 2. Add common applet aliases so they use BusyBox instead of Toybox
                 String[] commonApplets = {
-                    "ls", "grep", "egrep", "fgrep", "sed", "awk", "find", "xargs",
-                    "vi", "vim", "less", "more", "cat", "tail", "head", "cut", "sort",
-                    "top", "ps", "kill", "pkill", "pgrep", "free", "uptime", "watch",
-                    "ping", "ping6", "traceroute", "netstat", "ip", "ifconfig", "route",
-                    "tar", "gzip", "gunzip", "bzip2", "bunzip2", "xz", "unxz", "zip", "unzip",
-                    "wget", "curl", "nc", "telnet", "ftpget", "ftpput",
-                    "ssh", "scp", "chmod", "chown", "chgrp", "cp", "mv", "rm", "mkdir", "rmdir"
+                        "bc", "dc", "cal", "sh", "ash", "ash", "httpd", "telnetd",
+                        "diff", "patch", "uniq", "cmp", "comm", "tee", "split",
+                        "readlink", "realpath", "mktemp", "stat", "file", "strings",
+                        "yes", "printf", "seq", "basename", "dirname", "tr", "od", "xxd",
+                        "base64", "md5sum", "sha1sum", "sha256sum", "sha512sum",
+                        "hexdump", "dos2unix", "unix2dos", "install", "ln",
+                        "mke2fs", "mkfs.ext2", "mkfs.vfat", "mkswap", "swapon", "swapoff",
+                        "chroot", "chpst", "crontab", "crond", "devmem", "dd", "eject",
+                        "envdir", "envuidgid", "flock", "fuser", "hexedit", "hostid",
+                        "ifenslave", "ionice", "lsof", "lzop", "mdev", "microcom",
+                        "mkdosfs", "mkfifo", "mknod", "mkpasswd", "mkswap", "mpstat",
+                        "nl", "nohup", "nsenter", "partprobe", "passwd", "paste", "pgrep",
+                        "pivot_root", "pkill", "pmap", "poweroff", "pr", "ps", "pstree",
+                        "pwdx", "raidautorun", "rdev", "readahead", "readlink", "reboot",
+                        "renice", "reset", "resize", "rev", "rfkill", "rmmod", "run-init",
+                        "run-parts", "runlevel", "runsv", "runsvdir", "rx", "script",
+                        "scriptreplay", "sed", "seq", "setfont", "setkeycodes", "setlogcons",
+                        "setsid", "setuidgid", "sh", "sha1sum", "sha256sum", "sha3sum",
+                        "sha512sum", "showkey", "slattach", "sleep", "softlimit", "sort",
+                        "split", "ssl_client", "start-stop-daemon", "stat", "strings", "stty",
+                        "su", "sulogin", "sum", "sv", "svc", "svlogd", "swapoff", "swapon",
+                        "switch_root", "sync", "sysctl", "syslogd", "tac", "tail", "tar",
+                        "taskset", "tcpsvd", "tee", "telnet", "telnetd", "test", "tftp",
+                        "tftpd", "time", "timeout", "top", "touch", "tr", "traceroute",
+                        "traceroute6", "true", "truncate", "ts", "tsort", "tty", "ttysize",
+                        "tunctl", "tune2fs", "ubiattach", "ubidetach", "ubimkvol", "ubirename",
+                        "ubirmvol", "ubirsvol", "ubiuupdate", "ubirsvol", "ubirsvol",
+                        "udhcpc", "udhcpc6", "udhcpd", "udpsvd", "uevent", "umount",
+                        "uname", "uncompress", "unexpand", "uniq", "unix2dos", "unlink",
+                        "unlzma", "unshare", "unxz", "unzip", "uptime", "users", "usleep",
+                        "uudecode", "uuencode", "vconfig", "vi", "vlock", "volname", "w",
+                        "wall", "watch", "watchdog", "wc", "wget", "which", "who", "whoami",
+                        "whois", "xargs", "xxd", "xz", "xzcat", "yes", "zcat", "zcip"
                 };
 
                 for (String applet : commonApplets) {
