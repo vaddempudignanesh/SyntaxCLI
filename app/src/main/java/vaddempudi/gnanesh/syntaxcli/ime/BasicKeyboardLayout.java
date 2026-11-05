@@ -158,27 +158,86 @@ public final class BasicKeyboardLayout {
         });
     }
     private void buildNumericPage() {
-        // Row 1 — 7 8 9  ⌫
-        numericPage.add(new BasicKey[] {
-                sym("7"), sym("8"), sym("9"),
-                new BasicKey(BasicKey.CODE_DELETE, null, null, "\u232B", 1f)
-        });
+        rebuildNumericPage(null);
+    }
 
-        numericPage.add(new BasicKey[] {
-                sym("4"), sym("5"), sym("6"),
-                new BasicKey(BasicKey.CODE_ENTER, null, null, "\u23CE", 1f)
-        });
+    public void rebuildNumericPage(android.content.Context ctx) {
+        numericPage.clear();
 
-        numericPage.add(new BasicKey[] {
-                sym("1"), sym("2"), sym("3"), sym(".")
-        });
+        String order;
+        String extraChar;
+        boolean reverseRows;
+
+        if (ctx != null) {
+            NumericPadConfig cfg = NumericPadConfig.get(ctx);
+            order       = cfg.getDigitOrder();
+            extraChar   = cfg.getExtraChar();
+            reverseRows = cfg.isReverseRows();
+        } else {
+            order       = NumericPadConfig.DEFAULT_ORDER;
+            extraChar   = NumericPadConfig.DEFAULT_CHAR;
+            reverseRows = false;
+        }
+
+        char d0 = order.charAt(0);
+        char d1 = order.charAt(1);
+        char d2 = order.charAt(2);
+        char d3 = order.charAt(3);
+        char d4 = order.charAt(4);
+        char d5 = order.charAt(5);
+        char d6 = order.charAt(6);
+        char d7 = order.charAt(7);
+        char d8 = order.charAt(8);
+        char d9 = order.charAt(9);   // goes on the zero key in row 4
+
+        // Row 1
+        {
+            BasicKey[] r = {
+                    sym(String.valueOf(d0)),
+                    sym(String.valueOf(d1)),
+                    sym(String.valueOf(d2)),
+                    new BasicKey(BasicKey.CODE_DELETE, null, null, "\u232B", 1f)
+            };
+            numericPage.add(reverseRows ? reverseDigits(r) : r);
+        }
+
+        // Row 2
+        {
+            BasicKey[] r = {
+                    sym(String.valueOf(d3)),
+                    sym(String.valueOf(d4)),
+                    sym(String.valueOf(d5)),
+                    new BasicKey(BasicKey.CODE_ENTER, null, null, "\u23CE", 1f)
+            };
+            numericPage.add(reverseRows ? reverseDigits(r) : r);
+        }
+
+        // Row 3
+        {
+            BasicKey[] r = {
+                    sym(String.valueOf(d6)),
+                    sym(String.valueOf(d7)),
+                    sym(String.valueOf(d8)),
+                    sym(".")
+            };
+            numericPage.add(reverseRows ? reverseDigits(r) : r);
+        }
+
 
         numericPage.add(new BasicKey[] {
                 new BasicKey(BasicKey.CODE_ABC, null, null, "ABC", 1.2f),
-                sym("0"),
-                sym(","),
+                sym(String.valueOf(d9)),
+                sym(extraChar),
                 new BasicKey(BasicKey.CODE_SPACE, null, null, "space", 2f)
         });
+    }
+
+    private static BasicKey[] reverseDigits(BasicKey[] in) {
+        // reverse the first three digit cells; leave the trailing special key in place
+        BasicKey tmp = in[0];
+        in[0] = in[2];
+        in[2] = tmp;
+        return in;
     }
 
     public BasicKey[] urlTopRow() {

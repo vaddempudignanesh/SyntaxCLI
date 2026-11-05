@@ -668,6 +668,13 @@ public class BasicKeyboardView extends View {
         invalidate();
     }
 
+    public void reloadNumericPadLayout() {
+        layout.rebuildNumericPage(getContext());
+        rebuildHitKeys();
+        requestLayout();
+        invalidate();
+    }
+
     private void scheduleLetterLongPress(final HitKey hk, long delayMs) {
         cancelLetterLongPress();
         letterLongPressKey = hk;
@@ -694,6 +701,9 @@ public class BasicKeyboardView extends View {
         this.shifted   = false;
         this.shiftLocked = false;
         if (bubbleOverlay != null) bubbleOverlay.hide();
+        if (num) {
+            layout.rebuildNumericPage(getContext());
+        }
         rebuildHitKeys();
         requestLayout();
         invalidate();

@@ -471,6 +471,154 @@ public class GestureActionEditorActivity extends Activity {
 
         Button add = new Button(this);
         add.setText("+ ADD ACTION");
+        TextView numHeader = new TextView(this);
+        numHeader.setText("NUMERIC PAD");
+        numHeader.setTextColor(GREEN);
+        numHeader.setTextSize(13);
+        numHeader.setTypeface(Typeface.MONOSPACE);
+        LinearLayout.LayoutParams nhLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        nhLp.topMargin = dp(8);
+        nhLp.bottomMargin = dp(6);
+        actionsCard.addView(numHeader, nhLp);
+
+        NumericPadConfig numCfg = NumericPadConfig.get(this);
+
+        LinearLayout extraRow = new LinearLayout(this);
+        extraRow.setOrientation(LinearLayout.HORIZONTAL);
+        extraRow.setGravity(Gravity.CENTER_VERTICAL);
+        extraRow.setPadding(0, dp(6), 0, dp(6));
+
+        TextView extraLabel = new TextView(this);
+        extraLabel.setText("Bottom-left key char");
+        extraLabel.setTextColor(GREEN);
+        extraLabel.setTextSize(12);
+        extraLabel.setTypeface(Typeface.MONOSPACE);
+        extraRow.addView(extraLabel, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        EditText extraInput = new EditText(this);
+        extraInput.setText(numCfg.getExtraChar());
+        extraInput.setTextColor(GREEN);
+        extraInput.setHintTextColor(DIM);
+        extraInput.setInputType(InputType.TYPE_CLASS_TEXT);
+        extraInput.setTypeface(Typeface.MONOSPACE);
+        extraInput.setPadding(dp(10), dp(6), dp(10), dp(6));
+        GradientDrawable extraBg = new GradientDrawable();
+        extraBg.setColor(0xFF000000);
+        extraBg.setCornerRadius(dp(6));
+        extraBg.setStroke(dp(1), GREEN);
+        extraInput.setBackground(extraBg);
+        LinearLayout.LayoutParams eiLp = new LinearLayout.LayoutParams(
+                dp(64), ViewGroup.LayoutParams.WRAP_CONTENT);
+        extraRow.addView(extraInput, eiLp);
+
+        TextView extraApply = new TextView(this);
+        extraApply.setText("SET");
+        extraApply.setTextColor(GREEN);
+        extraApply.setTypeface(Typeface.MONOSPACE);
+        extraApply.setPadding(dp(10), dp(8), dp(10), dp(8));
+        GradientDrawable applyBg = new GradientDrawable();
+        applyBg.setColor(0xFF0A0A0A);
+        applyBg.setCornerRadius(dp(4));
+        applyBg.setStroke(dp(1), GREEN);
+        extraApply.setBackground(applyBg);
+        extraApply.setClickable(true);
+        extraApply.setOnClickListener(v -> {
+            numCfg.setExtraChar(extraInput.getText().toString());
+            extraInput.setText(numCfg.getExtraChar());
+            Toast.makeText(this, "Extra char saved: " + numCfg.getExtraChar(),
+                    Toast.LENGTH_SHORT).show();
+        });
+        LinearLayout.LayoutParams ea = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        ea.leftMargin = dp(8);
+        extraRow.addView(extraApply, ea);
+
+        actionsCard.addView(extraRow);
+
+        LinearLayout orderRow = new LinearLayout(this);
+        orderRow.setOrientation(LinearLayout.HORIZONTAL);
+        orderRow.setGravity(Gravity.CENTER_VERTICAL);
+        orderRow.setPadding(0, dp(6), 0, dp(6));
+
+        TextView orderLabel = new TextView(this);
+        orderLabel.setText("Digit order (0-9 each once)");
+        orderLabel.setTextColor(GREEN);
+        orderLabel.setTextSize(12);
+        orderLabel.setTypeface(Typeface.MONOSPACE);
+        orderRow.addView(orderLabel, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        EditText orderInput = new EditText(this);
+        orderInput.setText(numCfg.getDigitOrder());
+        orderInput.setTextColor(GREEN);
+        orderInput.setHintTextColor(DIM);
+        orderInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+        orderInput.setTypeface(Typeface.MONOSPACE);
+        orderInput.setPadding(dp(10), dp(6), dp(10), dp(6));
+        GradientDrawable orderBg = new GradientDrawable();
+        orderBg.setColor(0xFF000000);
+        orderBg.setCornerRadius(dp(6));
+        orderBg.setStroke(dp(1), GREEN);
+        orderInput.setBackground(orderBg);
+        LinearLayout.LayoutParams oiLp = new LinearLayout.LayoutParams(
+                dp(140), ViewGroup.LayoutParams.WRAP_CONTENT);
+        orderRow.addView(orderInput, oiLp);
+
+        TextView orderApply = new TextView(this);
+        orderApply.setText("SET");
+        orderApply.setTextColor(GREEN);
+        orderApply.setTypeface(Typeface.MONOSPACE);
+        orderApply.setPadding(dp(10), dp(8), dp(10), dp(8));
+        GradientDrawable oApplyBg = new GradientDrawable();
+        oApplyBg.setColor(0xFF0A0A0A);
+        oApplyBg.setCornerRadius(dp(4));
+        oApplyBg.setStroke(dp(1), GREEN);
+        orderApply.setBackground(oApplyBg);
+        orderApply.setClickable(true);
+        orderApply.setOnClickListener(v -> {
+            String s = orderInput.getText().toString().trim();
+            if (!NumericPadConfig.isValidOrder(s)) {
+                Toast.makeText(this, "Must be 10 digits, 0-9 each once",
+                        Toast.LENGTH_LONG).show();
+                return;
+            }
+            numCfg.setDigitOrder(s);
+            Toast.makeText(this, "Digit order saved", Toast.LENGTH_SHORT).show();
+        });
+        LinearLayout.LayoutParams oa = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        oa.leftMargin = dp(8);
+        orderRow.addView(orderApply, oa);
+
+        actionsCard.addView(orderRow);
+        TextView reverseToggle = new TextView(this);
+        reverseToggle.setTextSize(12);
+        reverseToggle.setTypeface(Typeface.MONOSPACE);
+        reverseToggle.setPadding(dp(10), dp(8), dp(10), dp(8));
+        GradientDrawable rvBg = new GradientDrawable();
+        rvBg.setColor(0xFF111111);
+        rvBg.setCornerRadius(dp(6));
+        rvBg.setStroke(dp(1), CARD_BORDER);
+        reverseToggle.setBackground(rvBg);
+        reverseToggle.setClickable(true);
+        LinearLayout.LayoutParams rvLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        rvLp.topMargin = dp(6);
+        rvLp.bottomMargin = dp(6);
+        actionsCard.addView(reverseToggle, rvLp);
+
+        Runnable refreshReverse = () -> {
+            boolean on = numCfg.isReverseRows();
+            reverseToggle.setText("DIGIT ROWS:  " + (on ? "REVERSED (right-to-left)" : "NORMAL (left-to-right)") + "   (tap to toggle)");
+            reverseToggle.setTextColor(on ? 0xFFFFAA00 : GREEN);
+        };
+        refreshReverse.run();
+        reverseToggle.setOnClickListener(v -> {
+            numCfg.setReverseRows(!numCfg.isReverseRows());
+            refreshReverse.run();
+        });
         add.setTextColor(GREEN);
         add.setBackgroundColor(BG);
         add.setTypeface(Typeface.MONOSPACE);
@@ -920,6 +1068,7 @@ public class GestureActionEditorActivity extends Activity {
             line1.setTypeface(Typeface.MONOSPACE);
             line1.setTextSize(13);
             row.addView(line1);
+
             LinearLayout buttons = new LinearLayout(this);
             buttons.setOrientation(LinearLayout.HORIZONTAL);
             buttons.setPadding(0, dp(6), 0, 0);
