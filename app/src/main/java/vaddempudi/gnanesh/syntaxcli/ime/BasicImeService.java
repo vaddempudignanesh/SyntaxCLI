@@ -1,5 +1,6 @@
 package vaddempudi.gnanesh.syntaxcli.ime;
 
+import android.content.ClipboardManager;
 import android.graphics.Matrix;
 import android.graphics.SurfaceTexture;
 import android.inputmethodservice.InputMethodService;
@@ -20,7 +21,7 @@ public class BasicImeService extends InputMethodService
     private BasicKeyboardView keyboardView;
     private KeyBubbleOverlay bubbleOverlay;
     private EmojiPaletteView emojiPanel;
-
+    private ClipboardPanelView clipboardPanel;
     private FrameLayout rootContainer;
     private TextureView videoView;
     private MediaPlayer mediaPlayer;
@@ -70,6 +71,19 @@ public class BasicImeService extends InputMethodService
             } catch (Throwable t) {
                 android.util.Log.e("EmojiGridCache", "warm failed", t);
             }
+            
+            try {
+                ClipboardManager cm = (ClipboardManager)
+                        getSystemService(CLIPBOARD_SERVICE);
+                if (cm != null) {
+                    cm.addPrimaryClipChangedListener(() -> {
+                        try {
+                            ClipboardStore.get(BasicImeService.this)
+                                    .capture(BasicImeService.this);
+                        } catch (Throwable ignored) { }
+                    });
+                }
+            } catch (Throwable ignored) { }
         }, "emoji-warm").start();
     }
 
@@ -387,15 +401,47 @@ public class BasicImeService extends InputMethodService
                     if (a != null) runAction(a);
                     return;
                 }
+                if (code == BasicKeyboardView.CLIPBOARD_TRIGGER) {
+                    showClipboardPanel();
+                    return;
+                }
                 handleKey(code, text);
             }
         };
     }
 
+
+    private void showClipboardPanel() {
+        ClipboardStore.get(this).capture(this);
+        clipboardPanel = new ClipboardPanelView(this, new ClipboardPanelView.ClipboardPickListener() {
+            @Override
+            public void onClipPicked(String text) {
+                InputConnection ic = getCurrentInputConnection();
+                if (ic != null) ic.commitText(text, 1);
+                closeClipboardPanel();
+            }
+
+            @Override
+            public void onClipClosed() {
+                closeClipboardPanel();
+            }
+        });
+        setInputView(clipboardPanel);
+    }
+
+    private void closeClipboardPanel() {
+        clipboardPanel = null;
+        if (keyboardView != null) setInputView(keyboardView);
+    }
+
+
     @Override
     public void onStartInputView(EditorInfo info, boolean restarting) {
         super.onStartInputView(info, restarting);
         setPage(0);
+        try {
+            ClipboardStore.get(this).capture(this);
+        } catch (Throwable ignored) { }
 
         if (rootContainer == null) {
             onCreateInputView();
@@ -425,6 +471,9 @@ public class BasicImeService extends InputMethodService
     public void onWindowShown() {
         super.onWindowShown();
         applyWallpaperWindowSettings();
+        try {
+            ClipboardStore.get(this).capture(this);
+        } catch (Throwable ignored) { }
     }
 
     private void applyWallpaperWindowSettings() {

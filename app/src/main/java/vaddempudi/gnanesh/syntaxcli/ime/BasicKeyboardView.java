@@ -24,6 +24,14 @@ public class BasicKeyboardView extends View {
 
     private boolean shiftLocked = false;
 
+    public static final int CLIPBOARD_TRIGGER         = -1005;
+
+    private float cDownX = 0f;
+    private float cDownY = 0f;
+    private boolean cSwipeArmed = false;
+    private boolean cSwipeFired = false;
+
+
     private long enterDownTime = 0L;
     private long spaceDownTime = 0L;
     private long lastSpaceUpTime = 0L;
@@ -452,6 +460,13 @@ public class BasicKeyboardView extends View {
                     showBubbleFor(hk);
                     invalidate();
 
+                    cSwipeArmed = isCKey(hk);
+                    cSwipeFired = false;
+                    if (cSwipeArmed) {
+                        cDownX = event.getX();
+                        cDownY = event.getY();
+                    }
+
                     if (hk.key.code == BasicKey.CODE_DELETE) startRepeat(hk);
                     if (hk.key.code == BasicKey.CODE_NONE
                             && hk.key.lower != null
@@ -472,6 +487,20 @@ public class BasicKeyboardView extends View {
                 return true;
             }
             case MotionEvent.ACTION_MOVE: {
+                if (cSwipeArmed && !cSwipeFired) {
+                    float dx = event.getX() - cDownX;
+                    float dy = event.getY() - cDownY;
+                    if (dx > dp(60) && Math.abs(dy) < dp(50)) {
+                        cSwipeFired = true;
+                        longPressHandled = true;
+                        pressed = null;
+                        invalidate();
+                        stopRepeat();
+                        if (bubbleOverlay != null) bubbleOverlay.hide();
+                        if (listener != null) listener.onKey(CLIPBOARD_TRIGGER, null);
+                        return true;
+                    }
+                }
                 HitKey hk = findKey(event.getX(), event.getY());
                 if (hk != pressed) {
                     cancelPendingLongPress();
@@ -486,11 +515,17 @@ public class BasicKeyboardView extends View {
             }
             case MotionEvent.ACTION_UP: {
                 cancelPendingLongPress();
+                boolean wasSwipe = cSwipeFired;
+                cSwipeArmed = false;
+                cSwipeFired = false;
+
                 HitKey hk = pressed;
                 pressed = null;
                 invalidate();
                 stopRepeat();
                 if (bubbleOverlay != null) bubbleOverlay.hide();
+
+                if (wasSwipe) return true;
 
                 if (hk != null && listener != null) {
                     if (hk.key.code == BasicKey.CODE_SPACE) {
@@ -511,6 +546,8 @@ public class BasicKeyboardView extends View {
             }
             case MotionEvent.ACTION_CANCEL: {
                 cancelPendingLongPress();
+                cSwipeArmed = false;
+                cSwipeFired = false;
                 pressed = null;
                 invalidate();
                 stopRepeat();
@@ -520,6 +557,18 @@ public class BasicKeyboardView extends View {
         }
         return super.onTouchEvent(event);
     }
+
+    private boolean isCKey(HitKey hk) {
+        if (hk == null || hk.key == null) return false;
+        if (hk.key.code != BasicKey.CODE_NONE) return false;
+        if (hk.key.lower == null) return false;
+        return "c".equals(hk.key.lower);
+    }
+
+    private int dp(float v) {
+        return Math.round(v * density);
+    }
+
 
     private void scheduleLetterLongPress(final HitKey hk, long delayMs) {
         cancelLetterLongPress();
