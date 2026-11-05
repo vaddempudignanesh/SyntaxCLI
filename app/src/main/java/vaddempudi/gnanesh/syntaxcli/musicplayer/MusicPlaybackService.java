@@ -30,10 +30,14 @@ public class MusicPlaybackService extends Service {
     private static final String CHANNEL_ID = "music_playback_channel";
     private static final int    NOTIF_ID   = 0xA11CE;
 
-    private BroadcastReceiver noisyReceiver;
-
     public static final String ACTION_UPDATE_NOTIFICATION =
             "vaddempudi.gnanesh.syntaxcli.MUSIC_UPDATE_NOTIF";
+    public static final String EXTRA_POS_MS = "pos_ms";
+    public static final String EXTRA_DUR_MS = "dur_ms";
+
+    private static final int RC_PREV   = 0x1001;
+    private static final int RC_TOGGLE = 0x1002;
+    private static final int RC_NEXT   = 0x1003;
 
     private BroadcastReceiver updateReceiver;
     private MediaSessionCompat mediaSession;
@@ -43,18 +47,14 @@ public class MusicPlaybackService extends Service {
 
     private final AudioManager.OnAudioFocusChangeListener focusListener =
             new AudioManager.OnAudioFocusChangeListener() {
-                @Override
-                public void onAudioFocusChange(int focusChange) {
+                @Override public void onAudioFocusChange(int focusChange) {
                     switch (focusChange) {
                         case AudioManager.AUDIOFOCUS_LOSS:
+                        case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT:
                             hasFocus = false;
                             sendCmd(MusicPlayerActivity.CMD_PAUSE);
                             break;
-                        case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT:
-                            sendCmd(MusicPlayerActivity.CMD_PAUSE);
-                            break;
                         case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK:
-                            // Let the user's other audio (nav, call) play over us
                             break;
                         case AudioManager.AUDIOFOCUS_GAIN:
                             hasFocus = true;
@@ -64,17 +64,15 @@ public class MusicPlaybackService extends Service {
                 }
             };
 
-    @Override
-    public void onCreate() {
+    @Override public void onCreate() {
         super.onCreate();
         createChannel();
         initMediaSession();
         requestAudioFocus();
 
         updateReceiver = new BroadcastReceiver() {
-            @Override
-            public void onReceive(Context context, Intent intent) {
-                refreshNotification();
+            @Override public void onReceive(Context context, Intent intent) {
+                refreshNotification(intent);
                 syncMediaSession();
             }
         };
@@ -83,51 +81,21 @@ public class MusicPlaybackService extends Service {
         f.addAction("vaddempudi.gnanesh.syntaxcli.MUSIC_TRACK_CHANGED");
         f.addAction(ACTION_UPDATE_NOTIFICATION);
         LocalBroadcastManager.getInstance(this).registerReceiver(updateReceiver, f);
-        noisyReceiver = new BroadcastReceiver() {
-            @Override
-            public void onReceive(Context context, Intent intent) {
-                if (intent == null) return;
-                if (!AudioManager.ACTION_AUDIO_BECOMING_NOISY.equals(intent.getAction())) return;
-                sendCmd(MusicPlayerActivity.CMD_PAUSE);
-            }
-        };
-        IntentFilter noisyFilter = new IntentFilter(
-                AudioManager.ACTION_AUDIO_BECOMING_NOISY);
-        registerReceiver(noisyReceiver, noisyFilter);
+
         startForegroundInternal();
     }
 
-    @Override
-    public int onStartCommand(Intent intent, int flags, int startId) {
-        if (intent != null
-                && MusicPlayerActivity.ACTION_CTRL.equals(intent.getAction())) {
-            LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
-            syncMediaSession();
+    @Override public int onStartCommand(Intent intent, int flags, int startId) {
+        if (intent != null) {
+            String cmd = intent.getStringExtra(MusicPlayerActivity.EXTRA_CMD);
+            if (cmd != null) dispatchCmd(cmd);
         }
-        refreshNotification();
         return START_STICKY;
     }
 
-    @Nullable
-    @Override
-    public IBinder onBind(Intent intent) { return null; }
+    @Nullable @Override public IBinder onBind(Intent intent) { return null; }
 
-    @Override
-    public void onTaskRemoved(Intent rootIntent) {
-        // The user dismissed the player task from Recents: stop playback service
-        // instead of leaving a sticky foreground service/notification in memory.
-        try {
-            stopForeground(true);
-        } catch (Exception ignored) { }
-        stopSelf();
-        super.onTaskRemoved(rootIntent);
-    }
-
-    @Override
-    public void onDestroy() {
-        try {
-            stopForeground(true);
-        } catch (Exception ignored) { }
+    @Override public void onDestroy() {
         try {
             LocalBroadcastManager.getInstance(this).unregisterReceiver(updateReceiver);
         } catch (Exception ignored) { }
@@ -139,52 +107,47 @@ public class MusicPlaybackService extends Service {
             }
         } catch (Exception ignored) { }
         abandonAudioFocus();
-        try {
-            if (noisyReceiver != null) unregisterReceiver(noisyReceiver);
-        } catch (Exception ignored) { }
         super.onDestroy();
     }
 
-    // ================================================================
-    //  MediaSession — the "owner" of hardware buttons
-    // ================================================================
+    private void dispatchCmd(String cmd) {
+        if (cmd == null) return;
+        sendCmd(cmd);
+        if (!MusicPlayerActivity.alive) {
+            try {
+                Intent open = new Intent(this, MusicPlayerActivity.class);
+                open.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                        | Intent.FLAG_ACTIVITY_SINGLE_TOP
+                        | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                open.putExtra("start_hidden", true);
+                open.putExtra(MusicPlayerActivity.EXTRA_CMD, cmd);
+                startActivity(open);
+            } catch (Exception ignored) { }
+        }
+    }
 
     private void initMediaSession() {
         try {
-            mediaSession = new MediaSessionCompat(this,
-                    "SyntaxCLIMusicSession");
+            mediaSession = new MediaSessionCompat(this, "SyntaxCLIMusicSession");
             mediaSession.setFlags(MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS
                     | MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS);
 
             mediaSession.setCallback(new MediaSessionCompat.Callback() {
-                @Override
-                public void onPlay() {
-                    sendCmd(MusicPlayerActivity.CMD_PLAY);
-                }
-                @Override
-                public void onPause() {
-                    sendCmd(MusicPlayerActivity.CMD_PAUSE);
-                }
-                @Override
-                public void onSkipToNext() {
-                    sendCmd(MusicPlayerActivity.CMD_NEXT);
-                }
-                @Override
-                public void onSkipToPrevious() {
-                    sendCmd(MusicPlayerActivity.CMD_PREV);
-                }
-                @Override
-                public void onStop() {
-                    sendCmd(MusicPlayerActivity.CMD_PAUSE);
+                @Override public void onPlay()   { sendCmd(MusicPlayerActivity.CMD_PLAY); }
+                @Override public void onPause()  { sendCmd(MusicPlayerActivity.CMD_PAUSE); }
+                @Override public void onSkipToNext() { sendCmd(MusicPlayerActivity.CMD_NEXT); }
+                @Override public void onSkipToPrevious() { sendCmd(MusicPlayerActivity.CMD_PREV); }
+                @Override public void onStop()   { sendCmd(MusicPlayerActivity.CMD_PAUSE); }
+                @Override public void onSeekTo(long pos) {
+                    try {
+                        MusicPlayerActivity.requestSeek(pos);
+                    } catch (Exception ignored) { }
                 }
             });
 
             mediaSession.setActive(true);
             syncMediaSession();
-        } catch (Throwable t) {
-            // MediaSessionCompat should always work, but if it doesn't,
-            // the receiver fallback still handles button events.
-        }
+        } catch (Throwable ignored) { }
     }
 
     private void syncMediaSession() {
@@ -197,6 +160,8 @@ public class MusicPlaybackService extends Service {
             MediaMetadataCompat md = new MediaMetadataCompat.Builder()
                     .putString(MediaMetadataCompat.METADATA_KEY_TITLE, title)
                     .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, "")
+                    .putLong(MediaMetadataCompat.METADATA_KEY_DURATION,
+                            MusicPlayerActivity.lastKnownDurationMs)
                     .build();
             mediaSession.setMetadata(md);
 
@@ -205,29 +170,25 @@ public class MusicPlaybackService extends Service {
                     | PlaybackStateCompat.ACTION_PLAY_PAUSE
                     | PlaybackStateCompat.ACTION_SKIP_TO_NEXT
                     | PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS
+                    | PlaybackStateCompat.ACTION_SEEK_TO
                     | PlaybackStateCompat.ACTION_STOP;
 
-            PlaybackStateCompat ps = new PlaybackStateCompat.Builder()
+            PlaybackStateCompat.Builder psb = new PlaybackStateCompat.Builder()
                     .setActions(actions)
                     .setState(playing
                                     ? PlaybackStateCompat.STATE_PLAYING
                                     : PlaybackStateCompat.STATE_PAUSED,
-                            PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN, 1f)
-                    .build();
-            mediaSession.setPlaybackState(ps);
+                            MusicPlayerActivity.lastKnownPositionMs,
+                            playing ? 1f : 0f);
+            mediaSession.setPlaybackState(psb.build());
         } catch (Exception ignored) { }
     }
-
-    // ================================================================
-    //  Audio focus — pauses when a call / nav starts
-    // ================================================================
 
     private void requestAudioFocus() {
         if (hasFocus) return;
         try {
             audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
             if (audioManager == null) return;
-
             if (Build.VERSION.SDK_INT >= 26) {
                 AudioAttributes attrs = new AudioAttributes.Builder()
                         .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -242,8 +203,7 @@ public class MusicPlaybackService extends Service {
                         == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
             } else {
                 hasFocus = audioManager.requestAudioFocus(focusListener,
-                        AudioManager.STREAM_MUSIC,
-                        AudioManager.AUDIOFOCUS_GAIN)
+                        AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN)
                         == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
             }
         } catch (Exception ignored) { }
@@ -261,12 +221,8 @@ public class MusicPlaybackService extends Service {
         hasFocus = false;
     }
 
-    // ================================================================
-    //  Notification
-    // ================================================================
-
     private void startForegroundInternal() {
-        Notification n = buildNotification();
+        Notification n = buildNotification(null);
         if (Build.VERSION.SDK_INT >= 29) {
             startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
         } else {
@@ -288,21 +244,31 @@ public class MusicPlaybackService extends Service {
         }
     }
 
-    private void refreshNotification() {
+    private void refreshNotification(Intent state) {
         try {
-            Notification n = buildNotification();
+            Notification n = buildNotification(state);
             NotificationManager nm =
                     (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
             if (nm != null) nm.notify(NOTIF_ID, n);
         } catch (Exception ignored) { }
     }
 
-    private Notification buildNotification() {
+    private Notification buildNotification(@Nullable Intent state) {
         String title = MusicPlayerActivity.getLastPlayedTitle();
         if (title == null || title.isEmpty()) title = "Music Player";
 
         boolean playing = MusicPlayerActivity.isCurrentlyPlaying();
         String text = playing ? "Playing" : "Paused";
+
+        long pos = state != null
+                ? state.getLongExtra(EXTRA_POS_MS, MusicPlayerActivity.lastKnownPositionMs)
+                : MusicPlayerActivity.lastKnownPositionMs;
+        long dur = state != null
+                ? state.getLongExtra(EXTRA_DUR_MS, MusicPlayerActivity.lastKnownDurationMs)
+                : MusicPlayerActivity.lastKnownDurationMs;
+        if (dur > 0) {
+            text += "  \u2022  " + fmt(pos) + " / " + fmt(dur);
+        }
 
         Intent openIntent = new Intent(this, MusicPlayerActivity.class);
         openIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP
@@ -311,12 +277,11 @@ public class MusicPlaybackService extends Service {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             piFlags |= PendingIntent.FLAG_IMMUTABLE;
         }
-        PendingIntent contentPi = PendingIntent.getActivity(
-                this, 0, openIntent, piFlags);
+        PendingIntent contentPi = PendingIntent.getActivity(this, 0, openIntent, piFlags);
 
-        PendingIntent prevPi   = ctrlPi(MusicPlayerActivity.CMD_PREV, 1);
-        PendingIntent togglePi = ctrlPi(MusicPlayerActivity.CMD_TOGGLE, 2);
-        PendingIntent nextPi   = ctrlPi(MusicPlayerActivity.CMD_NEXT, 3);
+        PendingIntent prevPi   = ctrlPi("ACTION_PREV",   MusicPlayerActivity.CMD_PREV,   RC_PREV);
+        PendingIntent togglePi = ctrlPi("ACTION_TOGGLE", MusicPlayerActivity.CMD_TOGGLE, RC_TOGGLE);
+        PendingIntent nextPi   = ctrlPi("ACTION_NEXT",   MusicPlayerActivity.CMD_NEXT,   RC_NEXT);
 
         NotificationCompat.Builder b = new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_play_circle)
@@ -336,7 +301,7 @@ public class MusicPlaybackService extends Service {
                 .addAction(R.drawable.ic_skip_forward, "Next", nextPi);
 
         if (Build.VERSION.SDK_INT >= 21) {
-            android.support.v4.media.session.MediaSessionCompat.Token token =
+            MediaSessionCompat.Token token =
                     mediaSession != null ? mediaSession.getSessionToken() : null;
             androidx.media.app.NotificationCompat.MediaStyle style =
                     new androidx.media.app.NotificationCompat.MediaStyle()
@@ -344,20 +309,24 @@ public class MusicPlaybackService extends Service {
             if (token != null) style.setMediaSession(token);
             b.setStyle(style);
         }
-
         return b.build();
     }
 
-    private PendingIntent ctrlPi(String cmd, int reqCode) {
+    private PendingIntent ctrlPi(String action, String cmd, int reqCode) {
         Intent i = new Intent(this, MusicPlaybackService.class);
-        i.setAction(MusicPlayerActivity.ACTION_CTRL);
+        i.setAction(action);
         i.putExtra(MusicPlayerActivity.EXTRA_CMD, cmd);
-
         int flags = PendingIntent.FLAG_UPDATE_CURRENT;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             flags |= PendingIntent.FLAG_IMMUTABLE;
         }
         return PendingIntent.getService(this, reqCode, i, flags);
+    }
+
+    private static String fmt(long ms) {
+        if (ms <= 0) return "0:00";
+        long s = ms / 1000;
+        return String.format(java.util.Locale.US, "%d:%02d", s / 60, s % 60);
     }
 
     private void sendCmd(String cmd) {

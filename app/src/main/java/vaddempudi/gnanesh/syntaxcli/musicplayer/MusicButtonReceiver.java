@@ -8,20 +8,6 @@ import android.view.KeyEvent;
 
 import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 
-/**
- * Receives ACTION_MEDIA_BUTTON from:
- *   - wired headsets (3.5 mm jack)
- *   - Bluetooth A2DP/AVRCP devices (earbuds, car stereos)
- *   - lockscreen / notification shade media controls on some OEMs
- *
- * Translates them into the ACTION_CTRL commands MusicPlayerActivity
- * already understands: CMD_TOGGLE, CMD_NEXT, CMD_PREV, CMD_PLAY, CMD_PAUSE.
- *
- * Single tap    → play / pause (toggle)
- * Double tap    → next track
- * Triple tap    → previous track
- * Long press    → (falls through as KEYCODE_MEDIA_PLAY_PAUSE down+up — treated as toggle)
- */
 public class MusicButtonReceiver extends BroadcastReceiver {
 
     private static long lastTapTime = 0L;
@@ -31,14 +17,10 @@ public class MusicButtonReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
         if (intent == null) return;
-
-        String action = intent.getAction();
-        if (!Intent.ACTION_MEDIA_BUTTON.equals(action)) return;
+        if (!Intent.ACTION_MEDIA_BUTTON.equals(intent.getAction())) return;
 
         KeyEvent keyEvent = getKeyEvent(intent);
         if (keyEvent == null) return;
-
-        // Only act on the DOWN phase — UP is the pairing event and would double-fire.
         if (keyEvent.getAction() != KeyEvent.ACTION_DOWN) return;
 
         int code = keyEvent.getKeyCode();
@@ -50,18 +32,14 @@ public class MusicButtonReceiver extends BroadcastReceiver {
             case KeyEvent.KEYCODE_MEDIA_STOP:
                 handleMultiTap(context, code);
                 break;
-
             case KeyEvent.KEYCODE_MEDIA_NEXT:
                 sendCmd(context, MusicPlayerActivity.CMD_NEXT);
                 break;
-
             case KeyEvent.KEYCODE_MEDIA_PREVIOUS:
                 sendCmd(context, MusicPlayerActivity.CMD_PREV);
                 break;
-
             case KeyEvent.KEYCODE_MEDIA_FAST_FORWARD:
             case KeyEvent.KEYCODE_MEDIA_REWIND:
-                // Treat as prev/next — most players do the same
                 sendCmd(context, code == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD
                         ? MusicPlayerActivity.CMD_NEXT
                         : MusicPlayerActivity.CMD_PREV);
@@ -69,11 +47,6 @@ public class MusicButtonReceiver extends BroadcastReceiver {
         }
     }
 
-    /**
-     * Single / double / triple tap on the primary media button.
-     * Most earbuds send a single MEDIA_PLAY_PAUSE per tap and the OS
-     * doesn't coalesce them — we do the counting ourselves.
-     */
     private void handleMultiTap(final Context context, final int keyCode) {
         long now = System.currentTimeMillis();
         if (now - lastTapTime > DOUBLE_TAP_WINDOW_MS) {
@@ -81,12 +54,10 @@ public class MusicButtonReceiver extends BroadcastReceiver {
         }
         lastTapTime = now;
         tapCount++;
-
         final int currentTap = tapCount;
 
-        // Wait out the window, then dispatch based on how many taps arrived.
         new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
-            if (currentTap != tapCount) return;  // a later tap superseded this one
+            if (currentTap != tapCount) return;
             if (currentTap == 1) {
                 if (keyCode == KeyEvent.KEYCODE_MEDIA_PLAY) {
                     sendCmd(context, MusicPlayerActivity.CMD_PLAY);
@@ -112,30 +83,23 @@ public class MusicButtonReceiver extends BroadcastReceiver {
                     .sendBroadcast(i);
         } catch (Exception ignored) { }
 
-        // ★ Try to wake the Music activity so it can handle the command
-        //   if it's currently dead (after the OS kills it or the user
-        //   swiped it away). If the activity isn't running, this launches it.
         try {
-            if (!MusicPlayerActivity.alive) {
-                Intent open = new Intent(context.getApplicationContext(),
-                        MusicPlayerActivity.class);
-                open.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                        | Intent.FLAG_ACTIVITY_SINGLE_TOP
-                        | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-                open.putExtra(MusicPlayerActivity.EXTRA_CMD, cmd);
-                context.getApplicationContext().startActivity(open);
+            Intent svc = new Intent(context.getApplicationContext(),
+                    MusicPlaybackService.class);
+            svc.putExtra(MusicPlayerActivity.EXTRA_CMD, cmd);
+            if (android.os.Build.VERSION.SDK_INT >= 26) {
+                context.getApplicationContext().startForegroundService(svc);
+            } else {
+                context.getApplicationContext().startService(svc);
             }
         } catch (Exception ignored) { }
     }
 
     private static KeyEvent getKeyEvent(Intent intent) {
-        // Modern path: Parcelable extra
         try {
             Object o = intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT);
             if (o instanceof KeyEvent) return (KeyEvent) o;
         } catch (Exception ignored) { }
-
-        // Legacy path: Bundle with "android.intent.extra.KEY_EVENT"
         try {
             Bundle b = intent.getExtras();
             if (b != null) {
@@ -143,7 +107,6 @@ public class MusicButtonReceiver extends BroadcastReceiver {
                 if (o instanceof KeyEvent) return (KeyEvent) o;
             }
         } catch (Exception ignored) { }
-
         return null;
     }
 }

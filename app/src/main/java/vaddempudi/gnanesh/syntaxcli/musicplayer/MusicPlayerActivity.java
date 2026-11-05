@@ -2,10 +2,13 @@ package vaddempudi.gnanesh.syntaxcli.musicplayer;
 
 import android.Manifest;
 import android.app.AlertDialog;
+import android.content.BroadcastReceiver;
 import android.content.ContentResolver;
 import android.content.ContentUris;
 import android.content.ContentValues;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Typeface;
@@ -17,6 +20,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.provider.MediaStore;
 import android.provider.Settings;
 import android.text.Editable;
@@ -40,10 +44,15 @@ import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -54,14 +63,8 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-import android.content.BroadcastReceiver;
-import android.content.Context;
-import android.content.IntentFilter;
-import androidx.localbroadcastmanager.content.LocalBroadcastManager;
-import android.os.PowerManager;
-
-import vaddempudi.gnanesh.syntaxcli.filemanager.FileLog;
 import vaddempudi.gnanesh.syntaxcli.R;
+import vaddempudi.gnanesh.syntaxcli.filemanager.FileLog;
 
 public class MusicPlayerActivity extends AppCompatActivity {
 
@@ -99,21 +102,12 @@ public class MusicPlayerActivity extends AppCompatActivity {
     private static final String KEY_PLAYBACK_IS_PLAYLIST = "playback_is_playlist";
     private static final String KEY_PLAYBACK_LIST_IDS  = "playback_list_ids";
     private static final String KEY_PLAYBACK_LIST_KIND = "playback_list_kind";
-    private static final String KEY_BATTERY_PROMPTED   = "battery_opt_prompted";
 
     private static final String KIND_PLAYLIST = "playlist";
     private static final String KIND_LIBRARY  = "library";
 
-    // ── Loop mode ──
-    public static final int LOOP_OFF  = 0;
-    public static final int LOOP_ONE  = 1;
-    public static final int LOOP_ALL  = 2;
-
-    private static final String KEY_LOOP_MODE = "loop_mode";
-    private int loopMode = LOOP_OFF;
-    private TextView btnLoop;
-
-
+    private static final String TUI_DIR       = "t-ui";
+    private static final String PLAYLIST_TXT  = "music_play.txt";
 
     private static long lastPlayedId = -1;
     private static String lastPlayedTitle = "";
@@ -121,6 +115,11 @@ public class MusicPlayerActivity extends AppCompatActivity {
 
     public static volatile boolean alive = false;
     public static volatile boolean everOpened = false;
+
+    public static long lastKnownPositionMs = 0L;
+    public static long lastKnownDurationMs = 0L;
+
+    private static volatile MediaPlayer staticPlayer = null;
 
     public static class Track {
         long id;
@@ -158,6 +157,7 @@ public class MusicPlayerActivity extends AppCompatActivity {
     private TextView     tvTitle;
     private TextView     emptyLabel;
     private ImageView    btnLeft;
+    private ImageView    btnRefresh;
     private ImageView    btnSearch;
     private ImageView    btnSort;
     private Button       btnAdd;
@@ -184,8 +184,12 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 try {
                     int pos = player.getCurrentPosition();
                     int dur = player.getDuration();
-                    if (dur > 0) seekBar.setMax(dur);
-                    seekBar.setProgress(pos);
+                    if (dur > 0 && seekBar != null) {
+                        seekBar.setMax(dur);
+                        seekBar.setProgress(pos);
+                    }
+                    lastKnownPositionMs = pos;
+                    lastKnownDurationMs = dur;
                 } catch (Exception ignored) { }
                 ui.postDelayed(this, 500);
             }
@@ -199,6 +203,13 @@ public class MusicPlayerActivity extends AppCompatActivity {
             handleControlCommand(cmd);
         }
     };
+
+    public static void requestSeek(long posMs) {
+        MediaPlayer p = staticPlayer;
+        if (p != null) {
+            try { p.seekTo((int) posMs); } catch (Exception ignored) { }
+        }
+    }
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -252,10 +263,7 @@ public class MusicPlayerActivity extends AppCompatActivity {
         try {
             LocalBroadcastManager.getInstance(this).unregisterReceiver(ctrlReceiver);
         } catch (Exception ignored) { }
-        if (isFinishing()) {
-            releasePlayer();
-            stopPlaybackService();
-        }
+        if (isFinishing()) releasePlayer();
     }
 
     @Override
@@ -312,6 +320,15 @@ public class MusicPlayerActivity extends AppCompatActivity {
         titleLp.leftMargin = dp(12);
         topBar.addView(tvTitle, titleLp);
 
+        btnRefresh = new ImageView(this);
+        btnRefresh.setImageResource(R.drawable.ic_refresh);
+        btnRefresh.setColorFilter(GREEN);
+        btnRefresh.setOnClickListener(v -> {
+            Toast.makeText(this, "Refreshing library\u2026", Toast.LENGTH_SHORT).show();
+            loadTracks();
+        });
+        topBar.addView(btnRefresh, new LinearLayout.LayoutParams(dp(40), dp(40)));
+
         btnSearch = new ImageView(this);
         btnSearch.setImageResource(R.drawable.ic_search_black_24);
         btnSearch.setColorFilter(GREEN);
@@ -336,7 +353,7 @@ public class MusicPlayerActivity extends AppCompatActivity {
         searchRow.setVisibility(View.GONE);
 
         searchInput = new EditText(this);
-        searchInput.setHint("search…");
+        searchInput.setHint("search\u2026");
         searchInput.setHintTextColor(DIM);
         searchInput.setTextColor(GREEN);
         searchInput.setBackgroundColor(BG);
@@ -421,19 +438,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
         ppLp.leftMargin = dp(4);
         navRow.addView(btnPlayPause, ppLp);
 
-        // ── Loop mode button ──
-        // ── Loop mode button ──
-        btnLoop = new TextView(this);
-        btnLoop.setTypeface(Typeface.MONOSPACE);
-        btnLoop.setTextSize(16);
-        btnLoop.setGravity(Gravity.CENTER);
-        btnLoop.setTextColor(DIM);
-        btnLoop.setOnClickListener(v -> cycleLoopMode());
-        LinearLayout.LayoutParams loopLp =
-                new LinearLayout.LayoutParams(dp(32), dp(32));
-        loopLp.leftMargin = dp(6);
-        navRow.addView(btnLoop, loopLp);
-
         tvNowPlaying = new TextView(this);
         tvNowPlaying.setTextColor(GREEN);
         tvNowPlaying.setTextSize(12);
@@ -471,7 +475,9 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 }
             }
             @Override public void onStartTrackingTouch(SeekBar sb) { }
-            @Override public void onStopTrackingTouch(SeekBar sb) { }
+            @Override public void onStopTrackingTouch(SeekBar sb) {
+                pushPlaybackStateToService();
+            }
         });
         bottomBar.addView(seekBar, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -482,48 +488,20 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
         setContentView(root);
-
-        loadLoopMode();
-        updateLoopButton();
     }
 
-    private boolean isIgnoringBatteryOptimizations() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true;
-        try {
-            PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
-            return pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());
-        } catch (Exception e) {
-            return true;
-        }
+    private File tuiDir() {
+        File dir = new File(android.os.Environment.getExternalStorageDirectory(), TUI_DIR);
+        if (!dir.exists()) dir.mkdirs();
+        return dir;
     }
 
-    private void maybeRequestBatteryOptimizationExemption() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
-        if (isIgnoringBatteryOptimizations()) return;
-        blackDialog()
-                .setTitle("Allow background playback")
-                .setMessage("Android may stop music when the screen is off.\n\n" +
-                        "Tap \"Allow\" and choose \"Unrestricted\" for this app " +
-                        "so playback keeps running in the background.")
-                .setPositiveButton("Allow", (d, w) -> {
-                    try {
-                        Intent i = new Intent(
-                                Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
-                        i.setData(Uri.parse("package:" + getPackageName()));
-                        startActivityForResult(i, REQ_BATTERY_OPT);
-                    } catch (Exception e) {
-                        try {
-                            Intent fallback = new Intent(
-                                    Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
-                            startActivity(fallback);
-                        } catch (Exception ignored) { }
-                    }
-                })
-                .setNegativeButton("Later", null)
-                .show();
+    private File playlistFile() {
+        return new File(tuiDir(), PLAYLIST_TXT);
     }
 
     private void loadPlaylist() {
+        boolean loadedFromPrefs = false;
         try {
             android.content.SharedPreferences p =
                     getSharedPreferences(PREFS, MODE_PRIVATE);
@@ -535,9 +513,30 @@ public class MusicPlayerActivity extends AppCompatActivity {
                     try { activePlaylistIds.add(Long.parseLong(part)); }
                     catch (NumberFormatException ignored) { }
                 }
+                loadedFromPrefs = true;
             }
             if (activePlaylistIds.isEmpty()) filterActive = false;
-        } catch (Exception ignored) { }
+        } catch (Throwable ignored) { }
+
+        if (!loadedFromPrefs || activePlaylistIds.isEmpty()) {
+            File txt = playlistFile();
+            if (txt.exists() && txt.canRead()) {
+                activePlaylistIds.clear();
+                try (BufferedReader br = new BufferedReader(
+                        new InputStreamReader(new FileInputStream(txt)))) {
+                    String line;
+                    while ((line = br.readLine()) != null) {
+                        line = line.trim();
+                        if (line.isEmpty()) continue;
+                        int sep = line.indexOf('|');
+                        String idPart = sep >= 0 ? line.substring(0, sep) : line;
+                        try { activePlaylistIds.add(Long.parseLong(idPart.trim())); }
+                        catch (NumberFormatException ignored) { }
+                    }
+                } catch (Throwable ignored) { }
+                filterActive = !activePlaylistIds.isEmpty();
+            }
+        }
     }
 
     private void savePlaylist() {
@@ -547,12 +546,29 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 if (sb.length() > 0) sb.append(',');
                 sb.append(id);
             }
-            getSharedPreferences(PREFS, MODE_PRIVATE)
-                    .edit()
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                     .putString(KEY_PLAYLIST, sb.toString())
                     .putBoolean(KEY_FILTER_ACTIVE, filterActive)
-                    .commit();
-        } catch (Exception ignored) { }
+                    .apply();
+        } catch (Throwable ignored) { }
+
+        try {
+            File txt = playlistFile();
+            try (FileOutputStream fos = new FileOutputStream(txt, false)) {
+                StringBuilder sb = new StringBuilder();
+                for (Long id : activePlaylistIds) {
+                    String title = "";
+                    String artist = "";
+                    for (Track t : allTracks) {
+                        if (t.id == id) { title = t.title; artist = t.artist; break; }
+                    }
+                    sb.append(id).append('|')
+                            .append(title.replace('|', ' ')).append('|')
+                            .append(artist.replace('|', ' ')).append('\n');
+                }
+                fos.write(sb.toString().getBytes("UTF-8"));
+            }
+        } catch (Throwable ignored) { }
     }
 
     private void saveLastViewState() {
@@ -681,10 +697,46 @@ public class MusicPlayerActivity extends AppCompatActivity {
                         Toast.LENGTH_SHORT).show();
             } else {
                 Toast.makeText(this,
-                        "Still restricted — music may stop when the screen is off",
+                        "Still restricted \u2014 music may stop when the screen is off",
                         Toast.LENGTH_LONG).show();
             }
         }
+    }
+
+    private boolean isIgnoringBatteryOptimizations() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true;
+        try {
+            PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+            return pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());
+        } catch (Exception e) {
+            return true;
+        }
+    }
+
+    private void maybeRequestBatteryOptimizationExemption() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
+        if (isIgnoringBatteryOptimizations()) return;
+        blackDialog()
+                .setTitle("Allow background playback")
+                .setMessage("Android may stop music when the screen is off.\n\n" +
+                        "Tap \"Allow\" and choose \"Unrestricted\" for this app " +
+                        "so playback keeps running in the background.")
+                .setPositiveButton("Allow", (d, w) -> {
+                    try {
+                        Intent i = new Intent(
+                                Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                        i.setData(Uri.parse("package:" + getPackageName()));
+                        startActivityForResult(i, REQ_BATTERY_OPT);
+                    } catch (Exception e) {
+                        try {
+                            Intent fallback = new Intent(
+                                    Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+                            startActivity(fallback);
+                        } catch (Exception ignored) { }
+                    }
+                })
+                .setNegativeButton("Later", null)
+                .show();
     }
 
     private void loadTracks() {
@@ -946,8 +998,18 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 btnPlayPause.setColorFilter(GREEN);
                 ui.post(progressTick);
             }
-            LocalBroadcastManager.getInstance(this).sendBroadcast(
-                    new Intent("vaddempudi.gnanesh.syntaxcli.MUSIC_STATE_CHANGED"));
+            pushPlaybackStateToService();
+        } catch (Exception ignored) { }
+    }
+
+    private void pushPlaybackStateToService() {
+        try {
+            Intent i = new Intent(MusicPlaybackService.ACTION_UPDATE_NOTIFICATION);
+            i.putExtra(MusicPlaybackService.EXTRA_POS_MS,
+                    player != null ? player.getCurrentPosition() : 0);
+            i.putExtra(MusicPlaybackService.EXTRA_DUR_MS,
+                    player != null ? player.getDuration() : 0);
+            LocalBroadcastManager.getInstance(this).sendBroadcast(i);
         } catch (Exception ignored) { }
     }
 
@@ -1067,19 +1129,17 @@ public class MusicPlayerActivity extends AppCompatActivity {
 
         lastPlayedId = t.id;
         lastPlayedTitle = t.title;
-        LocalBroadcastManager.getInstance(this).sendBroadcast(
-                new Intent("vaddempudi.gnanesh.syntaxcli.MUSIC_TRACK_CHANGED"));
 
         releasePlayer();
         try {
             player = new MediaPlayer();
+            staticPlayer = player;
             player.setAudioAttributes(new AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_MEDIA)
                     .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                     .build());
             player.setDataSource(this, t.contentUri);
             player.setOnPreparedListener(mp -> {
-                applyLoopModeToPlayer();
                 mp.start();
                 isPaused = false;
                 isPausedStatic = false;
@@ -1096,11 +1156,14 @@ public class MusicPlayerActivity extends AppCompatActivity {
                     seekBar.setMax(mp.getDuration());
                     seekBar.setProgress(0);
                 }
+                lastKnownPositionMs = 0L;
+                lastKnownDurationMs = mp.getDuration();
                 ui.removeCallbacks(progressTick);
                 ui.post(progressTick);
                 if (adapter != null) adapter.notifyDataSetChanged();
+                pushPlaybackStateToService();
             });
-            player.setOnCompletionListener(mp -> onTrackCompleted());
+            player.setOnCompletionListener(mp -> playNext());
             player.setOnErrorListener((mp, what, extra) -> {
                 Toast.makeText(this, "Playback error", Toast.LENGTH_SHORT).show();
                 return true;
@@ -1116,13 +1179,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 }
             } catch (Exception ignored) { }
 
-            ui.postDelayed(() -> {
-                try {
-                    Intent upd = new Intent(
-                            MusicPlaybackService.ACTION_UPDATE_NOTIFICATION);
-                    LocalBroadcastManager.getInstance(this).sendBroadcast(upd);
-                } catch (Exception ignored) { }
-            }, 250);
         } catch (Exception e) {
             FileLog.e("MusicPlayer: play failed", e);
             Toast.makeText(this, "Cannot play: " + e.getMessage(),
@@ -1150,24 +1206,8 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 if (list.get(i).id == lastPlayedId) { cur = i; break; }
             }
         }
-
-        if (cur < 0) {
-            // No current track — start at the beginning.
-            playTrackByObject(list.get(0), list);
-            return;
-        }
-
-        int next = cur + 1;
-        if (next >= list.size()) {
-            if (loopMode == LOOP_OFF) {
-                // End of list, no loop — stop cleanly.
-                pauseAtEndOfList();
-                return;
-            }
-            // LOOP_ALL (LOOP_ONE is handled by MediaPlayer.setLooping,
-            // but if we land here anyway, restart at 0).
-            next = 0;
-        }
+        if (cur < 0) cur = 0;
+        int next = (cur + 1) % list.size();
         playTrackByObject(list.get(next), list);
     }
 
@@ -1179,110 +1219,9 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 if (list.get(i).id == lastPlayedId) { cur = i; break; }
             }
         }
-
-        if (cur < 0) {
-            playTrackByObject(list.get(0), list);
-            return;
-        }
-
-        int prev = cur - 1;
-        if (prev < 0) {
-            if (loopMode == LOOP_OFF) {
-                // Start of list, no loop — stay on current track.
-                playTrackByObject(list.get(0), list);
-                return;
-            }
-            prev = list.size() - 1;
-        }
+        if (cur < 0) cur = 0;
+        int prev = (cur - 1 + list.size()) % list.size();
         playTrackByObject(list.get(prev), list);
-    }
-
-    private void onTrackCompleted() {
-        switch (loopMode) {
-            case LOOP_ONE:
-                // MediaPlayer.setLooping(true) already handles this.
-                // As a safety net, restart the same track.
-                if (player != null) {
-                    try { player.seekTo(0); player.start(); }
-                    catch (Exception ignored) { }
-                }
-                break;
-            case LOOP_ALL:
-                playNext();
-                break;
-            case LOOP_OFF:
-            default:
-                playNextFromList(resolvePlaybackList());
-                break;
-        }
-    }
-    private void cycleLoopMode() {
-        loopMode = (loopMode + 1) % 3;
-        saveLoopMode();
-        updateLoopButton();
-        applyLoopModeToPlayer();
-    }
-
-    private void applyLoopModeToPlayer() {
-        if (player == null) return;
-        try {
-            player.setLooping(loopMode == LOOP_ONE);
-        } catch (Exception ignored) { }
-    }
-
-    private void updateLoopButton() {
-        if (btnLoop == null) return;
-        switch (loopMode) {
-            case LOOP_ONE:
-                btnLoop.setText("\u21BB\u00B9");   // ↻¹
-                btnLoop.setTextColor(GREEN);
-                break;
-            case LOOP_ALL:
-                btnLoop.setText("\u21BB");          // ↻
-                btnLoop.setTextColor(GREEN);
-                break;
-            case LOOP_OFF:
-            default:
-                btnLoop.setText("\u21BB");          // ↻
-                btnLoop.setTextColor(DIM);
-                break;
-        }
-    }
-
-
-    private void saveLoopMode() {
-        try {
-            getSharedPreferences(PREFS, MODE_PRIVATE)
-                    .edit()
-                    .putInt(KEY_LOOP_MODE, loopMode)
-                    .apply();
-        } catch (Exception ignored) { }
-    }
-
-    private void loadLoopMode() {
-        try {
-            loopMode = getSharedPreferences(PREFS, MODE_PRIVATE)
-                    .getInt(KEY_LOOP_MODE, LOOP_OFF);
-            if (loopMode < 0 || loopMode > 2) loopMode = LOOP_OFF;
-        } catch (Exception ignored) {
-            loopMode = LOOP_OFF;
-        }
-    }
-
-    private void pauseAtEndOfList() {
-        if (player != null) {
-            try { player.pause(); } catch (Exception ignored) { }
-            try { player.seekTo(0); } catch (Exception ignored) { }
-        }
-        isPaused = true;
-        isPausedStatic = true;
-        if (btnPlayPause != null) {
-            btnPlayPause.setImageResource(R.drawable.ic_play_circle);
-            btnPlayPause.setColorFilter(NOW_PLAY);
-        }
-        ui.removeCallbacks(progressTick);
-        LocalBroadcastManager.getInstance(this)
-                .sendBroadcast(new Intent("vaddempudi.gnanesh.syntaxcli.MUSIC_STATE_CHANGED"));
     }
 
     private void playNext() {
@@ -1297,22 +1236,12 @@ public class MusicPlayerActivity extends AppCompatActivity {
         ui.removeCallbacks(progressTick);
         isPaused = false;
         isPausedStatic = true;
+        staticPlayer = null;
         if (player != null) {
             try { player.stop(); } catch (Exception ignored) { }
             try { player.release(); } catch (Exception ignored) { }
             player = null;
         }
-        // Do not stop MusicPlaybackService here. This method is also called
-        // during every track change, so stopping the service here destroys
-        // its MediaSession and removes the notification between songs.
-        // Keep the foreground service alive while switching tracks.
-    }
-
-    private void stopPlaybackService() {
-        try {
-            Intent serviceIntent = new Intent(this, MusicPlaybackService.class);
-            stopService(serviceIntent);
-        } catch (Exception ignored) { }
     }
 
     private void handleControlCommand(String cmd) {
@@ -1514,14 +1443,7 @@ public class MusicPlayerActivity extends AppCompatActivity {
                             pickBuffer.remove((Long) track.id);
                             if (activePlaylistIds.isEmpty()) filterActive = false;
                             savePlaylist();
-                            boolean deletedCurrentTrack = track.id == lastPlayedId;
-                            if (deletedCurrentTrack) {
-                                releasePlayer();
-                                lastPlayedId = -1;
-                                lastPlayedTitle = "";
-                                isPausedStatic = true;
-                                stopPlaybackService();
-                            }
+                            releasePlayer();
                             playingIndex = -1;
                             bottomBar.setVisibility(View.GONE);
                             refreshList();
@@ -1603,6 +1525,11 @@ public class MusicPlayerActivity extends AppCompatActivity {
         super.onNewIntent(intent);
         setIntent(intent);
         handleIncomingIntent(intent);
+        String cmd = intent != null ? intent.getStringExtra(EXTRA_CMD) : null;
+        if (cmd != null) {
+            intent.removeExtra(EXTRA_CMD);
+            handleControlCommand(cmd);
+        }
     }
 
     private void handleIncomingIntent(Intent intent) {
