@@ -49,26 +49,64 @@ public final class GestureActionStore {
     private void load() {
         actions.clear();
 
-        boolean loadedFromPrefs = false;
+        long prefsStamp = prefs.getLong("stamp", 0L);
+        long fileStamp  = 0L;
+
+        List<KeyAction> fromPrefs = new ArrayList<>();
         try {
             String raw = prefs.getString(KEY, null);
             if (raw != null && !raw.isEmpty()) {
                 JSONArray arr = new JSONArray(raw);
                 for (int i = 0; i < arr.length(); i++) {
                     KeyAction a = fromJson(arr.getJSONObject(i));
-                    if (a != null) actions.add(a);
+                    if (a != null) fromPrefs.add(a);
                 }
-                loadedFromPrefs = !actions.isEmpty();
             }
         } catch (Throwable ignored) { }
 
-        if (loadedFromPrefs) return;
+        List<KeyAction> fromFile = new ArrayList<>();
+        File f = new File(filePath());
+        if (f.exists() && f.canRead()) {
+            try (BufferedReader r = new BufferedReader(new FileReader(f))) {
+                String first = r.readLine();
+                if (first != null && first.startsWith("#")) {
+                    try { fileStamp = Long.parseLong(first.substring(1).trim()); }
+                    catch (Throwable ignored) { }
+                }
+                String line;
+                while ((line = r.readLine()) != null) {
+                    line = line.trim();
+                    if (line.isEmpty()) continue;
+                    try {
+                        JSONObject o = new JSONObject(line);
+                        KeyAction a = fromJson(o);
+                        if (a != null) fromFile.add(a);
+                    } catch (Throwable ignored) { }
+                }
+            } catch (Throwable ignored) { }
+        }
 
-        List<KeyAction> fromFile = loadFromFile();
+        // Choose the newer source.
+        if (!fromPrefs.isEmpty() && prefsStamp >= fileStamp) {
+            actions.addAll(fromPrefs);
+            // If the file is stale but exists, sync it forward so the next
+            // cold start is consistent even if prefs gets wiped.
+            if (!fromFile.isEmpty() && prefsStamp > fileStamp) {
+                try { persistFile(prefsStamp); } catch (Throwable ignored) { }
+            }
+            return;
+        }
         if (!fromFile.isEmpty()) {
             actions.addAll(fromFile);
-            persistPrefs();
+            // Sync prefs forward so the next cold start uses prefs (faster).
+            if (fileStamp > 0) {
+                try { persistPrefs(fileStamp); } catch (Throwable ignored) { }
+            } else {
+                persist(); // file had no stamp — restamp both from now.
+            }
+            return;
         }
+        // Neither source had anything.
     }
 
     private List<KeyAction> loadFromFile() {
@@ -97,7 +135,8 @@ public final class GestureActionStore {
                     o.optString("id", UUID.randomUUID().toString()),
                     o.optString("keyChar", ""),
                     o.optInt("type", KeyAction.TYPE_TEXT),
-                    o.optString("payload", "")
+                    o.optString("payload", ""),
+                    o.optBoolean("autoEnter", false)
             );
         } catch (Throwable ignored) {
             return null;
@@ -105,11 +144,12 @@ public final class GestureActionStore {
     }
 
     private void persist() {
-        persistPrefs();
-        persistFile();
+        long stamp = System.currentTimeMillis();
+        persistPrefs(stamp);
+        persistFile(stamp);
     }
 
-    private void persistPrefs() {
+    private void persistPrefs(long stamp) {
         try {
             JSONArray arr = new JSONArray();
             for (KeyAction a : actions) {
@@ -118,25 +158,31 @@ public final class GestureActionStore {
                 o.put("keyChar", a.keyChar);
                 o.put("type", a.type);
                 o.put("payload", a.payload);
+                o.put("autoEnter", a.autoEnter);
                 arr.put(o);
             }
-            prefs.edit().putString(KEY, arr.toString()).apply();
+            prefs.edit()
+                    .putString(KEY, arr.toString())
+                    .putLong("stamp", stamp)
+                    .commit();
         } catch (Throwable ignored) { }
     }
 
-    private void persistFile() {
+    private void persistFile(long stamp) {
         File dir = new File(filePath()).getParentFile();
         if (dir == null) return;
         try {
             if (!dir.exists()) dir.mkdirs();
             try (OutputStreamWriter w = new OutputStreamWriter(
                     new FileOutputStream(filePath()))) {
+                w.write("#" + stamp + "\n");
                 for (KeyAction a : actions) {
                     JSONObject o = new JSONObject();
                     o.put("id", a.id);
                     o.put("keyChar", a.keyChar);
                     o.put("type", a.type);
                     o.put("payload", a.payload);
+                    o.put("autoEnter", a.autoEnter);
                     w.write(o.toString());
                     w.write('\n');
                 }

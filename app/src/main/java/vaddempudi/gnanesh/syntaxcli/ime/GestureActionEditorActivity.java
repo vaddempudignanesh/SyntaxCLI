@@ -912,12 +912,14 @@ public class GestureActionEditorActivity extends Activity {
             if (a.type == KeyAction.TYPE_APP_LAUNCH)           kindLabel = "LAUNCH APP ";
             else if (a.type == KeyAction.TYPE_LAUNCH_ACTIVITY) kindLabel = "OPEN ACTIVITY ";
             else                                               kindLabel = "TYPE TEXT ";
-            line1.setText("KEY: [" + a.keyChar + "]  →  " + kindLabel + a.payload);
-            line1.setTextColor(GREEN);
+            String auto = "";
+            if (a.type == KeyAction.TYPE_TEXT) {
+                auto = a.autoEnter ? "  [ENTER: ON]" : "  [ENTER: OFF]";
+            }
+            line1.setText("KEY: [" + a.keyChar + "]  →  " + kindLabel + a.payload + auto);           line1.setTextColor(GREEN);
             line1.setTypeface(Typeface.MONOSPACE);
             line1.setTextSize(13);
             row.addView(line1);
-
             LinearLayout buttons = new LinearLayout(this);
             buttons.setOrientation(LinearLayout.HORIZONTAL);
             buttons.setPadding(0, dp(6), 0, 0);
@@ -947,6 +949,63 @@ public class GestureActionEditorActivity extends Activity {
     }
 
     private void showAddDialog() { showEditDialog(null); }
+
+    private View makeOnOffRow(String label, boolean initial,
+                              java.util.function.Consumer<Boolean> onChange) {
+        final boolean[] state = { initial };
+
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = dp(10);
+        row.setLayoutParams(lp);
+
+        TextView text = new TextView(this);
+        text.setText(label);
+        text.setTextColor(GREEN);
+        text.setTextSize(12);
+        text.setTypeface(Typeface.MONOSPACE);
+        row.addView(text, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        final TextView btn = new TextView(this);
+        btn.setTypeface(Typeface.MONOSPACE);
+        btn.setTextSize(12);
+        btn.setGravity(Gravity.CENTER);
+        btn.setPadding(dp(14), dp(8), dp(14), dp(8));
+        btn.setClickable(true);
+
+        final Runnable[] refresh = new Runnable[1];
+        refresh[0] = () -> {
+            GradientDrawable bg = new GradientDrawable();
+            bg.setCornerRadius(dp(4));
+            if (state[0]) {
+                btn.setText("ON");
+                btn.setTextColor(0xFF000000);
+                bg.setColor(GREEN);
+                bg.setStroke(dp(1), GREEN);
+            } else {
+                btn.setText("OFF");
+                btn.setTextColor(DIM);
+                bg.setColor(0xFF0A0A0A);
+                bg.setStroke(dp(1), CARD_BORDER);
+            }
+            btn.setBackground(bg);
+        };
+        refresh[0].run();
+
+        btn.setOnClickListener(v -> {
+            state[0] = !state[0];
+            refresh[0].run();
+            onChange.accept(state[0]);
+        });
+
+        row.addView(btn, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        return row;
+    }
 
     private void showEditDialog(KeyAction existing) {
         LinearLayout root = new LinearLayout(this);
@@ -1042,7 +1101,17 @@ public class GestureActionEditorActivity extends Activity {
         pickAppBtn.setOnClickListener(v ->
                 AppPickerDialog.show(this, (pkg, label) -> payloadInput.setText(pkg)));
         root.addView(pickAppBtn);
-
+        boolean storedAutoEnter = false;
+        if (existing != null) {
+            KeyAction fresh = GestureActionStore.get(this).byId(existing.id);
+            storedAutoEnter = (fresh != null) ? fresh.autoEnter : existing.autoEnter;
+        }
+        final boolean[] autoEnterState = { storedAutoEnter };
+        final View autoEnterRow = makeOnOffRow(
+                "Send ENTER after this action",
+                storedAutoEnter,
+                v -> autoEnterState[0] = v);
+        root.addView(autoEnterRow);
         Runnable refreshTypeUi = () -> {
             boolean isText     = type[0] == KeyAction.TYPE_TEXT;
             boolean isApp      = type[0] == KeyAction.TYPE_APP_LAUNCH;
@@ -1073,6 +1142,7 @@ public class GestureActionEditorActivity extends Activity {
                 pickAppBtn.setVisibility(View.VISIBLE);
                 pickAppBtn.setOnClickListener(v -> showActivityPicker(payloadInput));
             }
+            autoEnterRow.setVisibility(isText ? View.VISIBLE : View.GONE);
             if (!isText && existing != null) payloadInput.setText(existing.payload);
         };
 
@@ -1107,7 +1177,7 @@ public class GestureActionEditorActivity extends Activity {
 
                 KeyAction a = new KeyAction(
                         existing != null ? existing.id : UUID.randomUUID().toString(),
-                        key, type[0], payload);
+                        key, type[0], payload, autoEnterState[0]);
 
                 if (existing != null) {
                     GestureActionStore.get(this).replace(existing.id, a);

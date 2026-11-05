@@ -32,7 +32,6 @@ public class BasicImeService extends InputMethodService
     private int keyboardWidthPx = 0;
 
     private static final int PAGE_LETTERS = 0;
-    private static final int PAGE_NUMERIC = 4;
 
     private int savedVideoPositionMs = 0;
     private String savedVideoPath = null;
@@ -88,6 +87,7 @@ public class BasicImeService extends InputMethodService
     public void onCreate() {
         super.onCreate();
         EmojiGridCache.get(this).setPicker(this);
+        GestureActionStore.get(this).all();
         new Thread(() -> {
             try {
                 EmojiGridCache.get(this).warm();
@@ -369,7 +369,17 @@ public class BasicImeService extends InputMethodService
         if (a.type == KeyAction.TYPE_TEXT) {
             InputConnection ic = getCurrentInputConnection();
             if (ic == null) return;
+
             ic.commitText(a.payload, 1);
+
+            if (a.autoEnter) {
+                rootContainer.postDelayed(() -> {
+                    InputConnection ic2 = getCurrentInputConnection();
+                    if (ic2 == null) return;
+                    ic2.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER));
+                    ic2.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_ENTER));
+                }, 30L);
+            }
             return;
         }
 
@@ -389,11 +399,12 @@ public class BasicImeService extends InputMethodService
             try {
                 android.content.ComponentName cn =
                         android.content.ComponentName.unflattenFromString(a.payload);
-                if (cn == null) return;
-                android.content.Intent i = new android.content.Intent();
-                i.setComponent(cn);
-                i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
-                startActivity(i);
+                if (cn != null) {
+                    android.content.Intent i = new android.content.Intent();
+                    i.setComponent(cn);
+                    i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(i);
+                }
             } catch (Exception ignored) { }
         }
     }
