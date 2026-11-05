@@ -11,6 +11,8 @@
 -keep class vaddempudi.gnanesh.syntaxcli.managers.** { *; }
 -keep class vaddempudi.gnanesh.syntaxcli.tuils.libsuperuser.**
 -keep class vaddempudi.gnanesh.syntaxcli.managers.suggestions.HideSuggestionViewValues
+-keep class vaddempudi.gnanesh.syntaxcli.commands.main.raw.** { *; }
+-keep class vaddempudi.gnanesh.syntaxcli.InstallResultReceiver { *; }
 -keep public class it.andreuzzi.comparestring2.**
 
 -dontwarn vaddempudi.gnanesh.syntaxcli.commands.main.raw.**

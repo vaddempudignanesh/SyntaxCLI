@@ -334,6 +334,15 @@
             </intent-filter>
         </receiver>
 
+        <receiver
+            android:name=".InstallResultReceiver"
+            android:exported="true"
+            android:permission="android.permission.INSTALL_PACKAGES">
+            <intent-filter>
+                <action android:name="${applicationId}.INSTALL_RESULT" />
+            </intent-filter>
+        </receiver>
+
         <activity
             android:name=".mediareader.PdfViewerActivity"
             android:label="SyntaxCLI — PDF Viewer"
