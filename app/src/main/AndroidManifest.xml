@@ -89,15 +89,17 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
-        <!-- ==================================================================
-             SINGLE EXTERNAL ENTRY POINT
-             All ACTION_VIEW / ACTION_EDIT / ACTION_SEND / ACTION_SEND_MULTIPLE
-             intents land here. IntentRouterActivity resolves the real file
-             path + type, decides which internal activity to launch, and
-             finishes itself. No other activity in the app declares an
-             intent-filter for content — that guarantees only one handler
-             is ever advertised, and it always routes correctly.
-             ================================================================== -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.ime.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+
         <activity
             android:name=".intent.IntentRouterActivity"
             android:exported="true"

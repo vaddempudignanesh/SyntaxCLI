@@ -415,9 +415,8 @@ public class BasicImeService extends InputMethodService
         ClipboardStore.get(this).capture(this);
         clipboardPanel = new ClipboardPanelView(this, new ClipboardPanelView.ClipboardPickListener() {
             @Override
-            public void onClipPicked(String text) {
-                InputConnection ic = getCurrentInputConnection();
-                if (ic != null) ic.commitText(text, 1);
+            public void onClipPicked(ClipEntry entry) {
+                pasteClip(entry);
                 closeClipboardPanel();
             }
 
@@ -428,6 +427,35 @@ public class BasicImeService extends InputMethodService
         });
         setInputView(clipboardPanel);
     }
+
+    private void pasteClip(ClipEntry e) {
+        if (e == null) return;
+        InputConnection ic = getCurrentInputConnection();
+
+        try {
+            if (e.type == ClipEntry.TYPE_TEXT) {
+                if (ic != null) ic.commitText(e.text, 1);
+                return;
+            }
+
+            android.net.Uri fpUri = ClipboardStore.get(this).fileProviderUriFor(e);
+            if (fpUri == null) return;
+
+            ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+            if (cm != null) {
+                String mime = e.mimeType != null ? e.mimeType : "*/*";
+                android.content.ClipData clip = android.content.ClipData.newUri(
+                        getContentResolver(), "clip", fpUri);
+                cm.setPrimaryClip(clip);
+            }
+
+            if (ic != null) {
+                ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_PASTE));
+                ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_PASTE));
+            }
+        } catch (Throwable ignored) { }
+    }
+
 
     private void closeClipboardPanel() {
         clipboardPanel = null;
@@ -453,8 +481,11 @@ public class BasicImeService extends InputMethodService
             rebuildWallpaperLayers();
             keyboardView.refreshWallpaper();
         }
-    }
 
+        clipboardPanel = null;
+        emojiPanel = null;
+        if (keyboardView != null) setInputView(keyboardView);
+    }
     @Override
     public void onStartInput(EditorInfo attribute, boolean restarting) {
         super.onStartInput(attribute, restarting);
@@ -494,6 +525,8 @@ public class BasicImeService extends InputMethodService
         setPage(0);
         if (bubbleOverlay != null) bubbleOverlay.hide();
         releaseVideoKeepPosition();
+        clipboardPanel = null;
+        emojiPanel = null;
     }
 
     @Override

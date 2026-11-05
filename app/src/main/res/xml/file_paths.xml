@@ -42,4 +42,6 @@
         name="root"
         path="/" />
 
+        <files-path name="clipboard_files" path="clipboard/" />
+
 </paths>
