@@ -5,6 +5,8 @@ import android.graphics.PixelFormat;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.Gravity;
@@ -22,6 +24,8 @@ public class KeyBubbleOverlay {
     private final int sizePx;
     private final float density;
     private boolean showing = false;
+    private boolean overlayBroken = false;   // only set after a real addView failure
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     public KeyBubbleOverlay(Context context) {
         this.context = context.getApplicationContext();
@@ -51,9 +55,12 @@ public class KeyBubbleOverlay {
                 type,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                         | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                 PixelFormat.TRANSLUCENT);
         params.gravity = Gravity.TOP | Gravity.START;
+        // ★ Do NOT check Settings.canDrawOverlays() here — it is unreliable from
+        //   an IME service context. The addView() call is the truth.
     }
 
     private void applyTheme() {
@@ -64,11 +71,7 @@ public class KeyBubbleOverlay {
         bubbleView.setTextColor(textColor);
 
         GradientDrawable bg = new GradientDrawable();
-        if (colors.isWallpaperEnabled()) {
-            bg.setColor(0xD0000000); // translucent black
-        } else {
-            bg.setColor(bgColor);
-        }
+        bg.setColor(bgColor);
         bg.setCornerRadius(KeyboardConfig.PREVIEW_CORNER_RADIUS_DP * density);
         bg.setStroke(
                 (int) (KeyboardConfig.PREVIEW_BORDER_WIDTH_DP * density),
@@ -76,25 +79,27 @@ public class KeyBubbleOverlay {
         bubbleView.setBackground(bg);
     }
 
-    public void show(String label, int anchorCenterX, int anchorTopY) {
+    public void show(String label, int screenCenterX, int screenTopY) {
         if (windowManager == null) return;
+        if (overlayBroken) return;
 
-        // ★ Always pick up the latest theme colors before showing.
         applyTheme();
 
         DisplayMetrics dm = context.getResources().getDisplayMetrics();
         int gap = (int) (KeyboardConfig.PREVIEW_GAP_DP * density);
-
-        int x = anchorCenterX - sizePx / 2;
-        int y = anchorTopY - sizePx - gap;
-
+        int screenH = dm.heightPixels;
         int screenW = dm.widthPixels;
+
+        int x = screenCenterX - sizePx / 2;
+        int y = screenTopY - sizePx - gap;
+
+        // Clamp horizontal
         if (x < 0) x = 0;
         if (x + sizePx > screenW) x = screenW - sizePx;
 
-        if (y < 0) {
-            y = anchorTopY + gap;
-        }
+        // Clamp vertical — do NOT flip below anymore. Just pin to top of screen.
+        if (y < 0) y = 0;
+        if (y + sizePx > screenH) y = screenH - sizePx;
 
         params.x = x;
         params.y = y;
@@ -108,8 +113,10 @@ public class KeyBubbleOverlay {
                 windowManager.addView(bubbleView, params);
                 showing = true;
             }
-        } catch (Exception e) {
-            Log.e(TAG, "overlay show failed", e);
+        } catch (Throwable t) {
+            Log.w(TAG, "overlay addView failed — disabling", t);
+            overlayBroken = true;
+            showing = false;
         }
     }
 
@@ -117,7 +124,7 @@ public class KeyBubbleOverlay {
         if (windowManager == null || !showing) return;
         try {
             windowManager.removeView(bubbleView);
-        } catch (Exception ignored) { }
+        } catch (Throwable ignored) { }
         showing = false;
     }
 }

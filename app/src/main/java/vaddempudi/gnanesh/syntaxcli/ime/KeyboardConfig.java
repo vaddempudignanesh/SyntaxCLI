@@ -26,7 +26,10 @@ public final class KeyboardConfig {
     public static final String NAV_ICON_RIGHT_LABEL      = "\u2022";
 
     public static final float SPECIAL_TEXT_SIZE_FACTOR   = 0.72f;
-    public static final float SPECIAL_BORDER_WIDTH_DP    = 1f;
+    public static final boolean DEFAULT_KEY_SHRINK_ENABLED = true;
+    public static final float   KEY_SHRINK_SCALE           = 0.82f;
+    public static final float   DEFAULT_KEY_SHRINK_INTENSITY = 0.82f;
+    public static final long    DEFAULT_KEY_SHRINK_MS        = 55L;
 
     public static final long REPEAT_START_MS             = 400L;
     public static final long REPEAT_INTERVAL_MS          = 80L;
@@ -38,7 +41,7 @@ public final class KeyboardConfig {
     public static final long SHIFT_DOUBLE_TAP_MS         = 300L;
 
     public static final float PREVIEW_SIZE_DP            = 62f;
-    public static final float PREVIEW_GAP_DP             = 60f;
+    public static final float PREVIEW_GAP_DP             = 20f;
     public static final float PREVIEW_TEXT_SIZE_SP       = 34f;
     public static final float PREVIEW_CORNER_RADIUS_DP   = 10f;
     public static final float PREVIEW_BORDER_WIDTH_DP    = 1.5f;

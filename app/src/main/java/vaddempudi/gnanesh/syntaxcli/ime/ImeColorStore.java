@@ -14,8 +14,13 @@ public final class ImeColorStore {
     private static final String K_WP_IMG= "key_wallpaper_image";
     private static final String K_WP_VID= "key_wallpaper_video";
 
+    private volatile boolean keyShrinkEnabled;
+
     private static volatile ImeColorStore INSTANCE;
     private static final Object LOCK = new Object();
+
+    private volatile float keyShrinkIntensity;
+    private volatile long  keyShrinkDownMs;
 
     private volatile int textColor;
     private volatile int bgColor;
@@ -37,6 +42,14 @@ public final class ImeColorStore {
         wallpaperDim       = prefs.getInt(K_WP_DIM, KeyboardConfig.DEFAULT_WALLPAPER_DIM);
         wallpaperImagePath = prefs.getString(K_WP_IMG, null);
         wallpaperVideoPath = prefs.getString(K_WP_VID, null);
+        keyShrinkEnabled = prefs.getBoolean("key_shrink_enabled",
+                KeyboardConfig.DEFAULT_KEY_SHRINK_ENABLED);
+        keyShrinkEnabled   = prefs.getBoolean("key_shrink_enabled",
+                KeyboardConfig.DEFAULT_KEY_SHRINK_ENABLED);
+        keyShrinkIntensity = prefs.getFloat("key_shrink_intensity",
+                KeyboardConfig.DEFAULT_KEY_SHRINK_INTENSITY);
+        keyShrinkDownMs    = prefs.getLong("key_shrink_down_ms",
+                KeyboardConfig.DEFAULT_KEY_SHRINK_MS);
     }
 
     public static ImeColorStore get(Context ctx) {
@@ -72,6 +85,26 @@ public final class ImeColorStore {
                 .putInt(K_BG,   newBgColor)
                 .apply();
     }
+
+    public boolean isKeyShrinkEnabled() { return keyShrinkEnabled; }
+
+    public void saveKeyShrinkEnabled(boolean enabled) {
+        keyShrinkEnabled = enabled;
+        prefs.edit().putBoolean("key_shrink_enabled", enabled).apply();
+    }
+
+    public float getKeyShrinkIntensity() { return keyShrinkIntensity; }
+    public void saveKeyShrinkIntensity(float v) {
+        keyShrinkIntensity = Math.max(0.5f, Math.min(1.0f, v));
+        prefs.edit().putFloat("key_shrink_intensity", keyShrinkIntensity).apply();
+    }
+
+    public long getKeyShrinkDownMs() { return keyShrinkDownMs; }
+    public void saveKeyShrinkDownMs(long ms) {
+        keyShrinkDownMs = Math.max(20L, Math.min(200L, ms));
+        prefs.edit().putLong("key_shrink_down_ms", keyShrinkDownMs).apply();
+    }
+
 
     public void saveKeyAlpha(int alpha) {
         keyAlpha = Math.max(0, Math.min(255, alpha));

@@ -27,12 +27,9 @@ public class CalculatorActivity extends AppCompatActivity {
     private static final int MAX_HISTORY = 500;
 
     // ── Engine state ──
-    private String currentInput = "";
-    private String pendingOp = "";
-    private double accumulator = 0;
-    private boolean hasAccumulator = false;
+    private String currentInput = "";   // the raw expression string shown in display
     private boolean justEvaluated = false;
-    private boolean operatorJustPressed = false;
+    private int openParenCount = 0;
 
     private final DecimalFormat fmt = new DecimalFormat("#.##########");
 
@@ -152,6 +149,9 @@ public class CalculatorActivity extends AppCompatActivity {
         bind(R.id.btn_backspace,v -> backspace());
         bind(R.id.btn_history,  v -> toggleHistory());
 
+        bind(R.id.btn_open_paren,  v -> appendOpenParen());
+        bind(R.id.btn_close_paren, v -> appendCloseParen());
+
         View clearHist = findViewById(R.id.btn_clear_history);
         if (clearHist != null) {
             clearHist.setOnClickListener(v -> clearHistory());
@@ -172,114 +172,134 @@ public class CalculatorActivity extends AppCompatActivity {
         animate(v);
     }
 
-    // ═══════════════════ Core logic ═══════════════════
+    // ═══════════════════ Expression builder ═══════════════════
 
     private void appendNumber(String num) {
         if (justEvaluated) {
             currentInput = "";
-            pendingOp = "";
-            accumulator = 0;
-            hasAccumulator = false;
+            openParenCount = 0;
             justEvaluated = false;
         }
-        if (operatorJustPressed) {
-            currentInput = "";
-            operatorJustPressed = false;
+        if (currentInput.endsWith(")")) return;
+
+        // Collapse leading zeros like "007"
+        char last = currentInput.isEmpty() ? 0 : currentInput.charAt(currentInput.length() - 1);
+        if (last == '0') {
+            char prev = currentInput.length() >= 2
+                    ? currentInput.charAt(currentInput.length() - 2) : 0;
+            if (!Character.isDigit(prev) && prev != '.' && prev != ')') {
+                currentInput = currentInput.substring(0, currentInput.length() - 1);
+            }
         }
-        if (currentInput.length() >= 15) return;
-
-        if (currentInput.equals("0")) currentInput = num;
-        else currentInput += num;
-
+        if (currentInput.length() >= 40) return;
+        currentInput += num;
         refreshDisplay();
     }
 
     private void appendDecimal() {
         if (justEvaluated) {
             currentInput = "";
-            pendingOp = "";
-            accumulator = 0;
-            hasAccumulator = false;
+            openParenCount = 0;
             justEvaluated = false;
         }
-        if (operatorJustPressed) {
-            currentInput = "";
-            operatorJustPressed = false;
+        if (currentInput.endsWith(")")) return;
+
+        // Check current number token for an existing '.'
+        int i = currentInput.length() - 1;
+        while (i >= 0 && (Character.isDigit(currentInput.charAt(i))
+                || currentInput.charAt(i) == '.')) {
+            if (currentInput.charAt(i) == '.') return;
+            i--;
         }
-        if (currentInput.contains(".")) return;
-        currentInput = currentInput.isEmpty() ? "0." : currentInput + ".";
+        if (i >= 0 && currentInput.charAt(i) == ')') return;
+
+        if (currentInput.isEmpty()
+                || "+-×÷(".indexOf(currentInput.charAt(currentInput.length() - 1)) >= 0) {
+            currentInput += "0.";
+        } else {
+            currentInput += ".";
+        }
+        refreshDisplay();
+    }
+
+    private void appendOpenParen() {
+        if (justEvaluated) {
+            currentInput = "";
+            openParenCount = 0;
+            justEvaluated = false;
+        }
+        if (!currentInput.isEmpty()) {
+            char last = currentInput.charAt(currentInput.length() - 1);
+            boolean lastIsValue = Character.isDigit(last) || last == ')' || last == '.';
+            if (lastIsValue) {
+                currentInput += "×";   // implicit multiply: 5( → 5×(
+            }
+        }
+        currentInput += "(";
+        openParenCount++;
+        refreshDisplay();
+    }
+
+    private void appendCloseParen() {
+        if (openParenCount <= 0) return;
+        if (currentInput.isEmpty()) return;
+        char last = currentInput.charAt(currentInput.length() - 1);
+        if (last == '(' || last == '+' || last == '-' || last == '×' || last == '÷') return;
+        currentInput += ")";
+        openParenCount--;
         refreshDisplay();
     }
 
     private void setOperator(String op) {
         if (justEvaluated) {
-            accumulator = parse(currentInput);
-            hasAccumulator = true;
-            pendingOp = op;
-            operatorJustPressed = true;
-            currentInput = "";
             justEvaluated = false;
-            refreshDisplay();
+            openParenCount = 0;
+        }
+        if (currentInput.isEmpty()) {
+            if (op.equals("-")) { currentInput = "-"; refreshDisplay(); }
             return;
         }
-
-        if (!currentInput.isEmpty()) {
-            double operand = parse(currentInput);
-            if (hasAccumulator && !pendingOp.isEmpty()) {
-                accumulator = apply(accumulator, operand, pendingOp);
-            } else {
-                accumulator = operand;
-                hasAccumulator = true;
-            }
-            pendingOp = op;
-            currentInput = "";
-            operatorJustPressed = true;
-        } else if (hasAccumulator) {
-            pendingOp = op;
-            operatorJustPressed = true;
+        char last = currentInput.charAt(currentInput.length() - 1);
+        if (last == '+' || last == '-' || last == '×' || last == '÷') {
+            if (currentInput.length() == 1) return;   // keep a lone leading minus
+            currentInput = currentInput.substring(0, currentInput.length() - 1) + op;
+        } else if (last == '(') {
+            if (op.equals("-")) currentInput += "-";
+        } else {
+            currentInput += op;
         }
         refreshDisplay();
     }
 
     private void calculate() {
-        if (!hasAccumulator || pendingOp.isEmpty()) {
-            return;
+        if (currentInput.isEmpty()) return;
+
+        // Auto-close any open parens so eval succeeds
+        StringBuilder sb = new StringBuilder(currentInput);
+        int toClose = openParenCount;
+        while (toClose-- > 0) sb.append(')');
+        String expr = sb.toString();
+
+        double result;
+        try {
+            result = Evaluator.eval(expr);
+        } catch (Throwable t) {
+            result = Double.NaN;
         }
 
-        double operand = currentInput.isEmpty() ? accumulator : parse(currentInput);
-        double result = apply(accumulator, operand, pendingOp);
+        String resultStr = format(result);
+        addHistory(expr + " = " + resultStr);
 
-        String opStr = pendingOp;
-        String entry = format(accumulator) + " " + opStr + " "
-                + format(operand) + " = " + format(result);
-        addHistory(entry);
-
-        accumulator = result;
-        hasAccumulator = true;
-        currentInput = format(result);
-        pendingOp = "";
-        operatorJustPressed = false;
+        currentInput = resultStr;
+        openParenCount = 0;
         justEvaluated = true;
         refreshDisplay();
     }
 
-    private double apply(double a, double b, String op) {
-        switch (op) {
-            case "+": return a + b;
-            case "-": return a - b;
-            case "×": return a * b;
-            case "÷": return b == 0 ? Double.NaN : a / b;
-            default:  return b;
-        }
-    }
-
     private void clearAll() {
         currentInput = "";
-        pendingOp = "";
-        accumulator = 0;
-        hasAccumulator = false;
+        openParenCount = 0;
         justEvaluated = false;
-        operatorJustPressed = false;
         refreshDisplay();
     }
 
@@ -287,9 +307,15 @@ public class CalculatorActivity extends AppCompatActivity {
         if (justEvaluated) {
             currentInput = "";
             justEvaluated = false;
+            openParenCount = 0;
+            refreshDisplay();
+            return;
         }
         if (currentInput.isEmpty()) return;
+        char removed = currentInput.charAt(currentInput.length() - 1);
         currentInput = currentInput.substring(0, currentInput.length() - 1);
+        if (removed == '(') openParenCount = Math.max(0, openParenCount - 1);
+        if (removed == ')') openParenCount++;
         refreshDisplay();
     }
 
@@ -306,25 +332,26 @@ public class CalculatorActivity extends AppCompatActivity {
     // ═══════════════════ Display ═══════════════════
 
     private void refreshDisplay() {
-        if (currentInput.isEmpty()) {
-            display.setText(hasAccumulator ? format(accumulator) : "0");
-        } else {
-            display.setText(currentInput);
-        }
+        display.setText(currentInput.isEmpty() ? "0" : currentInput);
 
-        StringBuilder sb = new StringBuilder();
-        if (hasAccumulator && !pendingOp.isEmpty()) {
-            sb.append(format(accumulator)).append(" ").append(pendingOp);
-            if (!currentInput.isEmpty() && !operatorJustPressed) {
-                sb.append(" ").append(currentInput);
+        // Live preview of the running value in the secondary line
+        if (!currentInput.isEmpty() && !justEvaluated) {
+            try {
+                double preview = Evaluator.eval(
+                        currentInput + repeatChar(')', openParenCount));
+                expression.setText(format(preview));
+            } catch (Throwable t) {
+                expression.setText("");
             }
+        } else {
+            expression.setText("");
         }
-        expression.setText(sb.toString());
     }
 
-    private double parse(String s) {
-        try { return Double.parseDouble(s); }
-        catch (Exception e) { return 0; }
+    private static String repeatChar(char c, int n) {
+        StringBuilder sb = new StringBuilder(n);
+        for (int i = 0; i < n; i++) sb.append(c);
+        return sb.toString();
     }
 
     private String format(double d) {
@@ -334,6 +361,84 @@ public class CalculatorActivity extends AppCompatActivity {
         String s = fmt.format(d);
         if (s.startsWith(".")) s = "0" + s;
         return s;
+    }
+
+    // ═══════════════════ Recursive-descent evaluator ═══════════════════
+
+    private static final class Evaluator {
+        private final String s;
+        private int pos;
+
+        private Evaluator(String s) { this.s = s; }
+
+        static double eval(String expr) {
+            Evaluator p = new Evaluator(expr);
+            double v = p.parseExpr();
+            p.skipWs();
+            if (p.pos < p.s.length()) throw new IllegalArgumentException("trailing input");
+            return v;
+        }
+
+        private void skipWs() {
+            while (pos < s.length() && Character.isWhitespace(s.charAt(pos))) pos++;
+        }
+
+        private char peek() { skipWs(); return pos < s.length() ? s.charAt(pos) : '\0'; }
+
+        private double parseExpr() {
+            double left = parseTerm();
+            while (true) {
+                char c = peek();
+                if (c == '+' || c == '-') {
+                    pos++;
+                    double right = parseTerm();
+                    left = (c == '+') ? left + right : left - right;
+                } else break;
+            }
+            return left;
+        }
+
+        private double parseTerm() {
+            double left = parseUnary();
+            while (true) {
+                char c = peek();
+                if (c == '×' || c == '*' || c == '÷' || c == '/') {
+                    pos++;
+                    double right = parseUnary();
+                    if (c == '×' || c == '*') left = left * right;
+                    else {
+                        if (right == 0) return Double.NaN;
+                        left = left / right;
+                    }
+                } else break;
+            }
+            return left;
+        }
+
+        private double parseUnary() {
+            char c = peek();
+            if (c == '-') { pos++; return -parseUnary(); }
+            if (c == '+') { pos++; return parseUnary(); }
+            return parseAtom();
+        }
+
+        private double parseAtom() {
+            char c = peek();
+            if (c == '(') {
+                pos++;
+                double v = parseExpr();
+                if (peek() != ')') throw new IllegalArgumentException("missing )");
+                pos++;
+                return v;
+            }
+            int start = pos;
+            while (pos < s.length()
+                    && (Character.isDigit(s.charAt(pos)) || s.charAt(pos) == '.')) {
+                pos++;
+            }
+            if (start == pos) throw new IllegalArgumentException("number expected");
+            return Double.parseDouble(s.substring(start, pos));
+        }
     }
 
     // ═══════════════════ Recycler adapter ═══════════════════
@@ -380,7 +485,7 @@ public class CalculatorActivity extends AppCompatActivity {
                 case MotionEvent.ACTION_DOWN:
                     view.animate()
                             .scaleX(0.72f).scaleY(0.72f)
-                            .rotation(3f)             // slight tilt
+                            .rotation(3f)
                             .alpha(0.5f)
                             .setDuration(55)
                             .setInterpolator(new android.view.animation.DecelerateInterpolator(2f))

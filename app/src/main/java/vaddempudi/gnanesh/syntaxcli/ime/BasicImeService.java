@@ -92,7 +92,7 @@ public class BasicImeService extends InputMethodService
         rootContainer = new FrameLayout(this);
 
         keyboardView = new BasicKeyboardView(this);
-        bubbleOverlay = new KeyBubbleOverlay(this);
+        bubbleOverlay = new KeyBubbleOverlay(this);      // ← no anchor arg
         keyboardView.setBubbleOverlay(bubbleOverlay);
         keyboardView.setListener(buildListener());
 
@@ -111,7 +111,6 @@ public class BasicImeService extends InputMethodService
         applyWallpaperWindowSettings();
         return rootContainer;
     }
-
     private void measureKeyboard() {
         if (keyboardView == null) return;
         int w = keyboardView.getWidth();

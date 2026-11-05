@@ -69,6 +69,7 @@ public class GestureActionEditorActivity extends Activity {
         pendingWallpaperVideoPath = store.getWallpaperVideoPath();
         build();
         renderList();
+        maybePromptOverlayPermission();
     }
 
     private void build() {
@@ -184,6 +185,144 @@ public class GestureActionEditorActivity extends Activity {
                 dp(52), ViewGroup.LayoutParams.WRAP_CONTENT));
 
         themeCard.addView(keyAlphaRow);
+
+        // ── Key press animation toggle ──
+        TextView shrinkToggle = new TextView(this);
+        shrinkToggle.setTextSize(13);
+        shrinkToggle.setTypeface(Typeface.MONOSPACE);
+        shrinkToggle.setPadding(dp(10), dp(10), dp(10), dp(10));
+        GradientDrawable stBg = new GradientDrawable();
+        stBg.setColor(0xFF111111);
+        stBg.setCornerRadius(dp(6));
+        stBg.setStroke(dp(1), CARD_BORDER);
+        shrinkToggle.setBackground(stBg);
+        shrinkToggle.setClickable(true);
+        LinearLayout.LayoutParams stLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        stLp.topMargin = dp(12);
+        themeCard.addView(shrinkToggle, stLp);
+
+        // ── Shrink intensity slider (0.50 .. 1.00) ──
+        LinearLayout intensRow = new LinearLayout(this);
+        intensRow.setOrientation(LinearLayout.HORIZONTAL);
+        intensRow.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams intLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
+        intLp.topMargin = dp(8);
+        intensRow.setLayoutParams(intLp);
+
+        TextView intTag = new TextView(this);
+        intTag.setText("SHRINK");
+        intTag.setTextColor(GREEN);
+        intTag.setTextSize(12);
+        intTag.setTypeface(Typeface.MONOSPACE);
+        intensRow.addView(intTag, new LinearLayout.LayoutParams(
+                dp(90), ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        SeekBar intensSeek = new SeekBar(this);
+        intensSeek.setMax(50);          // 0..50 → scale 1.00..0.50
+        int currentInt = Math.round((1f - ImeColorStore.get(this).getKeyShrinkIntensity()) * 100f);
+        intensSeek.setProgress(currentInt);
+        intensSeek.setSplitTrack(false);
+        intensSeek.setPadding(dp(12), 0, dp(12), 0);
+        intensSeek.setProgressTintList(android.content.res.ColorStateList.valueOf(GREEN));
+        intensSeek.setThumbTintList(android.content.res.ColorStateList.valueOf(GREEN));
+        intensSeek.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF444444));
+        intensRow.addView(intensSeek, new LinearLayout.LayoutParams(0, dp(48), 1f));
+
+        TextView intensLabel = new TextView(this);
+        intensLabel.setTextColor(DIM);
+        intensLabel.setTextSize(11);
+        intensLabel.setTypeface(Typeface.MONOSPACE);
+        intensLabel.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        intensRow.addView(intensLabel, new LinearLayout.LayoutParams(
+                dp(52), ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        themeCard.addView(intensRow);
+
+        Runnable updateIntensLabel = () -> {
+            float scale = 1f - (intensSeek.getProgress() / 100f);
+            intensLabel.setText(Math.round(scale * 100f) + "%");
+        };
+        updateIntensLabel.run();
+        intensSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar sb, int p, boolean u) {
+                float scale = 1f - (p / 100f);
+                ImeColorStore.get(GestureActionEditorActivity.this)
+                        .saveKeyShrinkIntensity(scale);
+                updateIntensLabel.run();
+            }
+            @Override public void onStartTrackingTouch(SeekBar sb) { }
+            @Override public void onStopTrackingTouch(SeekBar sb) { }
+        });
+
+        // ── Shrink speed slider (20..200 ms) ──
+        LinearLayout speedRow = new LinearLayout(this);
+        speedRow.setOrientation(LinearLayout.HORIZONTAL);
+        speedRow.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams spdLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
+        spdLp.topMargin = dp(4);
+        speedRow.setLayoutParams(spdLp);
+
+        TextView spdTag = new TextView(this);
+        spdTag.setText("SPEED");
+        spdTag.setTextColor(GREEN);
+        spdTag.setTextSize(12);
+        spdTag.setTypeface(Typeface.MONOSPACE);
+        speedRow.addView(spdTag, new LinearLayout.LayoutParams(
+                dp(90), ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        SeekBar speedSeek = new SeekBar(this);
+        speedSeek.setMax(180);          // 20..200 ms
+        int curSpeed = (int) (ImeColorStore.get(this).getKeyShrinkDownMs() - 20L);
+        speedSeek.setProgress(Math.max(0, Math.min(180, curSpeed)));
+        speedSeek.setSplitTrack(false);
+        speedSeek.setPadding(dp(12), 0, dp(12), 0);
+        speedSeek.setProgressTintList(android.content.res.ColorStateList.valueOf(GREEN));
+        speedSeek.setThumbTintList(android.content.res.ColorStateList.valueOf(GREEN));
+        speedSeek.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF444444));
+        speedRow.addView(speedSeek, new LinearLayout.LayoutParams(0, dp(48), 1f));
+
+        TextView speedLabel = new TextView(this);
+        speedLabel.setTextColor(DIM);
+        speedLabel.setTextSize(11);
+        speedLabel.setTypeface(Typeface.MONOSPACE);
+        speedLabel.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        speedRow.addView(speedLabel, new LinearLayout.LayoutParams(
+                dp(64), ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        themeCard.addView(speedRow);
+
+        Runnable updateSpeedLabel = () -> {
+            long ms = 20L + speedSeek.getProgress();
+            speedLabel.setText(ms + "ms");
+        };
+        updateSpeedLabel.run();
+        speedSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar sb, int p, boolean u) {
+                ImeColorStore.get(GestureActionEditorActivity.this)
+                        .saveKeyShrinkDownMs(20L + p);
+                updateSpeedLabel.run();
+            }
+            @Override public void onStartTrackingTouch(SeekBar sb) { }
+            @Override public void onStopTrackingTouch(SeekBar sb) { }
+        });
+        final Runnable[] refreshShrink = new Runnable[1];
+        refreshShrink[0] = () -> {
+            boolean on = ImeColorStore.get(this).isKeyShrinkEnabled();
+            shrinkToggle.setText(on
+                    ? "KEY SHRINK ANIMATION:  ON   (tap to disable)"
+                    : "KEY SHRINK ANIMATION:  OFF  (tap to enable)");
+            shrinkToggle.setTextColor(on ? 0xFFFFAA00 : GREEN);
+        };
+        shrinkToggle.setOnClickListener(v -> {
+            ImeColorStore store = ImeColorStore.get(this);
+            store.saveKeyShrinkEnabled(!store.isKeyShrinkEnabled());
+            refreshShrink[0].run();
+        });
+        refreshShrink[0].run();
+
 
         LinearLayout wallCard = new LinearLayout(this);
         wallCard.setOrientation(LinearLayout.VERTICAL);
@@ -409,6 +548,26 @@ public class GestureActionEditorActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
         return row;
+    }
+
+    private void maybePromptOverlayPermission() {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.M) return;
+        if (android.provider.Settings.canDrawOverlays(this)) return;
+
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("Enable key popup")
+                .setMessage("To show the key-preview bubble above the keyboard, " +
+                        "please allow 'Display over other apps' for this keyboard.")
+                .setPositiveButton("OPEN SETTINGS", (d, w) -> {
+                    try {
+                        android.content.Intent i = new android.content.Intent(
+                                android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                android.net.Uri.parse("package:" + getPackageName()));
+                        startActivity(i);
+                    } catch (Exception ignored) { }
+                })
+                .setNegativeButton("SKIP", null)
+                .show();
     }
 
     private int currentColorFor(String label) {

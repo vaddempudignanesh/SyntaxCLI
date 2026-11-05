@@ -52,6 +52,9 @@ public class BasicKeyboardView extends View {
     private final float density;
     private final float scaledDensity;
 
+    private HitKey shrinkKey = null;
+    private long    shrinkStartMs = 0L;
+
     private Listener listener;
     private BasicKeyboardLayout layout;
     private boolean shifted = false;
@@ -135,6 +138,52 @@ public class BasicKeyboardView extends View {
 
     public void setListener(Listener l) { this.listener = l; }
 
+    private void setPressedKey(HitKey hk) {
+        if (pressed == hk) return;
+
+        ImeColorStore colors = ImeColorStore.get(getContext());
+        boolean animOn = colors.isKeyShrinkEnabled();
+
+        if (animOn) {
+            shrinkKey = hk;
+            shrinkStartMs = System.currentTimeMillis();
+            postInvalidateOnAnimation();
+            long down = colors.getKeyShrinkDownMs();
+            if (hk != null) {
+                postDelayed(this::invalidate, down + 5);
+            } else {
+                postDelayed(this::invalidate, down + 100);
+            }
+        } else {
+            shrinkKey = null;
+        }
+
+        pressed = hk;
+        invalidate();
+    }
+
+    private float currentShrinkScale(HitKey hk) {
+        ImeColorStore colors = ImeColorStore.get(getContext());
+        if (!colors.isKeyShrinkEnabled()) return 1f;
+        if (hk == null || hk != shrinkKey) return 1f;
+
+        float target = colors.getKeyShrinkIntensity();
+        long  down   = colors.getKeyShrinkDownMs();
+        long  up     = down + 95L;                 // release takes a bit longer for snap
+
+        long elapsed = System.currentTimeMillis() - shrinkStartMs;
+
+        if (pressed == hk) {
+            if (elapsed >= down) return target;
+            float t = elapsed / (float) down;
+            return 1f - (1f - target) * (float) Math.sin(t * Math.PI / 2f);
+        } else {
+            if (elapsed >= up) return 1f;
+            float t = elapsed / (float) up;
+            float eased = 1f - (float) Math.pow(1f - t, 3);
+            return target + (1f - target) * eased;
+        }
+    }
     public boolean isShifted()  { return shifted; }
     public void setShifted(boolean s) { shifted = s; invalidate(); }
 
@@ -314,8 +363,16 @@ public class BasicKeyboardView extends View {
         borderPaint.setColor((finalBorderAlpha << 24) | (borderColor & 0x00FFFFFF));
 
         boolean keysHidden = keyAlpha <= 0;
+        boolean shrinkEnabled = colors.isKeyShrinkEnabled();
 
         for (HitKey hk : hitKeys) {
+            // ★ Shrink animation transform — only active for the pressed key
+            float shrink = shrinkEnabled ? currentShrinkScale(hk) : 1f;
+            int save = canvas.save();
+            if (shrink != 1f) {
+                canvas.scale(shrink, shrink, hk.rect.centerX(), hk.rect.centerY());
+            }
+
             if (keysHidden) {
                 if (hk == pressed) {
                     keyPaint.setColor(pressedFill);
@@ -355,6 +412,8 @@ public class BasicKeyboardView extends View {
             float baseline = hk.rect.centerY() - (fm.ascent + textHeight / 2f);
 
             canvas.drawText(label, hk.rect.centerX(), baseline, textPaint);
+
+            canvas.restoreToCount(save);
         }
     }
 
@@ -455,7 +514,7 @@ public class BasicKeyboardView extends View {
             case MotionEvent.ACTION_DOWN: {
                 HitKey hk = findKey(event.getX(), event.getY());
                 if (hk != null) {
-                    pressed = hk;
+                    setPressedKey(hk);
                     longPressHandled = false;
                     showBubbleFor(hk);
                     invalidate();
@@ -504,7 +563,7 @@ public class BasicKeyboardView extends View {
                 HitKey hk = findKey(event.getX(), event.getY());
                 if (hk != pressed) {
                     cancelPendingLongPress();
-                    pressed = hk;
+                    setPressedKey(hk);
                     if (hk != null) showBubbleFor(hk);
                     else if (bubbleOverlay != null) bubbleOverlay.hide();
                     invalidate();
@@ -520,7 +579,7 @@ public class BasicKeyboardView extends View {
                 cSwipeFired = false;
 
                 HitKey hk = pressed;
-                pressed = null;
+                setPressedKey(null);
                 invalidate();
                 stopRepeat();
                 if (bubbleOverlay != null) bubbleOverlay.hide();
@@ -548,7 +607,7 @@ public class BasicKeyboardView extends View {
                 cancelPendingLongPress();
                 cSwipeArmed = false;
                 cSwipeFired = false;
-                pressed = null;
+                setPressedKey(null);
                 invalidate();
                 stopRepeat();
                 if (bubbleOverlay != null) bubbleOverlay.hide();
@@ -578,7 +637,7 @@ public class BasicKeyboardView extends View {
             if (pressed != hk || listener == null || longPressHandled) return;
             longPressHandled = true;
             if (bubbleOverlay != null) bubbleOverlay.hide();
-            pressed = null;
+            setPressedKey(null);
             invalidate();
             listener.onKey(LETTER_LONG_PRESS_TRIGGER, hk.key.lower);
         };
@@ -602,13 +661,13 @@ public class BasicKeyboardView extends View {
             if (hk.key.code == BasicKey.CODE_ENTER) {
                 longPressHandled = true;
                 if (bubbleOverlay != null) bubbleOverlay.hide();
-                pressed = null;
+                setPressedKey(null);
                 invalidate();
                 listener.onKey(EMOJI_PANEL_TRIGGER, null);
             } else if (hk.key.code == BasicKey.CODE_SPACE) {
                 longPressHandled = true;
                 if (bubbleOverlay != null) bubbleOverlay.hide();
-                pressed = null;
+                setPressedKey(null);
                 invalidate();
                 listener.onKey(GESTURE_EDITOR_TRIGGER, null);
             }
@@ -640,7 +699,6 @@ public class BasicKeyboardView extends View {
         int screenY = (int) (loc[1] + hk.rect.top);
         bubbleOverlay.show(label, screenX, screenY);
     }
-
     private void startRepeat(HitKey hk) {
         stopRepeat();
         repeatKey = hk;
