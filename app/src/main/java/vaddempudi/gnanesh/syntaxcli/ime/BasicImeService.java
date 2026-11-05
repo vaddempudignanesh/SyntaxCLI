@@ -30,7 +30,8 @@ public class BasicImeService extends InputMethodService
     private int videoHeight = 0;
     private int keyboardHeightPx = 0;
     private int keyboardWidthPx = 0;
-
+    private static final int PAGE_LETTERS  = 0;
+    private static final int PAGE_NUMERIC  = 4;
     private int savedVideoPositionMs = 0;
     private String savedVideoPath = null;
 
@@ -465,7 +466,6 @@ public class BasicImeService extends InputMethodService
     @Override
     public void onStartInputView(EditorInfo info, boolean restarting) {
         super.onStartInputView(info, restarting);
-        setPage(0);
         try {
             ClipboardStore.get(this).capture(this);
         } catch (Throwable ignored) { }
@@ -484,18 +484,20 @@ public class BasicImeService extends InputMethodService
         clipboardPanel = null;
         emojiPanel = null;
         if (keyboardView != null) setInputView(keyboardView);
+
+        // ★ NEW: pick the layout based on what the target field needs
+        applyEditorInputType(info);
     }
     @Override
     public void onStartInput(EditorInfo attribute, boolean restarting) {
         super.onStartInput(attribute, restarting);
-        if (keyboardView != null) {
-            keyboardView.invalidate();
-        }
+        if (keyboardView != null) keyboardView.invalidate();
         applyWallpaperWindowSettings();
         measureKeyboard();
         applyKeyboardFrameLock();
         rebuildWallpaperLayers();
         if (keyboardView != null) keyboardView.refreshWallpaper();
+        applyEditorInputType(attribute);
     }
     @Override
     public void onWindowShown() {
@@ -517,11 +519,29 @@ public class BasicImeService extends InputMethodService
         }
     }
 
+    private void applyEditorInputType(EditorInfo info) {
+        if (keyboardView == null) return;
+        int type = info == null ? EditorInfo.TYPE_NULL : info.inputType;
+        int cls  = type & android.text.InputType.TYPE_MASK_CLASS;
+        int vari = type & android.text.InputType.TYPE_MASK_VARIATION;
+
+        // Determine mode
+        boolean num = (cls == android.text.InputType.TYPE_CLASS_NUMBER)
+                || (cls == android.text.InputType.TYPE_CLASS_PHONE)
+                || (cls == android.text.InputType.TYPE_CLASS_DATETIME);
+        boolean url = (cls == android.text.InputType.TYPE_CLASS_TEXT
+                && vari == android.text.InputType.TYPE_TEXT_VARIATION_URI);
+        boolean email = (cls == android.text.InputType.TYPE_CLASS_TEXT
+                && (vari == android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
+                || vari == android.text.InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS));
+
+        keyboardView.setInputMode(num, url, email);
+    }
 
     @Override
     public void onFinishInputView(boolean finishingInput) {
         super.onFinishInputView(finishingInput);
-        setPage(0);
+        if (keyboardView != null) keyboardView.setPage(PAGE_LETTERS);
         if (bubbleOverlay != null) bubbleOverlay.hide();
         releaseVideoKeepPosition();
         clipboardPanel = null;

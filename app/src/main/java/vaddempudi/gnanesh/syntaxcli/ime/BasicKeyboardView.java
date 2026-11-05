@@ -21,17 +21,17 @@ public class BasicKeyboardView extends View {
     public interface Listener {
         void onKey(int code, String text);
     }
-
     private boolean shiftLocked = false;
-
     public static final int CLIPBOARD_TRIGGER         = -1005;
 
+    private boolean urlMode = false;
+    private boolean emailMode = false;
     private float cDownX = 0f;
     private float cDownY = 0f;
     private boolean cSwipeArmed = false;
     private boolean cSwipeFired = false;
 
-
+    private boolean numeric = false;
     private long enterDownTime = 0L;
     private long spaceDownTime = 0L;
     private long lastSpaceUpTime = 0L;
@@ -192,11 +192,12 @@ public class BasicKeyboardView extends View {
     public boolean isSymbols3() { return symbols3; }
 
     public void setPage(int page) {
-        symbols = false; symbols2 = false; symbols3 = false;
+        symbols = false; symbols2 = false; symbols3 = false; numeric = false;
         switch (page) {
             case 1: symbols = true; break;
             case 2: symbols2 = true; break;
             case 3: symbols3 = true; break;
+            case 4: numeric = true; break;
             default: break;
         }
         shifted = false;
@@ -207,13 +208,24 @@ public class BasicKeyboardView extends View {
         invalidate();
     }
 
+    public boolean isNumeric() { return numeric; }
+
     private List<BasicKey[]> rows() {
+        if (numeric)  return layout.numericPage;
         if (symbols3) return layout.symbolPage3;
         if (symbols2) return layout.symbolPage2;
         if (symbols)  return layout.symbolPage1;
+        if (urlMode || emailMode) {
+            List<BasicKey[]> modified = new ArrayList<>(layout.letterRows.size());
+            BasicKey[] top = urlMode ? layout.urlTopRow() : layout.emailTopRow();
+            modified.add(top);
+            for (int i = 1; i < layout.letterRows.size(); i++) {
+                modified.add(layout.letterRows.get(i));
+            }
+            return modified;
+        }
         return layout.letterRows;
     }
-
     private int rowCount() { return rows().size(); }
 
     private float rowHeightDp(int rowIndex) {
@@ -628,6 +640,32 @@ public class BasicKeyboardView extends View {
         return Math.round(v * density);
     }
 
+    public void setUrlMode(boolean url) {
+        urlMode = url;
+        emailMode = false;
+        if (url || emailMode) {
+            // rebuild hit keys to include override row
+            rebuildHitKeys();
+            requestLayout();
+            invalidate();
+        }
+    }
+
+    public void setEmailMode(boolean email) {
+        emailMode = email;
+        urlMode = false;
+        rebuildHitKeys();
+        requestLayout();
+        invalidate();
+    }
+
+    public void clearInputModeOverrides() {
+        urlMode = false;
+        emailMode = false;
+        rebuildHitKeys();
+        requestLayout();
+        invalidate();
+    }
 
     private void scheduleLetterLongPress(final HitKey hk, long delayMs) {
         cancelLetterLongPress();
@@ -642,6 +680,20 @@ public class BasicKeyboardView extends View {
             listener.onKey(LETTER_LONG_PRESS_TRIGGER, hk.key.lower);
         };
         repeatHandler.postDelayed(letterLongPressRunnable, delayMs);
+    }
+    public void setInputMode(boolean num, boolean url, boolean email) {
+        this.numeric   = num;
+        this.symbols   = false;
+        this.symbols2  = false;
+        this.symbols3  = false;
+        this.urlMode   = !num && url;
+        this.emailMode = !num && !url && email;
+        this.shifted   = false;
+        this.shiftLocked = false;
+        if (bubbleOverlay != null) bubbleOverlay.hide();
+        rebuildHitKeys();
+        requestLayout();
+        invalidate();
     }
 
     private void cancelLetterLongPress() {

@@ -9,16 +9,19 @@ public final class BasicKeyboardLayout {
     public final List<BasicKey[]> symbolPage1;
     public final List<BasicKey[]> symbolPage2;
     public final List<BasicKey[]> symbolPage3;
+    public final List<BasicKey[]> numericPage;
 
     public BasicKeyboardLayout() {
         letterRows = new ArrayList<>();
         symbolPage1 = new ArrayList<>();
         symbolPage2 = new ArrayList<>();
         symbolPage3 = new ArrayList<>();
+        numericPage = new ArrayList<>();
         buildLetters();
         buildSymbolPage1();
         buildSymbolPage2();
         buildSymbolPage3();
+        buildNumericPage();
     }
 
     private void buildLetters() {
@@ -153,6 +156,50 @@ public final class BasicKeyboardLayout {
                 new BasicKey(BasicKey.CODE_ABC, null, null, "ABC", 1.5f),
                 new BasicKey(BasicKey.CODE_ENTER, null, null, "\u23CE", 1.5f)
         });
+    }
+    private void buildNumericPage() {
+        // Row 1 — 7 8 9  ⌫
+        numericPage.add(new BasicKey[] {
+                sym("7"), sym("8"), sym("9"),
+                new BasicKey(BasicKey.CODE_DELETE, null, null, "\u232B", 1f)
+        });
+
+        numericPage.add(new BasicKey[] {
+                sym("4"), sym("5"), sym("6"),
+                new BasicKey(BasicKey.CODE_ENTER, null, null, "\u23CE", 1f)
+        });
+
+        numericPage.add(new BasicKey[] {
+                sym("1"), sym("2"), sym("3"), sym(".")
+        });
+
+        numericPage.add(new BasicKey[] {
+                new BasicKey(BasicKey.CODE_ABC, null, null, "ABC", 1.2f),
+                sym("0"),
+                sym(","),
+                new BasicKey(BasicKey.CODE_SPACE, null, null, "space", 2f)
+        });
+    }
+
+    public BasicKey[] urlTopRow() {
+        return new BasicKey[] {
+                sym("/"), sym("-"), sym("_"), sym(":"), sym("."),
+                named("com", "com"),
+                named("org", "org"),
+                named("net", "net"),
+                sym("@"),
+                sym("/")
+        };
+    }
+
+    private static BasicKey named(String label, String commit) {
+        return new BasicKey(BasicKey.CODE_NONE, commit, commit, label, 1f);
+    }
+    public BasicKey[] emailTopRow() {
+        return new BasicKey[] {
+                sym("1"), sym("2"), sym("3"), sym("4"), sym("5"),
+                sym("6"), sym("7"), sym("8"), sym("9"), sym("@")
+        };
     }
 
     private static BasicKey key(String letter) {
