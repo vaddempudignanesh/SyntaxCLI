@@ -563,6 +563,22 @@ public class LauncherActivity extends AppCompatActivity implements Reloadable {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
 
+        if (requestCode == 4242) {
+            if (resultCode == RESULT_OK && data != null && data.getData() != null) {
+                String uri = data.getData().toString();
+                vaddempudi.gnanesh.syntaxcli.commands.main.raw.friday.stage = 8;
+                vaddempudi.gnanesh.syntaxcli.commands.main.raw.friday.pendingInput = uri;
+                try {
+                    String out = new vaddempudi.gnanesh.syntaxcli.commands.main.raw.friday().exec(main.getMainPack());
+                    if (out != null) Tuils.sendOutput(this, out, TerminalManager.CATEGORY_OUTPUT);
+                } catch (Exception ignored) { }
+            } else {
+                vaddempudi.gnanesh.syntaxcli.commands.main.raw.friday.stage = 0;
+                Tuils.sendOutput(this, "cancelled", TerminalManager.CATEGORY_OUTPUT);
+            }
+            return;
+        }
+
         if(requestCode == TUIXT_REQUEST && resultCode != 0) {
             if(resultCode == TuixtActivity.BACK_PRESSED) {
                 Tuils.sendOutput(this, R.string.tuixt_back_pressed);

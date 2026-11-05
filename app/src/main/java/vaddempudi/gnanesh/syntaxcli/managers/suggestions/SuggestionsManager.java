@@ -2,6 +2,7 @@ package vaddempudi.gnanesh.syntaxcli.managers.suggestions;
 
 import android.app.Activity;
 import android.content.Context;
+import android.content.Intent;
 import android.graphics.Color;
 import android.os.Build;
 import android.os.Handler;
@@ -35,9 +36,12 @@ import vaddempudi.gnanesh.syntaxcli.commands.CommandAbstraction;
 import vaddempudi.gnanesh.syntaxcli.commands.CommandTuils;
 import vaddempudi.gnanesh.syntaxcli.commands.main.MainPack;
 import vaddempudi.gnanesh.syntaxcli.commands.main.Param;
+import vaddempudi.gnanesh.syntaxcli.commands.main.raw.friday;
 import vaddempudi.gnanesh.syntaxcli.commands.main.specific.ParamCommand;
 import vaddempudi.gnanesh.syntaxcli.commands.main.specific.PermanentSuggestionCommand;
 import vaddempudi.gnanesh.syntaxcli.managers.AliasManager;
+import vaddempudi.gnanesh.syntaxcli.managers.AppActionLauncher;
+import vaddempudi.gnanesh.syntaxcli.managers.AppActionStore;
 import vaddempudi.gnanesh.syntaxcli.managers.AppsManager;
 import vaddempudi.gnanesh.syntaxcli.managers.ContactManager;
 import vaddempudi.gnanesh.syntaxcli.managers.FileManager;
@@ -356,6 +360,42 @@ public class SuggestionsManager {
     }
 
     public void clickSuggestion(SuggestionsManager.Suggestion suggestion) {
+        int fstage = vaddempudi.gnanesh.syntaxcli.commands.main.raw.friday.stage;
+        if (fstage != 0 && suggestion.type == SuggestionsManager.Suggestion.TYPE_PERMANENT) {
+            mTerminalAdapter.setInput(suggestion.getText());
+            mTerminalAdapter.simulateEnter();
+            return;
+        }
+
+        if (suggestion.type == SuggestionsManager.Suggestion.TYPE_COMMAND
+                && suggestion.textBefore != null
+                && (suggestion.textBefore.equals("friday")
+                || suggestion.textBefore.startsWith("friday "))) {
+            mTerminalAdapter.setInput(suggestion.getText() + Tuils.SPACE);
+            mTerminalAdapter.focusInputEnd();
+            return;
+        }
+
+        if (suggestion.type == SuggestionsManager.Suggestion.TYPE_APP
+                && suggestion.object instanceof AppsManager.LaunchInfo) {
+
+            AppsManager.LaunchInfo info = (AppsManager.LaunchInfo) suggestion.object;
+
+            Intent launch = pack.appsManager.getIntent(info);
+
+            boolean handled = AppActionLauncher.handle(
+                    pack.context,
+                    info.componentName.getPackageName(),
+                    info.publicLabel,
+                    launch);
+
+            if (handled) return;
+        }
+        if (fstage == 8 && suggestion.type == SuggestionsManager.Suggestion.TYPE_PERMANENT) {
+            mTerminalAdapter.setInput(suggestion.getText());
+            mTerminalAdapter.simulateEnter();
+            return;
+        }
         boolean execOnClick = suggestion.exec;
 
         String text = suggestion.getText();
@@ -364,17 +404,15 @@ public class SuggestionsManager {
         if(suggestion.type == SuggestionsManager.Suggestion.TYPE_PERMANENT) {
             mTerminalAdapter.setInput(input + text);
         } else {
-            boolean addSpace = suggestion.type != SuggestionsManager.Suggestion.TYPE_FILE && suggestion.type != SuggestionsManager.Suggestion.TYPE_COLOR;
+            boolean addSpace = suggestion.type != SuggestionsManager.Suggestion.TYPE_FILE
+                    && suggestion.type != SuggestionsManager.Suggestion.TYPE_COLOR;
 
             if(multipleCmdSeparator.length() > 0) {
-//                try to understand if the user is using a multiple cmd
                 String[] split = input.split(multipleCmdSeparator);
 
-//                not using it
-                if(split.length == 1) mTerminalAdapter.setInput(text + (addSpace ? Tuils.SPACE : Tuils.EMPTYSTRING), suggestion.object);
-
-//                yes
-                else {
+                if(split.length == 1) {
+                    mTerminalAdapter.setInput(text + (addSpace ? Tuils.SPACE : Tuils.EMPTYSTRING), suggestion.object);
+                } else {
                     split[split.length - 1] = Tuils.EMPTYSTRING;
 
                     String beforeInputs = Tuils.EMPTYSTRING;
@@ -556,11 +594,80 @@ public class SuggestionsManager {
         }
     }
 
-//    there's always a space between beforelastspace and lastword
     public List<Suggestion> getSuggestions(String beforeLastSpace, String lastWord) {
         List<Suggestion> suggestionList = new ArrayList<>();
 
+        int fstage = vaddempudi.gnanesh.syntaxcli.commands.main.raw.friday.stage;
+        if (fstage != 0) {
+            String lw = lastWord == null ? "" : lastWord.trim();
+            String prefix = lw.toLowerCase();
+
+            if (fstage == 2) {
+                for (String s : vaddempudi.gnanesh.syntaxcli.commands.main.raw.friday.MENU) {
+                    if (prefix.isEmpty() || s.startsWith(prefix))
+                        suggestionList.add(new Suggestion("", s, true, Suggestion.TYPE_PERMANENT));
+                }
+                Collections.sort(suggestionList, comparator);
+                return suggestionList;
+            }
+            if (fstage == 3) {
+                suggestAllApps(pack, suggestionList, prefix);
+                Collections.sort(suggestionList, comparator);
+                return suggestionList;
+            }
+            if (fstage == 4) {
+                suggestAllAppsExcluding(pack, suggestionList, prefix,
+                        vaddempudi.gnanesh.syntaxcli.commands.main.raw.friday.selFirstApp);
+                Collections.sort(suggestionList, comparator);
+                return suggestionList;
+            }
+            if (fstage == 5) {
+                for (String s : vaddempudi.gnanesh.syntaxcli.commands.main.raw.friday.ACTION) {
+                    if (prefix.isEmpty() || s.startsWith(prefix))
+                        suggestionList.add(new Suggestion("", s, true, Suggestion.TYPE_PERMANENT));
+                }
+                Collections.sort(suggestionList, comparator);
+                return suggestionList;
+            }
+            if (fstage == 7) {
+                for (AppActionStore.Entry e : AppActionStore.get(pack.context).listAll()) {
+                    if (prefix.isEmpty() || e.label.toLowerCase().startsWith(prefix))
+                        suggestionList.add(new Suggestion("", e.label, true, Suggestion.TYPE_PERMANENT));
+                }
+                Collections.sort(suggestionList, comparator);
+                return suggestionList;
+            }
+            if (fstage == 8) {
+                try {
+                    java.io.File dir = pack.currentDirectory;
+                    if (dir != null && dir.isDirectory()) {
+                        String[] files = dir.list();
+                        if (files != null) {
+                            java.util.Arrays.sort(files);
+                            for (String f : files) {
+                                if (prefix.isEmpty() || f.toLowerCase().startsWith(prefix)) {
+                                    String low = f.toLowerCase();
+                                    if (low.endsWith(".png") || low.endsWith(".jpg")
+                                            || low.endsWith(".jpeg") || low.endsWith(".webp")
+                                            || low.endsWith(".gif") || low.endsWith(".bmp")) {
+                                        suggestionList.add(new Suggestion("", f, true, Suggestion.TYPE_PERMANENT));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch (Throwable ignored) { }
+                return suggestionList;
+            }
+            return suggestionList;
+        }
+
         beforeLastSpace  = beforeLastSpace .trim();
+        lastWord = lastWord.trim();
+
+
+        beforeLastSpace  = beforeLastSpace .trim();
+
         lastWord = lastWord.trim();
 
 //        lastword = 0
@@ -644,6 +751,11 @@ public class SuggestionsManager {
                 } catch (Exception e) {}
 
                 if (cmd != null) {
+                    if (cmd.cmd instanceof vaddempudi.gnanesh.syntaxcli.commands.main.raw.friday) {
+                        suggestFriday(pack, suggestionList, beforeLastSpace, lastWord, cmd);
+                        Collections.sort(suggestionList, comparator);
+                        return suggestionList;
+                    }
                     if(cmd.cmd instanceof PermanentSuggestionCommand) {
                         suggestPermanentSuggestions(suggestionList, (PermanentSuggestionCommand) cmd.cmd);
                     }
@@ -699,6 +811,262 @@ public class SuggestionsManager {
         }
     }
 
+    private void suggestFriday(MainPack pack,
+                               List<Suggestion> suggestions,
+                               String beforeLastSpace,
+                               String lastWord,
+                               Command cmd) {
+        java.util.ArrayList<String> tokens = new java.util.ArrayList<>();
+        tokens.add("friday");
+        if (cmd.mArgs != null) {
+            for (Object a : cmd.mArgs) {
+                if (a instanceof String) tokens.add((String) a);
+            }
+        }
+        boolean lastWordPresent = lastWord != null && lastWord.length() > 0;
+        if (lastWordPresent) tokens.add(lastWord);
+
+        String prefix = lastWordPresent ? lastWord.toLowerCase() : "";
+
+        // tokens[0] = "friday"
+        // tokens[1] = password (must be typed, not suggested)
+        // tokens[2] = menu choice
+        // tokens[3] = app label (only if tokens[2] == "configure-app")
+        // tokens[4] = action (only if tokens[3] is set)
+        // tokens[5..] = body/path (free text)
+
+        if (tokens.size() == 1) {
+            // just "friday" → nothing to suggest
+            return;
+        }
+
+        // password slot: nothing to suggest
+        if (tokens.size() == 2 && lastWordPresent) {
+            return;
+        }
+
+        // menu slot: password is typed, tokens[2] not yet present → suggest menu
+        if (tokens.size() == 2 && !lastWordPresent) {
+            for (String s : vaddempudi.gnanesh.syntaxcli.commands.main.raw.friday.MENU) {
+                suggestions.add(new Suggestion(beforeLastSpace, s, false, Suggestion.TYPE_COMMAND));
+            }
+            return;
+        }
+        if (tokens.size() == 3 && lastWordPresent) {
+            for (String s : vaddempudi.gnanesh.syntaxcli.commands.main.raw.friday.MENU) {
+                if (s.startsWith(prefix)) {
+                    suggestions.add(new Suggestion(beforeLastSpace, s, false, Suggestion.TYPE_COMMAND));
+                }
+            }
+            return;
+        }
+
+        // past menu: check configure-app flow
+        if (!"configure-app".equals(tokens.get(2))) {
+            return;
+        }
+
+        // app label slot
+        if (tokens.size() == 3 && !lastWordPresent) {
+            // shouldn't happen (we returned above) — but safe guard
+            return;
+        }
+        if (tokens.size() == 4 && lastWordPresent) {
+            // user is typing the app label
+            suggestFridayApps(pack, suggestions, beforeLastSpace, prefix);
+            return;
+        }
+        if (tokens.size() == 4 && !lastWordPresent) {
+            // user has typed "configure-app " and expects app chips
+            suggestFridayApps(pack, suggestions, beforeLastSpace, "");
+            return;
+        }
+
+        // action slot
+        if (tokens.size() == 5 && lastWordPresent) {
+            for (String s : vaddempudi.gnanesh.syntaxcli.commands.main.raw.friday.ACTION) {
+                if (s.startsWith(prefix)) {
+                    suggestions.add(new Suggestion(beforeLastSpace, s, false, Suggestion.TYPE_COMMAND));
+                }
+            }
+            return;
+        }
+        if (tokens.size() == 5 && !lastWordPresent) {
+            for (String s : vaddempudi.gnanesh.syntaxcli.commands.main.raw.friday.ACTION) {
+                suggestions.add(new Suggestion(beforeLastSpace, s, false, Suggestion.TYPE_COMMAND));
+            }
+            return;
+        }
+
+        // tokens.size() >= 6 → body/path, no chips
+    }
+
+    private void suggestFridayApps(MainPack pack, List<Suggestion> suggestions,
+                                   String beforeLastSpace, String prefix) {
+        try {
+            android.content.pm.PackageManager pm = pack.context.getPackageManager();
+            android.content.Intent main =
+                    new android.content.Intent(android.content.Intent.ACTION_MAIN, null);
+            main.addCategory(android.content.Intent.CATEGORY_LAUNCHER);
+            java.util.List<android.content.pm.ResolveInfo> ris =
+                    pm.queryIntentActivities(main, 0);
+
+            java.util.TreeSet<String> labels = new java.util.TreeSet<>();
+            for (android.content.pm.ResolveInfo ri : ris) {
+                if (ri.activityInfo == null) continue;
+                labels.add(ri.loadLabel(pm).toString());
+            }
+            for (String label : labels) {
+                if (prefix.isEmpty() || label.toLowerCase().startsWith(prefix)) {
+                    suggestions.add(new Suggestion(beforeLastSpace, label, false, Suggestion.TYPE_COMMAND));
+                }
+            }
+        } catch (Throwable ignored) { }
+    }
+
+    private void suggestFridayRaw(MainPack pack,
+                                  List<Suggestion> suggestions,
+                                  String beforeLastSpace,
+                                  String lastWord) {
+        // Reconstruct full input
+        String bl = beforeLastSpace == null ? "" : beforeLastSpace.trim();
+        String lw = lastWord == null ? "" : lastWord.trim();
+
+        java.util.ArrayList<String> tokens = new java.util.ArrayList<>();
+        tokens.add("friday");
+        if (!bl.isEmpty()) {
+            // bl already includes "friday" + prior tokens
+            String[] parts = bl.split("\\s+");
+            for (int i = 0; i < parts.length; i++) {
+                if (i == 0) continue; // skip "friday"
+                tokens.add(parts[i]);
+            }
+        }
+        boolean lastWordPresent = !lw.isEmpty();
+        if (lastWordPresent) tokens.add(lw);
+
+        String prefix = lastWordPresent ? lw.toLowerCase() : "";
+
+        // tokens[0] = "friday"
+        // tokens[1] = password (must be typed)
+        // tokens[2] = menu choice
+        // tokens[3] = app label (if tokens[2] == "configure-app")
+        // tokens[4] = action
+        // tokens[5..] = body/path
+
+        int n = tokens.size();
+
+        // Just "friday" → no suggestions at all (nothing to offer before password)
+        if (n == 1) {
+            return;
+        }
+
+        // Password slot: typing but no space yet → nothing
+        if (n == 2 && lastWordPresent) {
+            return;
+        }
+
+        // "friday <pwd> " (trailing space) → menu chips
+        if (n == 2 && !lastWordPresent) {
+            for (String s : friday.MENU) {
+                suggestions.add(new Suggestion(bl, s, false, Suggestion.TYPE_COMMAND));
+            }
+            return;
+        }
+
+        // "friday <pwd> <partial>" → filtered menu chips
+        if (n == 3 && lastWordPresent) {
+            for (String s : friday.MENU) {
+                if (s.startsWith(prefix)) {
+                    suggestions.add(new Suggestion(bl, s, false, Suggestion.TYPE_COMMAND));
+                }
+            }
+            return;
+        }
+
+        // "friday <pwd> <menu> " with no third token → depends on menu
+        // n == 3 && !lastWordPresent means we have "friday <pwd> <menu>" and user just typed a space
+        if (n == 3 && !lastWordPresent) {
+            String menu = tokens.get(2);
+            if ("configure-app".equals(menu)) {
+                suggestFridayApps(pack, suggestions, bl, "");
+            }
+            // show-actions / clear-actions / change-pwd: no further chips needed
+            return;
+        }
+
+        // n >= 4 → we have "friday <pwd> <menu> <appOrAction...>"
+        String menu = tokens.get(2);
+        if (!"configure-app".equals(menu)) {
+            return;
+        }
+
+        // n == 4 && lastWordPresent → typing app label
+        if (n == 4 && lastWordPresent) {
+            suggestFridayApps(pack, suggestions, bl, prefix);
+            return;
+        }
+
+        // n == 4 && !lastWordPresent → app label typed, space pressed → action chips
+        if (n == 4 && !lastWordPresent) {
+            for (String s : friday.ACTION) {
+                suggestions.add(new Suggestion(bl, s, false, Suggestion.TYPE_COMMAND));
+            }
+            return;
+        }
+
+        // n == 5 && lastWordPresent → typing action
+        if (n == 5 && lastWordPresent) {
+            for (String s : friday.ACTION) {
+                if (s.startsWith(prefix)) {
+                    suggestions.add(new Suggestion(bl, s, false, Suggestion.TYPE_COMMAND));
+                }
+            }
+            return;
+        }
+
+        // n == 5 && !lastWordPresent → action typed, space pressed → body slot, no chips
+        // n >= 6 → body/path typing, no chips
+    }
+
+
+    private void suggestAllApps(MainPack pack, List<Suggestion> out, String prefix) {
+        try {
+            android.content.pm.PackageManager pm = pack.context.getPackageManager();
+            android.content.Intent main = new android.content.Intent(android.content.Intent.ACTION_MAIN, null);
+            main.addCategory(android.content.Intent.CATEGORY_LAUNCHER);
+            java.util.List<android.content.pm.ResolveInfo> ris = pm.queryIntentActivities(main, 0);
+            java.util.TreeSet<String> labels = new java.util.TreeSet<>();
+            for (android.content.pm.ResolveInfo ri : ris) {
+                if (ri.activityInfo == null) continue;
+                labels.add(ri.loadLabel(pm).toString());
+            }
+            for (String label : labels) {
+                if (prefix.isEmpty() || label.toLowerCase().startsWith(prefix))
+                    out.add(new Suggestion("", label, true, Suggestion.TYPE_PERMANENT));
+            }
+        } catch (Throwable ignored) { }
+    }
+
+    private void suggestAllAppsExcluding(MainPack pack, List<Suggestion> out, String prefix, String exclude) {
+        try {
+            android.content.pm.PackageManager pm = pack.context.getPackageManager();
+            android.content.Intent main = new android.content.Intent(android.content.Intent.ACTION_MAIN, null);
+            main.addCategory(android.content.Intent.CATEGORY_LAUNCHER);
+            java.util.List<android.content.pm.ResolveInfo> ris = pm.queryIntentActivities(main, 0);
+            java.util.TreeSet<String> labels = new java.util.TreeSet<>();
+            for (android.content.pm.ResolveInfo ri : ris) {
+                if (ri.activityInfo == null) continue;
+                String l = ri.loadLabel(pm).toString();
+                if (exclude != null && l.equalsIgnoreCase(exclude)) continue;
+                labels.add(l);
+            }
+            for (String label : labels) {
+                if (prefix.isEmpty() || label.toLowerCase().startsWith(prefix))
+                    out.add(new Suggestion("", label, true, Suggestion.TYPE_PERMANENT));
+            }
+        } catch (Throwable ignored) { }
+    }
     private void suggestAlias(AliasManager aliasManager, List<Suggestion> suggestions, String lastWord) {
         int canInsert = lastWord == null || lastWord.length() == 0 ? noInputCounts[Suggestion.TYPE_ALIAS] : counts[Suggestion.TYPE_ALIAS];
 

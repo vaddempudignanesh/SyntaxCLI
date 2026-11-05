@@ -26,6 +26,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import vaddempudi.gnanesh.syntaxcli.commands.main.MainPack;
+import vaddempudi.gnanesh.syntaxcli.commands.main.raw.friday;
 import vaddempudi.gnanesh.syntaxcli.managers.xml.XMLPrefsManager;
 import vaddempudi.gnanesh.syntaxcli.managers.xml.options.Behavior;
 import vaddempudi.gnanesh.syntaxcli.managers.xml.options.Theme;
@@ -54,6 +55,7 @@ public class TerminalManager {
 
     private final int SCROLL_DELAY = 200;
     private final int CMD_LIST_SIZE = 40;
+    private long lastSubmitTime = 0;
 
     public static final int CATEGORY_INPUT = 10, CATEGORY_OUTPUT = 11, CATEGORY_NO_COLOR = 20;
 
@@ -300,6 +302,10 @@ public class TerminalManager {
         if (mInputView == null) {
             return false;
         }
+        long now = System.currentTimeMillis();
+        if (now - lastSubmitTime < 150) return false;
+        lastSubmitTime = now;
+
 
         CharSequence input = mInputView.getText();
 
@@ -324,28 +330,22 @@ public class TerminalManager {
             cmdList.add(cmdList.size(), cmd);
             howBack = -1;
         }
-
-//        DO NOT USE THE INTENT APPROACH
-//        apps are not launching properly, when one has been launched, an other attempt will show always the same
-//
-//        Intent intent = new Intent(MainManager.ACTION_EXEC);
-//        intent.putExtra(MainManager.CMD, cmd);
-//        intent.putExtra(MainManager.CMD_COUNT, MainManager.commandCount);
-//
-//        Parcelable p = null;
-//        if(obj instanceof Parcelable) p = (Parcelable) obj;
-//        intent.putExtra(MainManager.PARCELABLE, p);
-//
-//        LocalBroadcastManager.getInstance(mContext.getApplicationContext()).sendBroadcast(intent);
-
         executer.execute(cmd, obj);
-
-//        because it will clear suggestions without refilling them, because "aftertextchanged" wont be called
-//        if(cmd.length() > 0) LocalBroadcastManager.getInstance(mContext.getApplicationContext()).sendBroadcast(new Intent(UIManager.ACTION_CLEAR_SUGGESTIONS));
-
+        try {
+            boolean pwdMode = vaddempudi.gnanesh.syntaxcli.commands.main.raw.friday.stage == 1;
+            setPasswordMode(pwdMode);
+        } catch (Throwable ignored) { }
         setupNewInput();
 
         return true;
+    }
+
+    public void refreshSuggestions() {
+        if (mInputView == null) return;
+        // Trigger afterTextChanged → requestSuggestion
+        CharSequence current = mInputView.getText();
+        mInputView.setText(current);
+        mInputView.setSelection(current.length());
     }
 
     public void setOutput(CharSequence output, int type) {
@@ -494,6 +494,17 @@ public class TerminalManager {
         if(mInputView != null) {
             mInputView.setHint(Tuils.getHint(mainPack.currentDirectory.getAbsolutePath()));
         }
+    }
+
+    public void setPasswordMode(boolean password) {
+        if (mInputView == null) return;
+        if (password) {
+            mInputView.setInputType(InputType.TYPE_CLASS_TEXT
+                    | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        } else {
+            mInputView.setInputType(InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        }
+        focusInputEnd();
     }
 
     public void focusInputEnd() {
