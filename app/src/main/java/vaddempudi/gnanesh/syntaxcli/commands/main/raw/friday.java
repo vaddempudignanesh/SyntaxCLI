@@ -153,18 +153,22 @@ public class friday implements CommandAbstraction {
         if (stage == 8) {
             String path = raw.trim();
             if (path.isEmpty()) return "pick image path:";
-            String uri;
-            if (path.startsWith("content://") || path.startsWith("file://")) {
-                uri = path;
+            String storedUri;
+            if (path.startsWith("content://")) {
+                storedUri = copyToPermanent(ctx, path);
+                if (storedUri == null) return "could not copy image\npick image path:";
+            } else if (path.startsWith("file://")) {
+                storedUri = path;
             } else {
                 File f = new File(path);
                 if (!f.exists()) return "file not found\npick image path:";
-                uri = "file://" + path;
+                storedUri = "file://" + path;
             }
-            saveImageAction(ctx, selFirstPkg, selFirstApp, uri);
+            saveImageAction(ctx, selFirstPkg, selFirstApp, storedUri);
             stage = 2;
             return "saved: " + selFirstApp + " -> image\n" + renderMenu();
         }
+
         if (stage == 9) {
             // Trigger the Android file picker from the Activity
             if (ctx instanceof android.app.Activity) {
@@ -185,7 +189,9 @@ public class friday implements CommandAbstraction {
         if (stage == 10) {
             String uri = raw.trim();
             if (uri.isEmpty()) { stage = 2; return "cancelled\n" + renderMenu(); }
-            saveImageAction(ctx, selFirstPkg, selFirstApp, uri);
+            String storedUri = uri.startsWith("content://") ? copyToPermanent(ctx, uri) : uri;
+            if (storedUri == null) { stage = 2; return "could not copy image\n" + renderMenu(); }
+            saveImageAction(ctx, selFirstPkg, selFirstApp, storedUri);
             stage = 2;
             return "saved: " + selFirstApp + " -> image\n" + renderMenu();
         }
@@ -202,6 +208,38 @@ public class friday implements CommandAbstraction {
         return null;
     }
 
+    private static String copyToPermanent(android.content.Context ctx, String contentUri) {
+        try {
+            File dir = new File(android.os.Environment.getExternalStorageDirectory(), "t-ui/images");
+            if (!dir.exists()) dir.mkdirs();
+
+            String ext = ".bin";
+            String name = "img_" + System.currentTimeMillis() + ext;
+
+            // Try to determine extension from mime type
+            String mime = ctx.getContentResolver().getType(android.net.Uri.parse(contentUri));
+            if (mime != null) {
+                if (mime.contains("png")) ext = ".png";
+                else if (mime.contains("jpeg") || mime.contains("jpg")) ext = ".jpg";
+                else if (mime.contains("webp")) ext = ".webp";
+                else if (mime.contains("gif")) ext = ".gif";
+                else if (mime.contains("bmp")) ext = ".bmp";
+                name = "img_" + System.currentTimeMillis() + ext;
+            }
+
+            File out = new File(dir, name);
+            try (java.io.InputStream is = ctx.getContentResolver().openInputStream(android.net.Uri.parse(contentUri));
+                 java.io.FileOutputStream fos = new java.io.FileOutputStream(out)) {
+                if (is == null) return null;
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = is.read(buf)) > 0) fos.write(buf, 0, n);
+            }
+            return "file://" + out.getAbsolutePath();
+        } catch (Throwable t) {
+            return null;
+        }
+    }
     private static void saveImageAction(Context ctx, String pkg, String label, String uri) {
         AppActionStore.Entry e = new AppActionStore.Entry();
         e.packageName = pkg;
