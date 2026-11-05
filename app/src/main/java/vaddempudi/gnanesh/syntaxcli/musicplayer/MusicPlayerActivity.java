@@ -173,6 +173,8 @@ public class MusicPlayerActivity extends AppCompatActivity {
     private ImageView    btnNext;
     private SeekBar      seekBar;
 
+    public static volatile boolean userStoppedPlayback = false;
+
     private ImageView btnLoop;
 
     private String pendingCmdFromLaunch = null;
@@ -1041,6 +1043,8 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 player.pause();
                 isPaused = true;
                 isPausedStatic = true;
+                userStoppedPlayback = true;
+                MusicPlaybackService.userStoppedPlayback = true;
                 btnPlayPause.setImageResource(R.drawable.ic_play_circle);
                 btnPlayPause.setColorFilter(NOW_PLAY);
                 ui.removeCallbacks(progressTick);
@@ -1048,6 +1052,8 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 player.start();
                 isPaused = false;
                 isPausedStatic = false;
+                userStoppedPlayback = false;
+                MusicPlaybackService.userStoppedPlayback = false;
                 btnPlayPause.setImageResource(R.drawable.ic_pause);
                 btnPlayPause.setColorFilter(GREEN);
                 ui.post(progressTick);
@@ -1197,6 +1203,13 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 mp.start();
                 isPaused = false;
                 isPausedStatic = false;
+                userStoppedPlayback = false;
+                MusicPlaybackService.userStoppedPlayback = false;
+                try {
+                    Intent reqFocus = new Intent(MusicPlaybackService.ACTION_UPDATE_NOTIFICATION);
+                    reqFocus.putExtra("request_focus", true);
+                    LocalBroadcastManager.getInstance(this).sendBroadcast(reqFocus);
+                } catch (Exception ignored) { }
                 if (btnPlayPause != null) {
                     btnPlayPause.setImageResource(R.drawable.ic_pause);
                     btnPlayPause.setColorFilter(GREEN);
@@ -1257,6 +1270,8 @@ public class MusicPlayerActivity extends AppCompatActivity {
         try { releasePlayer(); } catch (Exception ignored) { }
         isPausedStatic = true;
         isPaused = true;
+        userStoppedPlayback = true;
+        MusicPlaybackService.userStoppedPlayback = true;
         if (btnPlayPause != null) {
             btnPlayPause.setImageResource(R.drawable.ic_play_circle);
             btnPlayPause.setColorFilter(GREEN);
@@ -1366,6 +1381,10 @@ public class MusicPlayerActivity extends AppCompatActivity {
 
         switch (cmd) {
             case CMD_PLAY:
+                if (userStoppedPlayback) {
+                    // Focus regained but the user stopped us — do NOT resume.
+                    return;
+                }
                 if (player != null && !player.isPlaying() && isPaused) {
                     togglePlayPause();
                 } else if (player == null) {
@@ -1373,7 +1392,15 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 }
                 break;
             case CMD_PAUSE:
-                if (player != null && player.isPlaying()) togglePlayPause();
+                if (player != null && player.isPlaying()) {
+                    togglePlayPause();
+                } else {
+                    // No player but state was "playing" — flip to paused and
+                    // update the notification so it doesn't lie.
+                    isPausedStatic = true;
+                    isPaused = true;
+                    pushPlaybackStateToService();
+                }
                 break;
             case CMD_TOGGLE:
                 if (player == null) {
@@ -1383,9 +1410,13 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 }
                 break;
             case CMD_NEXT:
+                userStoppedPlayback = false;
+                MusicPlaybackService.userStoppedPlayback = false;
                 playNextFromList(resolvePlaybackList());
                 break;
             case CMD_PREV:
+                userStoppedPlayback = false;
+                MusicPlaybackService.userStoppedPlayback = false;
                 playPrevFromList(resolvePlaybackList());
                 break;
             case CMD_OPEN_PLAYLIST:
@@ -1395,6 +1426,8 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 saveLastViewState();
                 break;
             case CMD_START_LAST:
+                userStoppedPlayback = false;
+                MusicPlaybackService.userStoppedPlayback = false;
                 playFromList(resolvePlaybackList(), lastPlayedId);
                 break;
         }

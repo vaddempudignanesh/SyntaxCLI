@@ -35,6 +35,10 @@ public class MusicPlaybackService extends Service {
     public static final String EXTRA_POS_MS = "pos_ms";
     public static final String EXTRA_DUR_MS = "dur_ms";
 
+    private BroadcastReceiver noisyReceiver;
+    private boolean pausedForTransientLoss = false;
+    public static volatile boolean userStoppedPlayback = false;
+
     private static final int RC_PREV   = 0x1001;
     private static final int RC_TOGGLE = 0x1002;
     private static final int RC_NEXT   = 0x1003;
@@ -50,15 +54,23 @@ public class MusicPlaybackService extends Service {
                 @Override public void onAudioFocusChange(int focusChange) {
                     switch (focusChange) {
                         case AudioManager.AUDIOFOCUS_LOSS:
+                            hasFocus = false;
+                            pausedForTransientLoss = false;
+                            sendCmd(MusicPlayerActivity.CMD_PAUSE);
+                            break;
                         case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT:
                             hasFocus = false;
+                            pausedForTransientLoss = true;
                             sendCmd(MusicPlayerActivity.CMD_PAUSE);
                             break;
                         case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK:
                             break;
                         case AudioManager.AUDIOFOCUS_GAIN:
                             hasFocus = true;
-                            sendCmd(MusicPlayerActivity.CMD_PLAY);
+                            if (pausedForTransientLoss && !userStoppedPlayback) {
+                                pausedForTransientLoss = false;
+                                sendCmd(MusicPlayerActivity.CMD_PLAY);
+                            }
                             break;
                     }
                 }
@@ -68,19 +80,40 @@ public class MusicPlaybackService extends Service {
         super.onCreate();
         createChannel();
         initMediaSession();
-        requestAudioFocus();
+        // NOTE: do NOT requestAudioFocus() here. Only request it when playback starts.
 
         updateReceiver = new BroadcastReceiver() {
             @Override public void onReceive(Context context, Intent intent) {
+                if (intent != null && intent.getBooleanExtra("request_focus", false)) {
+                    requestAudioFocus();
+                }
                 refreshNotification(intent);
                 syncMediaSession();
+                if (!MusicPlayerActivity.isCurrentlyPlaying()) {
+                    abandonAudioFocus();
+                }
             }
         };
+        
         IntentFilter f = new IntentFilter();
         f.addAction("vaddempudi.gnanesh.syntaxcli.MUSIC_STATE_CHANGED");
         f.addAction("vaddempudi.gnanesh.syntaxcli.MUSIC_TRACK_CHANGED");
         f.addAction(ACTION_UPDATE_NOTIFICATION);
         LocalBroadcastManager.getInstance(this).registerReceiver(updateReceiver, f);
+
+        noisyReceiver = new BroadcastReceiver() {
+            @Override public void onReceive(Context context, Intent intent) {
+                if (intent == null) return;
+                if (AudioManager.ACTION_AUDIO_BECOMING_NOISY.equals(intent.getAction())) {
+                    pausedForTransientLoss = false;
+                    userStoppedPlayback = true;
+                    sendCmd(MusicPlayerActivity.CMD_PAUSE);
+                    abandonAudioFocus();
+                }
+            }
+        };
+        registerReceiver(noisyReceiver,
+                new IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY));
 
         startForegroundInternal();
     }
@@ -98,18 +131,23 @@ public class MusicPlaybackService extends Service {
     @Override public void onDestroy() {
         try {
             LocalBroadcastManager.getInstance(this).unregisterReceiver(updateReceiver);
-        } catch (Exception ignored) { }
+        } catch (Exception ignored) {
+        }
+        try {
+            if (noisyReceiver != null) unregisterReceiver(noisyReceiver);
+        } catch (Exception ignored) {
+        }
         try {
             if (mediaSession != null) {
                 mediaSession.setActive(false);
                 mediaSession.release();
                 mediaSession = null;
             }
-        } catch (Exception ignored) { }
+        } catch (Exception ignored) {
+        }
         abandonAudioFocus();
         super.onDestroy();
     }
-
     @Override
     public void onTaskRemoved(Intent rootIntent) {
         // User swiped the activity away from recents.
@@ -145,7 +183,6 @@ public class MusicPlaybackService extends Service {
     private void dispatchCmd(String cmd) {
         if (cmd == null) return;
         sendCmd(cmd);
-        // Always bring the activity up if it isn't guaranteed alive.
         if (!MusicPlayerActivity.alive) {
             try {
                 Intent open = new Intent(this, MusicPlayerActivity.class);
@@ -240,6 +277,7 @@ public class MusicPlaybackService extends Service {
             }
         } catch (Exception ignored) { }
     }
+
 
     private void abandonAudioFocus() {
         try {
@@ -359,6 +397,10 @@ public class MusicPlaybackService extends Service {
         if (ms <= 0) return "0:00";
         long s = ms / 1000;
         return String.format(java.util.Locale.US, "%d:%02d", s / 60, s % 60);
+    }
+
+    public static void requestFocusNow(MusicPlaybackService svc) {
+        if (svc != null) svc.requestAudioFocus();
     }
 
     private void sendCmd(String cmd) {
