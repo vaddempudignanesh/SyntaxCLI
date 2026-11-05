@@ -505,7 +505,9 @@ public class GestureActionEditorActivity extends Activity {
 
         if (requestCode == REQ_PICK_WALLPAPER) {
             try {
-                java.io.File dst = new java.io.File(getFilesDir(), "kbd_wallpaper.jpg");
+                java.io.File dst = new java.io.File(
+                        getFilesDir(),
+                        "kbd_wallpaper_" + System.currentTimeMillis() + ".jpg");
                 try (java.io.InputStream in = getContentResolver().openInputStream(uri);
                      java.io.OutputStream out = new java.io.FileOutputStream(dst)) {
                     if (in == null) throw new java.io.IOException("null stream");
@@ -525,7 +527,9 @@ public class GestureActionEditorActivity extends Activity {
             }
         } else if (requestCode == REQ_PICK_VIDEO) {
             try {
-                java.io.File dst = new java.io.File(getFilesDir(), "kbd_wallpaper.mp4");
+                java.io.File dst = new java.io.File(
+                        getFilesDir(),
+                        "kbd_wallpaper_" + System.currentTimeMillis() + ".mp4");
                 try (java.io.InputStream in = getContentResolver().openInputStream(uri);
                      java.io.OutputStream out = new java.io.FileOutputStream(dst)) {
                     if (in == null) throw new java.io.IOException("null stream");
@@ -545,7 +549,6 @@ public class GestureActionEditorActivity extends Activity {
             }
         }
     }
-
     private static String hex(int c) {
         return String.format("#%06X", 0xFFFFFF & c);
     }

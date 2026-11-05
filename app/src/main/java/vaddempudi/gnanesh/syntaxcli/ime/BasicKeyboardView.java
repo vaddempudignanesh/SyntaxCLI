@@ -1,6 +1,8 @@
 package vaddempudi.gnanesh.syntaxcli.ime;
 
 import android.content.Context;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.RectF;
@@ -49,6 +51,11 @@ public class BasicKeyboardView extends View {
     private boolean symbols2 = false;
     private boolean symbols3 = false;
 
+    private Bitmap wallpaperBitmap;
+    private String wallpaperBitmapPath;
+    private final Paint wallpaperBitmapPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final RectF wallpaperDst = new RectF();
+
     private final Paint wallpaperDimPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint keyPaint    = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint borderPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -82,7 +89,11 @@ public class BasicKeyboardView extends View {
         textPaint.setTextAlign(Paint.Align.CENTER);
         textPaint.setColor(colors.getTextColor());
 
-        setBackgroundColor(0);
+        if (colors.isWallpaperEnabled() && !colors.hasVideoWallpaper()) {
+            reloadWallpaperBitmap(colors);
+        } else if (!colors.isWallpaperEnabled()) {
+            setBackgroundColor(colors.getBgColor());
+        }
 
         setFocusableInTouchMode(true);
 
@@ -173,6 +184,11 @@ public class BasicKeyboardView extends View {
     protected void onSizeChanged(int w, int h, int ow, int oh) {
         super.onSizeChanged(w, h, ow, oh);
         rebuildHitKeys();
+        ImeColorStore colors = ImeColorStore.get(getContext());
+        if (colors.isWallpaperEnabled() && !colors.hasVideoWallpaper()) {
+            wallpaperBitmapPath = null;
+            reloadWallpaperBitmap(colors);
+        }
     }
 
     private void rebuildHitKeys() {
@@ -237,6 +253,15 @@ public class BasicKeyboardView extends View {
 
         ImeColorStore colors = ImeColorStore.get(getContext());
 
+        boolean videoMode = colors.isWallpaperEnabled() && colors.hasVideoWallpaper();
+        boolean imageMode = colors.isWallpaperEnabled()
+                && !colors.hasVideoWallpaper()
+                && wallpaperBitmap != null;
+
+        if (imageMode) {
+            drawCustomWallpaper(canvas);
+        }
+
         if (colors.isWallpaperEnabled()) {
             int dim = colors.getWallpaperDim();
             if (dim > 0) {
@@ -284,8 +309,8 @@ public class BasicKeyboardView extends View {
 
         for (HitKey hk : hitKeys) {
             if (keysHidden) {
-                keyPaint.setColor(pressedFill);
                 if (hk == pressed) {
+                    keyPaint.setColor(pressedFill);
                     keyRect.set(hk.rect);
                     canvas.drawRoundRect(keyRect, radius, radius, keyPaint);
                 }
@@ -323,6 +348,82 @@ public class BasicKeyboardView extends View {
 
             canvas.drawText(label, hk.rect.centerX(), baseline, textPaint);
         }
+    }
+
+    private void reloadWallpaperBitmap(ImeColorStore colors) {
+        String path = colors.getWallpaperImagePath();
+        if (path == null || path.isEmpty()) {
+            wallpaperBitmap = null;
+            wallpaperBitmapPath = null;
+            return;
+        }
+        if (path.equals(wallpaperBitmapPath) && wallpaperBitmap != null) return;
+
+        try {
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(path, bounds);
+
+            int reqW = Math.max(1, getWidth() > 0 ? getWidth() : 1080);
+            int reqH = Math.max(1, getHeight() > 0 ? getHeight() : 500);
+
+            int sample = 1;
+            while ((bounds.outWidth / sample) > reqW * 2
+                    || (bounds.outHeight / sample) > reqH * 2) {
+                sample *= 2;
+            }
+
+            BitmapFactory.Options opts = new BitmapFactory.Options();
+            opts.inSampleSize = sample;
+            Bitmap raw = BitmapFactory.decodeFile(path, opts);
+            if (raw == null) {
+                wallpaperBitmap = null;
+                wallpaperBitmapPath = null;
+                return;
+            }
+            wallpaperBitmap = raw;
+            wallpaperBitmapPath = path;
+        } catch (Throwable t) {
+            android.util.Log.e("BasicKeyboardView", "wallpaper load failed", t);
+            wallpaperBitmap = null;
+            wallpaperBitmapPath = null;
+        }
+    }
+
+    private void drawCustomWallpaper(Canvas canvas) {
+        if (wallpaperBitmap == null) return;
+        int vw = getWidth();
+        int vh = getHeight();
+        if (vw <= 0 || vh <= 0) return;
+
+        int bw = wallpaperBitmap.getWidth();
+        int bh = wallpaperBitmap.getHeight();
+        if (bw <= 0 || bh <= 0) return;
+
+        float scale = Math.max((float) vw / bw, (float) vh / bh);
+        float drawW = bw * scale;
+        float drawH = bh * scale;
+
+        wallpaperDst.set(
+                (vw - drawW) / 2f,
+                (vh - drawH) / 2f,
+                (vw + drawW) / 2f,
+                (vh + drawH) / 2f);
+
+        canvas.drawBitmap(wallpaperBitmap, null, wallpaperDst, wallpaperBitmapPaint);
+    }
+
+    public void refreshWallpaper() {
+        ImeColorStore colors = ImeColorStore.get(getContext());
+        if (colors.isWallpaperEnabled() && !colors.hasVideoWallpaper()) {
+            wallpaperBitmapPath = null;
+            wallpaperBitmap = null;
+            reloadWallpaperBitmap(colors);
+        } else {
+            wallpaperBitmap = null;
+            wallpaperBitmapPath = null;
+        }
+        invalidate();
     }
 
     private static int blend(int dst, int src, float ratio) {

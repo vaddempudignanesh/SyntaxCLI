@@ -1,6 +1,6 @@
 package vaddempudi.gnanesh.syntaxcli.ime;
 
-import android.content.Context;
+import android.graphics.Matrix;
 import android.graphics.SurfaceTexture;
 import android.inputmethodservice.InputMethodService;
 import android.media.MediaPlayer;
@@ -25,6 +25,13 @@ public class BasicImeService extends InputMethodService
     private TextureView videoView;
     private MediaPlayer mediaPlayer;
     private String currentVideoPath;
+    private int videoWidth = 0;
+    private int videoHeight = 0;
+    private int keyboardHeightPx = 0;
+    private int keyboardWidthPx = 0;
+
+    private int savedVideoPositionMs = 0;
+    private String savedVideoPath = null;
 
     @Override
     public void closePanel() {
@@ -75,49 +82,109 @@ public class BasicImeService extends InputMethodService
         keyboardView.setBubbleOverlay(bubbleOverlay);
         keyboardView.setListener(buildListener());
 
-        rootContainer.addView(keyboardView, new FrameLayout.LayoutParams(
+        FrameLayout.LayoutParams kbLp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        kbLp.gravity = Gravity.BOTTOM;
+        rootContainer.addView(keyboardView, kbLp);
+
+        keyboardView.post(() -> {
+            measureKeyboard();
+            applyKeyboardFrameLock();
+            rebuildWallpaperLayers();
+        });
 
         applyWallpaperWindowSettings();
-        rebuildWallpaperLayers();
-
         return rootContainer;
+    }
+
+    private void measureKeyboard() {
+        if (keyboardView == null) return;
+        int w = keyboardView.getWidth();
+        if (w <= 0) return;
+        int h = keyboardView.getMeasuredHeight();
+        if (h <= 0) {
+            int spec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED);
+            keyboardView.measure(
+                    View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
+                    spec);
+            h = keyboardView.getMeasuredHeight();
+        }
+        keyboardWidthPx  = w;
+        keyboardHeightPx = h;
+    }
+
+    private void applyKeyboardFrameLock() {
+        if (rootContainer == null || keyboardHeightPx <= 0 || keyboardWidthPx <= 0) return;
+
+        ViewGroup.LayoutParams rootLp = rootContainer.getLayoutParams();
+        if (rootLp != null) {
+            rootLp.height = keyboardHeightPx;
+            rootLp.width  = keyboardWidthPx;
+            rootContainer.setLayoutParams(rootLp);
+        } else {
+            rootContainer.setMinimumHeight(keyboardHeightPx);
+            rootContainer.setMinimumWidth(keyboardWidthPx);
+        }
+
+        if (keyboardView != null) {
+            ViewGroup.LayoutParams lp = keyboardView.getLayoutParams();
+            if (lp != null) {
+                lp.height = keyboardHeightPx;
+                lp.width  = keyboardWidthPx;
+                keyboardView.setLayoutParams(lp);
+            }
+        }
+
+        if (videoView != null) {
+            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                    keyboardWidthPx, keyboardHeightPx);
+            lp.gravity = Gravity.BOTTOM;
+            videoView.setLayoutParams(lp);
+        }
+
+        rootContainer.requestLayout();
     }
 
     private void rebuildWallpaperLayers() {
         if (rootContainer == null) return;
+        if (keyboardHeightPx <= 0 || keyboardWidthPx <= 0) return;
 
         if (videoView != null) {
             rootContainer.removeView(videoView);
             videoView = null;
         }
-        stopVideo();
+        releaseVideoKeepPosition();
 
         ImeColorStore colors = ImeColorStore.get(this);
-
         if (!colors.isWallpaperEnabled()) return;
+        if (!colors.hasVideoWallpaper()) return;
 
-        if (colors.hasVideoWallpaper()) {
-            videoView = new TextureView(this);
-            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT);
-            lp.gravity = Gravity.BOTTOM;
-            rootContainer.addView(videoView, 0, lp);
+        videoView = new TextureView(this);
+        videoView.setOpaque(true);
 
-            videoView.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
-                @Override public void onSurfaceTextureAvailable(SurfaceTexture st, int w, int h) {
-                    startVideo(colors.getWallpaperVideoPath(), st);
-                }
-                @Override public void onSurfaceTextureSizeChanged(SurfaceTexture st, int w, int h) { }
-                @Override public boolean onSurfaceTextureDestroyed(SurfaceTexture st) {
-                    stopVideo();
-                    return true;
-                }
-                @Override public void onSurfaceTextureUpdated(SurfaceTexture st) { }
-            });
-        }
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                keyboardWidthPx, keyboardHeightPx);
+        lp.gravity = Gravity.BOTTOM;
+        rootContainer.addView(videoView, 0, lp);
+
+        videoView.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
+            if (r - l > 0 && b - t > 0) applyVideoTransform();
+        });
+
+        videoView.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
+            @Override public void onSurfaceTextureAvailable(SurfaceTexture st, int w, int h) {
+                startVideo(colors.getWallpaperVideoPath(), st);
+            }
+            @Override public void onSurfaceTextureSizeChanged(SurfaceTexture st, int w, int h) {
+                applyVideoTransform();
+            }
+            @Override public boolean onSurfaceTextureDestroyed(SurfaceTexture st) {
+                releaseVideoKeepPosition();
+                return true;
+            }
+            @Override public void onSurfaceTextureUpdated(SurfaceTexture st) { }
+        });
 
         if (keyboardView != null) {
             keyboardView.bringToFront();
@@ -125,35 +192,96 @@ public class BasicImeService extends InputMethodService
         }
     }
 
-    private void startVideo(String path, SurfaceTexture st) {
-        if (path == null || path.isEmpty()) return;
-        if (currentVideoPath != null && currentVideoPath.equals(path) && mediaPlayer != null) {
-            try { mediaPlayer.setSurface(new android.view.Surface(st)); mediaPlayer.start(); } catch (Exception ignored) { }
+    private void applyVideoTransform() {
+        if (videoView == null) return;
+        if (videoWidth <= 0 || videoHeight <= 0) return;
+
+        int vw = videoView.getWidth();
+        int vh = videoView.getHeight();
+        if (vw <= 0 || vh <= 0) {
+            videoView.post(this::applyVideoTransform);
             return;
         }
-        stopVideo();
+
+        float sx = (float) vw / videoWidth;
+        float sy = (float) vh / videoHeight;
+        float s  = Math.max(sx, sy);
+
+        Matrix m = new Matrix();
+        m.setScale(s, s, vw / 2f, vh / 2f);
+        videoView.setTransform(m);
+    }
+
+    private void startVideo(String path, SurfaceTexture st) {
+        if (path == null || path.isEmpty()) return;
+
+        if (currentVideoPath != null && currentVideoPath.equals(path) && mediaPlayer != null) {
+            try {
+                mediaPlayer.setSurface(new android.view.Surface(st));
+                mediaPlayer.seekTo(savedVideoPositionMs);
+                mediaPlayer.start();
+            } catch (Exception ignored) { }
+            return;
+        }
+
+        releaseVideoKeepPosition();
+
+        if (savedVideoPath != null && !savedVideoPath.equals(path)) {
+            savedVideoPositionMs = 0;
+        }
+        if (savedVideoPath == null) {
+            savedVideoPositionMs = 0;
+        }
+        savedVideoPath = path;
+
         try {
             mediaPlayer = new MediaPlayer();
             mediaPlayer.setDataSource(path);
             mediaPlayer.setSurface(new android.view.Surface(st));
             mediaPlayer.setLooping(true);
             mediaPlayer.setVolume(0f, 0f);
-            mediaPlayer.setOnPreparedListener(MediaPlayer::start);
+            mediaPlayer.setOnPreparedListener(mp -> {
+                videoWidth  = mp.getVideoWidth();
+                videoHeight = mp.getVideoHeight();
+                if (videoWidth <= 0 || videoHeight <= 0) {
+                    mp.start();
+                    return;
+                }
+                applyVideoTransform();
+                if (savedVideoPositionMs > 0) {
+                    mp.seekTo(savedVideoPositionMs);
+                }
+                mp.start();
+            });
+            mediaPlayer.setOnVideoSizeChangedListener((mp, w, h) -> {
+                videoWidth  = w;
+                videoHeight = h;
+                applyVideoTransform();
+            });
             mediaPlayer.prepareAsync();
             currentVideoPath = path;
         } catch (Exception e) {
             android.util.Log.e("BasicImeService", "video start failed", e);
-            stopVideo();
+            releaseVideoKeepPosition();
         }
     }
 
-    private void stopVideo() {
+    private void releaseVideoKeepPosition() {
         if (mediaPlayer != null) {
+            try {
+                if (mediaPlayer.isPlaying()) {
+                    savedVideoPositionMs = mediaPlayer.getCurrentPosition();
+                } else {
+                    savedVideoPositionMs = Math.max(savedVideoPositionMs, mediaPlayer.getCurrentPosition());
+                }
+            } catch (Exception ignored) { }
             try { mediaPlayer.stop(); } catch (Exception ignored) { }
             try { mediaPlayer.release(); } catch (Exception ignored) { }
             mediaPlayer = null;
         }
         currentVideoPath = null;
+        videoWidth = 0;
+        videoHeight = 0;
     }
 
     private void showEmojiPanel() {
@@ -274,10 +402,25 @@ public class BasicImeService extends InputMethodService
         } else {
             keyboardView.setListener(buildListener());
             applyWallpaperWindowSettings();
+            measureKeyboard();
+            applyKeyboardFrameLock();
             rebuildWallpaperLayers();
+            keyboardView.refreshWallpaper();
         }
     }
 
+    @Override
+    public void onStartInput(EditorInfo attribute, boolean restarting) {
+        super.onStartInput(attribute, restarting);
+        if (keyboardView != null) {
+            keyboardView.invalidate();
+        }
+        applyWallpaperWindowSettings();
+        measureKeyboard();
+        applyKeyboardFrameLock();
+        rebuildWallpaperLayers();
+        if (keyboardView != null) keyboardView.refreshWallpaper();
+    }
     @Override
     public void onWindowShown() {
         super.onWindowShown();
@@ -295,22 +438,13 @@ public class BasicImeService extends InputMethodService
         }
     }
 
-    @Override
-    public void onStartInput(EditorInfo attribute, boolean restarting) {
-        super.onStartInput(attribute, restarting);
-        if (keyboardView != null) {
-            keyboardView.invalidate();
-        }
-        applyWallpaperWindowSettings();
-        rebuildWallpaperLayers();
-    }
 
     @Override
     public void onFinishInputView(boolean finishingInput) {
         super.onFinishInputView(finishingInput);
         setPage(0);
         if (bubbleOverlay != null) bubbleOverlay.hide();
-        stopVideo();
+        releaseVideoKeepPosition();
     }
 
     @Override
@@ -319,7 +453,7 @@ public class BasicImeService extends InputMethodService
             bubbleOverlay.hide();
             bubbleOverlay = null;
         }
-        stopVideo();
+        releaseVideoKeepPosition();
         super.onDestroy();
     }
 
