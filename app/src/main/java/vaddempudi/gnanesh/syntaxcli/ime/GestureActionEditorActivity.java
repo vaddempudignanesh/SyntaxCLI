@@ -18,6 +18,7 @@ import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -186,7 +187,6 @@ public class GestureActionEditorActivity extends Activity {
 
         themeCard.addView(keyAlphaRow);
 
-        // ── Key press animation toggle ──
         TextView shrinkToggle = new TextView(this);
         shrinkToggle.setTextSize(13);
         shrinkToggle.setTypeface(Typeface.MONOSPACE);
@@ -202,7 +202,6 @@ public class GestureActionEditorActivity extends Activity {
         stLp.topMargin = dp(12);
         themeCard.addView(shrinkToggle, stLp);
 
-        // ── Shrink intensity slider (0.50 .. 1.00) ──
         LinearLayout intensRow = new LinearLayout(this);
         intensRow.setOrientation(LinearLayout.HORIZONTAL);
         intensRow.setGravity(Gravity.CENTER_VERTICAL);
@@ -220,7 +219,7 @@ public class GestureActionEditorActivity extends Activity {
                 dp(90), ViewGroup.LayoutParams.WRAP_CONTENT));
 
         SeekBar intensSeek = new SeekBar(this);
-        intensSeek.setMax(50);          // 0..50 → scale 1.00..0.50
+        intensSeek.setMax(50);
         int currentInt = Math.round((1f - ImeColorStore.get(this).getKeyShrinkIntensity()) * 100f);
         intensSeek.setProgress(currentInt);
         intensSeek.setSplitTrack(false);
@@ -256,7 +255,6 @@ public class GestureActionEditorActivity extends Activity {
             @Override public void onStopTrackingTouch(SeekBar sb) { }
         });
 
-        // ── Shrink speed slider (20..200 ms) ──
         LinearLayout speedRow = new LinearLayout(this);
         speedRow.setOrientation(LinearLayout.HORIZONTAL);
         speedRow.setGravity(Gravity.CENTER_VERTICAL);
@@ -274,7 +272,7 @@ public class GestureActionEditorActivity extends Activity {
                 dp(90), ViewGroup.LayoutParams.WRAP_CONTENT));
 
         SeekBar speedSeek = new SeekBar(this);
-        speedSeek.setMax(180);          // 20..200 ms
+        speedSeek.setMax(180);
         int curSpeed = (int) (ImeColorStore.get(this).getKeyShrinkDownMs() - 20L);
         speedSeek.setProgress(Math.max(0, Math.min(180, curSpeed)));
         speedSeek.setSplitTrack(false);
@@ -308,6 +306,7 @@ public class GestureActionEditorActivity extends Activity {
             @Override public void onStartTrackingTouch(SeekBar sb) { }
             @Override public void onStopTrackingTouch(SeekBar sb) { }
         });
+
         final Runnable[] refreshShrink = new Runnable[1];
         refreshShrink[0] = () -> {
             boolean on = ImeColorStore.get(this).isKeyShrinkEnabled();
@@ -322,7 +321,6 @@ public class GestureActionEditorActivity extends Activity {
             refreshShrink[0].run();
         });
         refreshShrink[0].run();
-
 
         LinearLayout wallCard = new LinearLayout(this);
         wallCard.setOrientation(LinearLayout.VERTICAL);
@@ -570,6 +568,176 @@ public class GestureActionEditorActivity extends Activity {
                 .show();
     }
 
+    private static final class ActivityEntry {
+        final String component;
+        final String label;
+        ActivityEntry(String component, String label) {
+            this.component = component;
+            this.label = label;
+        }
+    }
+
+    private static String friendlyName(String shortClassName) {
+        switch (shortClassName) {
+            case "LauncherActivity":       return "HOME SCREEN";
+            case "CalculatorActivity":     return "CALCULATOR";
+            case "MusicPlayerActivity":    return "MUSIC PLAYER";
+            case "GalleryActivity":        return "GALLERY";
+            case "AlarmActivity":          return "ALARM";
+            case "AuraBrowserActivity":    return "BROWSER";
+            case "FileManagerActivity":    return "FILE MANAGER";
+            default: {
+                String s = shortClassName;
+                if (s.endsWith("Activity")) s = s.substring(0, s.length() - 8);
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < s.length(); i++) {
+                    char c = s.charAt(i);
+                    if (i > 0 && Character.isUpperCase(c)
+                            && !Character.isUpperCase(s.charAt(i - 1))) {
+                        sb.append(' ');
+                    }
+                    sb.append(Character.toUpperCase(c));
+                }
+                return sb.toString();
+            }
+        }
+    }
+
+    private List<ActivityEntry> ownLaunchableActivities() {
+        final java.util.Set<String> ALLOW = new java.util.HashSet<>(java.util.Arrays.asList(
+                "LauncherActivity",
+                "CalculatorActivity",
+                "MusicPlayerActivity",
+                "GalleryActivity",
+                "AlarmActivity",
+                "AuraBrowserActivity",
+                "FileManagerActivity"
+        ));
+
+        List<ActivityEntry> out = new ArrayList<>();
+        try {
+            android.content.pm.PackageManager pm = getPackageManager();
+            android.content.pm.PackageInfo pi = pm.getPackageInfo(
+                    getPackageName(),
+                    android.content.pm.PackageManager.GET_ACTIVITIES);
+            if (pi.activities == null) return out;
+
+            for (android.content.pm.ActivityInfo ai : pi.activities) {
+                if (ai.name == null) continue;
+                if (!ai.enabled) continue;
+
+                String shortName = ai.name;
+                int dot = shortName.lastIndexOf('.');
+                if (dot >= 0) shortName = shortName.substring(dot + 1);
+
+                if (!ALLOW.contains(shortName)) continue;
+
+                out.add(new ActivityEntry(
+                        getPackageName() + "/" + ai.name,
+                        friendlyName(shortName)));
+            }
+        } catch (Throwable ignored) { }
+        java.util.Collections.sort(out, (a, b) ->
+                a.label.compareToIgnoreCase(b.label));
+        return out;
+    }
+
+    private void showActivityPicker(final android.widget.EditText payloadInput) {
+        final List<ActivityEntry> entries = ownLaunchableActivities();
+
+        final LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+        container.setBackgroundColor(0xFF000000);
+        int pad = dp(10);
+        container.setPadding(pad, pad, pad, pad);
+
+        TextView header = new TextView(this);
+        header.setText("PICK ACTIVITY");
+        header.setTextColor(GREEN);
+        header.setTextSize(14);
+        header.setTypeface(Typeface.MONOSPACE);
+        header.setPadding(dp(6), dp(6), dp(6), dp(10));
+        container.addView(header);
+
+        final android.app.Dialog dlg = new android.app.Dialog(this);
+        dlg.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE);
+
+        if (entries.isEmpty()) {
+            TextView empty = new TextView(this);
+            empty.setText("No launchable activities.");
+            empty.setTextColor(DIM);
+            empty.setTextSize(12);
+            empty.setTypeface(Typeface.MONOSPACE);
+            empty.setPadding(dp(6), dp(12), dp(6), dp(12));
+            container.addView(empty);
+        } else {
+            android.widget.ScrollView sc = new android.widget.ScrollView(this);
+            sc.setBackgroundColor(0xFF000000);
+            LinearLayout list = new LinearLayout(this);
+            list.setOrientation(LinearLayout.VERTICAL);
+            sc.addView(list);
+
+            for (ActivityEntry e : entries) {
+                TextView row = new TextView(this);
+                row.setText(e.label);
+                row.setTextColor(GREEN);
+                row.setTextSize(13);
+                row.setTypeface(Typeface.MONOSPACE);
+                row.setPadding(dp(14), dp(12), dp(14), dp(12));
+                GradientDrawable bg = new GradientDrawable();
+                bg.setColor(0xFF000000);
+                bg.setCornerRadius(dp(4));
+                bg.setStroke(dp(1), CARD_BORDER);
+                row.setBackground(bg);
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT);
+                lp.setMargins(dp(2), dp(3), dp(2), dp(3));
+                row.setLayoutParams(lp);
+                row.setClickable(true);
+                row.setOnClickListener(v -> {
+                    payloadInput.setText(e.component);
+                    dlg.dismiss();
+                });
+                list.addView(row);
+            }
+
+            LinearLayout.LayoutParams scLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(360));
+            container.addView(sc, scLp);
+        }
+
+        TextView cancel = new TextView(this);
+        cancel.setText("CANCEL");
+        cancel.setTextColor(GREEN);
+        cancel.setTextSize(12);
+        cancel.setTypeface(Typeface.MONOSPACE);
+        cancel.setPadding(dp(14), dp(10), dp(14), dp(10));
+        cancel.setGravity(Gravity.END);
+        cancel.setClickable(true);
+        cancel.setOnClickListener(v -> dlg.dismiss());
+        LinearLayout.LayoutParams cLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        cLp.topMargin = dp(6);
+        container.addView(cancel, cLp);
+
+        dlg.setContentView(container, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        android.view.Window w = dlg.getWindow();
+        if (w != null) {
+            w.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(0xFF000000));
+            w.setDimAmount(0.7f);
+            w.addFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            w.setLayout(
+                    (int) (getResources().getDisplayMetrics().widthPixels * 0.92f),
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+        }
+
+        dlg.show();
+    }
+
     private int currentColorFor(String label) {
         if (label.equalsIgnoreCase("Text color")) return pendingTextColor;
         return pendingBgColor;
@@ -708,6 +876,7 @@ public class GestureActionEditorActivity extends Activity {
             }
         }
     }
+
     private static String hex(int c) {
         return String.format("#%06X", 0xFFFFFF & c);
     }
@@ -739,8 +908,11 @@ public class GestureActionEditorActivity extends Activity {
             row.setLayoutParams(rlp);
 
             TextView line1 = new TextView(this);
-            line1.setText("KEY: [" + a.keyChar + "]  →  "
-                    + (a.type == KeyAction.TYPE_APP_LAUNCH ? "LAUNCH " : "TYPE ") + a.payload);
+            String kindLabel;
+            if (a.type == KeyAction.TYPE_APP_LAUNCH)           kindLabel = "LAUNCH APP ";
+            else if (a.type == KeyAction.TYPE_LAUNCH_ACTIVITY) kindLabel = "OPEN ACTIVITY ";
+            else                                               kindLabel = "TYPE TEXT ";
+            line1.setText("KEY: [" + a.keyChar + "]  →  " + kindLabel + a.payload);
             line1.setTextColor(GREEN);
             line1.setTypeface(Typeface.MONOSPACE);
             line1.setTextSize(13);
@@ -827,6 +999,12 @@ public class GestureActionEditorActivity extends Activity {
         appBtn.setPadding(dp(10), dp(8), dp(10), dp(8));
         typeRow.addView(appBtn);
 
+        TextView actBtn = new TextView(this);
+        actBtn.setText("ACTIVITY");
+        actBtn.setTypeface(Typeface.MONOSPACE);
+        actBtn.setPadding(dp(10), dp(8), dp(10), dp(8));
+        typeRow.addView(actBtn);
+
         root.addView(typeRow);
 
         TextView payloadLabel = new TextView(this);
@@ -866,19 +1044,41 @@ public class GestureActionEditorActivity extends Activity {
         root.addView(pickAppBtn);
 
         Runnable refreshTypeUi = () -> {
-            boolean isText = type[0] == KeyAction.TYPE_TEXT;
+            boolean isText     = type[0] == KeyAction.TYPE_TEXT;
+            boolean isApp      = type[0] == KeyAction.TYPE_APP_LAUNCH;
+            boolean isActivity = type[0] == KeyAction.TYPE_LAUNCH_ACTIVITY;
+
             textBtn.setTextColor(isText ? 0xFF000000 : GREEN);
             textBtn.setBackgroundColor(isText ? GREEN : 0xFF0A0A0A);
-            appBtn.setTextColor(isText ? GREEN : 0xFF000000);
-            appBtn.setBackgroundColor(isText ? 0xFF0A0A0A : GREEN);
-            payloadLabel.setText(isText ? "Text to insert" : "App package (or use PICK APP)");
-            payloadInput.setEnabled(isText);
-            pickAppBtn.setVisibility(isText ? View.GONE : View.VISIBLE);
+            appBtn.setTextColor(isApp ? 0xFF000000 : GREEN);
+            appBtn.setBackgroundColor(isApp ? GREEN : 0xFF0A0A0A);
+            actBtn.setTextColor(isActivity ? 0xFF000000 : GREEN);
+            actBtn.setBackgroundColor(isActivity ? GREEN : 0xFF0A0A0A);
+
+            if (isText) {
+                payloadLabel.setText("Text to insert");
+                payloadInput.setEnabled(true);
+                pickAppBtn.setVisibility(View.GONE);
+            } else if (isApp) {
+                payloadLabel.setText("App package (or use PICK APP)");
+                payloadInput.setEnabled(false);
+                pickAppBtn.setText("PICK APP");
+                pickAppBtn.setVisibility(View.VISIBLE);
+                pickAppBtn.setOnClickListener(v ->
+                        AppPickerDialog.show(this, (pkg, label) -> payloadInput.setText(pkg)));
+            } else {
+                payloadLabel.setText("Activity (or use PICK ACTIVITY)");
+                payloadInput.setEnabled(false);
+                pickAppBtn.setText("PICK ACTIVITY");
+                pickAppBtn.setVisibility(View.VISIBLE);
+                pickAppBtn.setOnClickListener(v -> showActivityPicker(payloadInput));
+            }
             if (!isText && existing != null) payloadInput.setText(existing.payload);
         };
 
-        textBtn.setOnClickListener(v -> { type[0] = KeyAction.TYPE_TEXT; refreshTypeUi.run(); });
-        appBtn.setOnClickListener(v -> { type[0] = KeyAction.TYPE_APP_LAUNCH; refreshTypeUi.run(); });
+        textBtn.setOnClickListener(v -> { type[0] = KeyAction.TYPE_TEXT;            refreshTypeUi.run(); });
+        appBtn .setOnClickListener(v -> { type[0] = KeyAction.TYPE_APP_LAUNCH;      refreshTypeUi.run(); });
+        actBtn .setOnClickListener(v -> { type[0] = KeyAction.TYPE_LAUNCH_ACTIVITY; refreshTypeUi.run(); });
         refreshTypeUi.run();
 
         android.app.AlertDialog dlg = new android.app.AlertDialog.Builder(this)

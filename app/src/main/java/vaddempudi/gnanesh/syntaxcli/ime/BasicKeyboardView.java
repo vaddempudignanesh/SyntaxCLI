@@ -463,7 +463,7 @@ public class BasicKeyboardView extends View {
             wallpaperBitmap = raw;
             wallpaperBitmapPath = path;
         } catch (Throwable t) {
-            android.util.Log.e("BasicKeyboardView", "wallpaper load failed", t);
+            XLog.e("BasicKeyboardView", "wallpaper load failed", t);
             wallpaperBitmap = null;
             wallpaperBitmapPath = null;
         }
@@ -603,6 +603,7 @@ public class BasicKeyboardView extends View {
                         long now = System.currentTimeMillis();
                         boolean doubleTap = (now - lastSpaceUpTime) <= KeyboardConfig.DOUBLE_TAP_SPACE_MS;
                         if (doubleTap && !longPressHandled) {
+                            XLog.d("GESTURE-TRIGGER", "SPACE_DOUBLE_TAP → dispatch");
                             listener.onKey(GESTURE_DOUBLE_TRIGGER, null);
                             longPressHandled = true;
                         }
@@ -677,6 +678,8 @@ public class BasicKeyboardView extends View {
             if (bubbleOverlay != null) bubbleOverlay.hide();
             setPressedKey(null);
             invalidate();
+            XLog.d("GESTURE-TRIGGER",
+                    "LETTER_LONG_PRESS key='" + hk.key.lower + "' → dispatch");
             listener.onKey(LETTER_LONG_PRESS_TRIGGER, hk.key.lower);
         };
         repeatHandler.postDelayed(letterLongPressRunnable, delayMs);

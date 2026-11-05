@@ -30,14 +30,36 @@ public class BasicImeService extends InputMethodService
     private int videoHeight = 0;
     private int keyboardHeightPx = 0;
     private int keyboardWidthPx = 0;
-    private static final int PAGE_LETTERS  = 0;
-    private static final int PAGE_NUMERIC  = 4;
+
+    private static final int PAGE_LETTERS = 0;
+    private static final int PAGE_NUMERIC = 4;
+
     private int savedVideoPositionMs = 0;
     private String savedVideoPath = null;
 
     @Override
     public void closePanel() {
-        if (keyboardView != null) setInputView(keyboardView);
+        showKeyboardPanel();
+    }
+
+    private void showKeyboardPanel() {
+        if (rootContainer == null || keyboardView == null) return;
+        if (keyboardView.getParent() == rootContainer
+                && rootContainer.getChildCount() == 1) {
+            return;
+        }
+        rootContainer.removeAllViews();
+
+        FrameLayout.LayoutParams kbLp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT);
+        kbLp.gravity = Gravity.BOTTOM;
+        rootContainer.addView(keyboardView, kbLp);
+
+        rebuildWallpaperLayers();
+        keyboardView.bringToFront();
+        keyboardView.requestLayout();
+        keyboardView.invalidate();
     }
 
     @Override
@@ -69,10 +91,7 @@ public class BasicImeService extends InputMethodService
         new Thread(() -> {
             try {
                 EmojiGridCache.get(this).warm();
-            } catch (Throwable t) {
-                android.util.Log.e("EmojiGridCache", "warm failed", t);
-            }
-            
+            } catch (Throwable ignored) { }
             try {
                 ClipboardManager cm = (ClipboardManager)
                         getSystemService(CLIPBOARD_SERVICE);
@@ -93,13 +112,13 @@ public class BasicImeService extends InputMethodService
         rootContainer = new FrameLayout(this);
 
         keyboardView = new BasicKeyboardView(this);
-        bubbleOverlay = new KeyBubbleOverlay(this);      // ← no anchor arg
+        bubbleOverlay = new KeyBubbleOverlay(this);
         keyboardView.setBubbleOverlay(bubbleOverlay);
         keyboardView.setListener(buildListener());
 
         FrameLayout.LayoutParams kbLp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
+                ViewGroup.LayoutParams.MATCH_PARENT);
         kbLp.gravity = Gravity.BOTTOM;
         rootContainer.addView(keyboardView, kbLp);
 
@@ -112,6 +131,7 @@ public class BasicImeService extends InputMethodService
         applyWallpaperWindowSettings();
         return rootContainer;
     }
+
     private void measureKeyboard() {
         if (keyboardView == null) return;
         int w = keyboardView.getWidth();
@@ -274,8 +294,7 @@ public class BasicImeService extends InputMethodService
             });
             mediaPlayer.prepareAsync();
             currentVideoPath = path;
-        } catch (Exception e) {
-            android.util.Log.e("BasicImeService", "video start failed", e);
+        } catch (Exception ignored) {
             releaseVideoKeepPosition();
         }
     }
@@ -299,18 +318,62 @@ public class BasicImeService extends InputMethodService
     }
 
     private void showEmojiPanel() {
+        if (rootContainer == null) return;
         if (emojiPanel == null) {
             emojiPanel = new EmojiPaletteView(this, this);
         }
-        setInputView(emojiPanel);
+        rootContainer.removeAllViews();
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.gravity = Gravity.BOTTOM;
+        rootContainer.addView(emojiPanel, lp);
+        emojiPanel.requestLayout();
+    }
+
+    private void showClipboardPanel() {
+        if (rootContainer == null) return;
+        ClipboardStore.get(this).capture(this);
+        clipboardPanel = new ClipboardPanelView(this, new ClipboardPanelView.ClipboardPickListener() {
+            @Override
+            public void onClipPicked(ClipEntry entry) {
+                pasteClip(entry);
+                closeClipboardPanel();
+            }
+
+            @Override
+            public void onClipClosed() {
+                closeClipboardPanel();
+            }
+        });
+        rootContainer.removeAllViews();
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.gravity = Gravity.BOTTOM;
+        rootContainer.addView(clipboardPanel, lp);
+        clipboardPanel.requestLayout();
+    }
+
+    private void closeClipboardPanel() {
+        clipboardPanel = null;
+        showKeyboardPanel();
     }
 
     private void runAction(KeyAction a) {
         if (a == null) return;
+
+        KeyAction fresh = GestureActionStore.get(this).byId(a.id);
+        if (fresh != null) a = fresh;
+
         if (a.type == KeyAction.TYPE_TEXT) {
             InputConnection ic = getCurrentInputConnection();
-            if (ic != null) ic.commitText(a.payload, 1);
-        } else if (a.type == KeyAction.TYPE_APP_LAUNCH) {
+            if (ic == null) return;
+            ic.commitText(a.payload, 1);
+            return;
+        }
+
+        if (a.type == KeyAction.TYPE_APP_LAUNCH) {
             try {
                 android.content.Intent launch = getPackageManager()
                         .getLaunchIntentForPackage(a.payload);
@@ -318,6 +381,19 @@ public class BasicImeService extends InputMethodService
                     launch.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
                     startActivity(launch);
                 }
+            } catch (Exception ignored) { }
+            return;
+        }
+
+        if (a.type == KeyAction.TYPE_LAUNCH_ACTIVITY) {
+            try {
+                android.content.ComponentName cn =
+                        android.content.ComponentName.unflattenFromString(a.payload);
+                if (cn == null) return;
+                android.content.Intent i = new android.content.Intent();
+                i.setComponent(cn);
+                i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(i);
             } catch (Exception ignored) { }
         }
     }
@@ -348,7 +424,7 @@ public class BasicImeService extends InputMethodService
                 return;
             case BasicKey.CODE_ENTER:
                 ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER));
-                ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER));
+                ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_ENTER));
                 return;
             case BasicKey.CODE_SPACE:
                 ic.commitText(" ", 1);
@@ -358,11 +434,11 @@ public class BasicImeService extends InputMethodService
                 return;
             case BasicKey.CODE_LEFT:
                 ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT));
-                ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_LEFT));
+                ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_DPAD_LEFT));
                 return;
             case BasicKey.CODE_RIGHT:
                 ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT));
-                ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_RIGHT));
+                ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_DPAD_RIGHT));
                 return;
         }
 
@@ -380,12 +456,8 @@ public class BasicImeService extends InputMethodService
 
     private BasicKeyboardView.Listener buildListener() {
         return new BasicKeyboardView.Listener() {
-            @Override
             public void onKey(int code, String text) {
-                if (code == BasicKeyboardView.EMOJI_PANEL_TRIGGER) {
-                    showEmojiPanel();
-                    return;
-                }
+                if (code == BasicKeyboardView.EMOJI_PANEL_TRIGGER) { showEmojiPanel(); return; }
                 if (code == BasicKeyboardView.GESTURE_EDITOR_TRIGGER) {
                     GestureActionEditorActivity.open(BasicImeService.this);
                     return;
@@ -401,31 +473,10 @@ public class BasicImeService extends InputMethodService
                     if (a != null) runAction(a);
                     return;
                 }
-                if (code == BasicKeyboardView.CLIPBOARD_TRIGGER) {
-                    showClipboardPanel();
-                    return;
-                }
+                if (code == BasicKeyboardView.CLIPBOARD_TRIGGER) { showClipboardPanel(); return; }
                 handleKey(code, text);
             }
         };
-    }
-
-
-    private void showClipboardPanel() {
-        ClipboardStore.get(this).capture(this);
-        clipboardPanel = new ClipboardPanelView(this, new ClipboardPanelView.ClipboardPickListener() {
-            @Override
-            public void onClipPicked(ClipEntry entry) {
-                pasteClip(entry);
-                closeClipboardPanel();
-            }
-
-            @Override
-            public void onClipClosed() {
-                closeClipboardPanel();
-            }
-        });
-        setInputView(clipboardPanel);
     }
 
     private void pasteClip(ClipEntry e) {
@@ -456,13 +507,6 @@ public class BasicImeService extends InputMethodService
         } catch (Throwable ignored) { }
     }
 
-
-    private void closeClipboardPanel() {
-        clipboardPanel = null;
-        if (keyboardView != null) setInputView(keyboardView);
-    }
-
-
     @Override
     public void onStartInputView(EditorInfo info, boolean restarting) {
         super.onStartInputView(info, restarting);
@@ -479,15 +523,14 @@ public class BasicImeService extends InputMethodService
             applyKeyboardFrameLock();
             rebuildWallpaperLayers();
             keyboardView.refreshWallpaper();
+            showKeyboardPanel();
         }
 
         clipboardPanel = null;
         emojiPanel = null;
-        if (keyboardView != null) setInputView(keyboardView);
-
-        // ★ NEW: pick the layout based on what the target field needs
         applyEditorInputType(info);
     }
+
     @Override
     public void onStartInput(EditorInfo attribute, boolean restarting) {
         super.onStartInput(attribute, restarting);
@@ -499,6 +542,7 @@ public class BasicImeService extends InputMethodService
         if (keyboardView != null) keyboardView.refreshWallpaper();
         applyEditorInputType(attribute);
     }
+
     @Override
     public void onWindowShown() {
         super.onWindowShown();
@@ -525,7 +569,6 @@ public class BasicImeService extends InputMethodService
         int cls  = type & android.text.InputType.TYPE_MASK_CLASS;
         int vari = type & android.text.InputType.TYPE_MASK_VARIATION;
 
-        // Determine mode
         boolean num = (cls == android.text.InputType.TYPE_CLASS_NUMBER)
                 || (cls == android.text.InputType.TYPE_CLASS_PHONE)
                 || (cls == android.text.InputType.TYPE_CLASS_DATETIME);
@@ -555,6 +598,8 @@ public class BasicImeService extends InputMethodService
             bubbleOverlay = null;
         }
         releaseVideoKeepPosition();
+        rootContainer = null;
+        keyboardView = null;
         super.onDestroy();
     }
 
