@@ -447,6 +447,9 @@ public class BasicImeService extends InputMethodService
             case BasicKey.CODE_SYM_PAGE_4:
                 setPage(3);
                 return;
+            case BasicKey.CODE_NUMERIC:
+                setPage(4);
+                return;  
             case BasicKey.CODE_ABC:
                 setPage(0);
                 return;

@@ -784,7 +784,6 @@ public class BasicKeyboardView extends View {
 
     private void dispatch(BasicKey key) {
         if (listener == null) return;
-
         if (key.code == BasicKey.CODE_SHIFT
                 || key.code == BasicKey.CODE_DELETE
                 || key.code == BasicKey.CODE_ENTER
@@ -797,11 +796,11 @@ public class BasicKeyboardView extends View {
                 || key.code == BasicKey.CODE_SYM_PAGE_2
                 || key.code == BasicKey.CODE_SYM_PAGE_3
                 || key.code == BasicKey.CODE_SYM_PAGE_4
+                || key.code == BasicKey.CODE_NUMERIC
                 || key.code == BasicKey.CODE_ABC) {
             listener.onKey(key.code, null);
             return;
         }
-
         // ★ Use BOTH flags so caps-lock uppercases the very first character
         String text = key.commitText(shifted || shiftLocked);
         listener.onKey(key.code, text);

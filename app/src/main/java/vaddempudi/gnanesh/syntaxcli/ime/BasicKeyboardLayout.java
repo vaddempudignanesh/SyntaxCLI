@@ -11,6 +11,8 @@ public final class BasicKeyboardLayout {
     public final List<BasicKey[]> symbolPage3;
     public final List<BasicKey[]> numericPage;
 
+    public static final int CODE_NUMERIC    = -14;
+
     public BasicKeyboardLayout() {
         letterRows = new ArrayList<>();
         symbolPage1 = new ArrayList<>();
@@ -92,10 +94,9 @@ public final class BasicKeyboardLayout {
                 new BasicKey(BasicKey.CODE_DELETE, null, null, "\u232B", 1.66f)
         });
 
-        // Row 4 — ABC, comma, space, period, ENTER
         symbolPage1.add(new BasicKey[] {
                 new BasicKey(BasicKey.CODE_ABC, null, null, "ABC", 1.5f),
-                sym(","),
+                new BasicKey(BasicKey.CODE_NUMERIC, null, null, "123", 1.5f),   // ← replaces sym(",")
                 new BasicKey(BasicKey.CODE_SPACE, null, null, "space", 4f),
                 sym("."),
                 new BasicKey(BasicKey.CODE_ENTER, null, null, "\u23CE", 1.5f)

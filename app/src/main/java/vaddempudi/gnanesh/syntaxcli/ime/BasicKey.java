@@ -16,7 +16,7 @@ public final class BasicKey {
     public static final int CODE_SYM_PAGE_3 = -11;
     public static final int CODE_SYM_PAGE_4 = -12;
     public static final int CODE_ABC        = -13;
-
+    public static final int CODE_NUMERIC    = -14;
     public final int code;
     public final String lower;
     public final String upper;
