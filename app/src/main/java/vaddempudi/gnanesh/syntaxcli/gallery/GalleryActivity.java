@@ -376,6 +376,13 @@ public class GalleryActivity extends AppCompatActivity {
                         updateTopNavBar();
                         updateBarsVisibility();
                     }
+                    @Override public void onAlbumMediaClicked(String path) {
+                        if (!isActivityAlive() || path == null) return;
+                        List<GalleryMediaItem> albumItems = albumsController != null
+                                ? albumsController.getOpenAlbumItems()
+                                : null;
+                        openFullscreenViewerWithItems(path, albumItems);
+                    }
                 },
                 loader, albumAdapter);
     }
@@ -399,6 +406,81 @@ public class GalleryActivity extends AppCompatActivity {
         return repositoryAtEnd;
     }
 
+
+    /**
+     * Same as openFullscreenViewer(path) but sources the pager list from the
+     * supplied items instead of screenAdapter. Used when the tap originates
+     * inside an opened album, so swipe-left/right walks the album, not the
+     * main gallery. Falls back to the normal path if items is null/empty.
+     */
+    private void openFullscreenViewerWithItems(String path, List<GalleryMediaItem> items) {
+        if (items == null || items.isEmpty()) {
+            openFullscreenViewer(path);
+            return;
+        }
+
+        // Save grid scroll so back returns to the same row.
+        GridLayoutManager glm = (GridLayoutManager) recyclerView.getLayoutManager();
+        savedGridScrollPosition = glm != null ? glm.findFirstVisibleItemPosition() : -1;
+
+        fullscreenMediaPaths.clear();
+        int currentIndex = -1;
+        for (GalleryMediaItem it : items) {
+            if (it == null || it.path == null) continue;
+            if (it.isTrashed) continue;
+            if (it.path.equals(path)) currentIndex = fullscreenMediaPaths.size();
+            fullscreenMediaPaths.add(it.path);
+        }
+        if (currentIndex < 0) {
+            fullscreenMediaPaths.add(0, path);
+            currentIndex = 0;
+        }
+        if (fullscreenMediaPaths.isEmpty()) {
+            Toast.makeText(this, "No media to view", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        fullscreenCurrentPosition = currentIndex;
+        currentFullscreenVideo = null;
+        currentFullscreenVideoPosition = -1;
+        currentFullscreenPageIsVideo = false;
+        isOverlayVideoPlaying = false;
+        overlayControlsVisible = false;
+        overlayPendingSeekMs = -1;
+
+        fullscreenAdapter.notifyDataSetChanged();
+        fullscreenViewPager.setCurrentItem(currentIndex, false);
+
+        fullscreenOverlay.setVisibility(View.VISIBLE);
+        fullscreenOverlay.bringToFront();
+
+        View topNav = findViewById(R.id.topNavBar);
+        if (topNav != null) topNav.setVisibility(View.GONE);
+        View selTop = findViewById(R.id.selectionTopBar);
+        if (selTop != null) selTop.setVisibility(View.GONE);
+
+        updateFullscreenInfo(currentIndex);
+        setFullscreenChromeVisible(true);
+
+        if (videoControlContainer != null) {
+            String initialPath = fullscreenMediaPaths.get(currentIndex);
+            if (isVideoPath(initialPath)) {
+                videoControlContainer.setVisibility(View.VISIBLE);
+                overlayControlsVisible = true;
+            } else {
+                videoControlContainer.setVisibility(View.GONE);
+                overlayControlsVisible = false;
+            }
+        }
+        videoHandler.removeCallbacks(overlayHideControlsRunnable);
+        bottomBar.setVisibility(View.GONE);
+
+        String initialPath = fullscreenMediaPaths.get(currentIndex);
+        if (isVideoPath(initialPath)) {
+            int finalIndex = currentIndex;
+            fullscreenViewPager.post(() -> findAndStartVideoForPosition(finalIndex));
+        }
+    }
 
 
     private final GalleryRepository.Listener repositoryListener =
@@ -3153,6 +3235,7 @@ public class GalleryActivity extends AppCompatActivity {
         pendingMediaRefresh = () -> {
             albumsCacheValid = false;
             trashedIndexDirty = true;
+            if (albumsController != null) albumsController.invalidateAlbums();
             if (repository != null) {
                 repository.refreshFirstPage();
             }

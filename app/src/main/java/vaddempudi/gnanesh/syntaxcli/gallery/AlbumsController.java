@@ -23,6 +23,7 @@ final class AlbumsController {
         View findView(int id);
         void onAlbumOpened(AlbumRecord album);
         void onAlbumClosed();
+        void onAlbumMediaClicked(String path);
     }
 
     private final AtomicLong generation = new AtomicLong(0);
@@ -37,6 +38,8 @@ final class AlbumsController {
     private final ProgressBar spinner;
     private final TextView title;
     private final View empty;
+
+    private List<AlbumRecord> cachedAlbums = null;
 
     private boolean showingAlbums = false;
     private AlbumRecord openAlbum = null;
@@ -75,7 +78,6 @@ final class AlbumsController {
         showingAlbums = true;
         openAlbum = null;
 
-        // Detach any album-media adapter synchronously so no stale VH survives.
         if (mediaRecycler != null) {
             mediaRecycler.setAdapter(null);
             mediaRecycler.setVisibility(View.GONE);
@@ -85,6 +87,24 @@ final class AlbumsController {
         if (title != null) title.setText("Albums");
         if (albumRecycler != null) albumRecycler.setVisibility(View.GONE);
         if (empty != null) empty.setVisibility(View.GONE);
+
+        // Fast path: we already have the album list from a previous scan.
+        // Re-render it synchronously — no MediaStore query, no spinner.
+        if (cachedAlbums != null) {
+            albumAdapter.submit(cachedAlbums);
+            if (spinner != null) spinner.setVisibility(View.GONE);
+            if (albumRecycler != null) {
+                albumRecycler.setVisibility(cachedAlbums.isEmpty() ? View.GONE : View.VISIBLE);
+            }
+            if (empty != null) {
+                empty.setVisibility(cachedAlbums.isEmpty() ? View.VISIBLE : View.GONE);
+                TextView et = (TextView) host.findView(R.id.emptyStateText);
+                if (et != null) et.setText("No albums");
+            }
+            return;
+        }
+
+        // Slow path: first time only (or after invalidateAlbums()).
         if (spinner != null) spinner.setVisibility(View.VISIBLE);
 
         final long gen = generation.incrementAndGet();
@@ -93,6 +113,8 @@ final class AlbumsController {
             main.post(() -> {
                 if (gen != generation.get()) return;
                 if (!showingAlbums || openAlbum != null) return;
+
+                cachedAlbums = albums;
 
                 albumAdapter.submit(albums);
                 if (spinner != null) spinner.setVisibility(View.GONE);
@@ -108,6 +130,11 @@ final class AlbumsController {
         });
     }
 
+
+    void invalidateAlbums() {
+        cachedAlbums = null;
+    }
+
     // ── Open a single album ───────────────────────────────────────
 
     void openAlbum(AlbumRecord album) {
@@ -121,18 +148,14 @@ final class AlbumsController {
         if (empty != null) empty.setVisibility(View.GONE);
         if (spinner != null) spinner.setVisibility(View.VISIBLE);
 
-        // ── THE FIX ───────────────────────────────────────────────
-        // Install a *fresh* adapter instance. setAdapter() synchronously
-        // detaches every ViewHolder bound to the previously open album,
-        // so the old album's thumbnails cannot leak into this one.
         final AlbumMediaAdapter freshAdapter = new AlbumMediaAdapter(
                 mediaRecycler.getContext(),
                 new AlbumMediaAdapter.Listener() {
                     @Override public void onImageClick(String path) {
-                        // The activity will wire this up via the Host if needed.
+                        if (host != null) host.onAlbumMediaClicked(path);
                     }
                     @Override public void onVideoClick(String path) {
-                        // The activity will wire this up via the Host if needed.
+                        if (host != null) host.onAlbumMediaClicked(path);
                     }
                 });
         currentAlbumAdapter = freshAdapter;
@@ -166,8 +189,10 @@ final class AlbumsController {
         });
     }
 
-    // ── Back navigation ───────────────────────────────────────────
-
+    List<GalleryMediaItem> getOpenAlbumItems() {
+        if (currentAlbumAdapter == null) return java.util.Collections.emptyList();
+        return currentAlbumAdapter.getItems();
+    }
     boolean onBack() {
         if (openAlbum != null) { closeAlbum(); return true; }
         if (showingAlbums) { closeAlbumList(); return true; }
