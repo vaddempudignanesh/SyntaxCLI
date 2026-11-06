@@ -79,13 +79,31 @@ public final class SecureWebViewLayer {
 
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                return handleNavigation(view, request.getUrl(),
+                Uri uri = request.getUrl();
+                if (uri != null) {
+                    String s = uri.getScheme();
+                    if (s != null) {
+                        s = s.toLowerCase(Locale.US);
+                        if (s.equals("blob") || s.equals("data") || s.equals("file")) {
+                            // Hand back to the WebView so DownloadListener fires.
+                            return false;
+                        }
+                    }
+                }
+                return handleNavigation(view, uri,
                         request.hasGesture(), request.isForMainFrame(), hostTracker);
             }
 
             @Override
             @SuppressWarnings("deprecation")
             public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                if (url != null) {
+                    String lower = url.toLowerCase(Locale.US);
+                    if (lower.startsWith("blob:") || lower.startsWith("data:")
+                            || lower.startsWith("file:")) {
+                        return false;
+                    }
+                }
                 return handleNavigation(view, Uri.parse(url),
                         true, true, hostTracker);
             }

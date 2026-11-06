@@ -362,12 +362,28 @@
             android:name=".browser.AuraBrowserActivity"
             android:label="@string/browser_label"
             android:theme="@style/Theme.Transparent"
-            android:exported="false"
-            android:launchMode="standard"
+            android:exported="true"
+            android:launchMode="singleTop"
             android:taskAffinity="ohi.andre.consolelauncher.browser"
             android:documentLaunchMode="intoExisting"
-            android:configChanges="orientation|screenSize|keyboardHidden|keyboard|navigation"
-            android:windowSoftInputMode="adjustResize" />
+            android:configChanges="orientation|screenSize|keyboardHidden|keyboard|navigation|uiMode|density|smallestScreenSize|screenLayout"
+            android:windowSoftInputMode="adjustResize">
+
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="http" />
+                <data android:scheme="https" />
+            </intent-filter>
+
+            <intent-filter>
+                <action android:name="android.intent.action.WEB_SEARCH" />
+                <category android:name="android.intent.category.DEFAULT" />
+               />
+            </intent-filter>
+
+        </activity>
 
         <activity
             android:name=".filemanager.FileManagerActivity"

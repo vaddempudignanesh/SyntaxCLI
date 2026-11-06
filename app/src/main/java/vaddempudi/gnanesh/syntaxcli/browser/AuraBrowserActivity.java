@@ -4,6 +4,7 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.Dialog;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
@@ -87,6 +88,8 @@ public class AuraBrowserActivity extends AppCompatActivity {
     private static final int REQ_DEFAULT_BROWSER       = 4200;
 
     private volatile boolean pendingUserLoad = false;
+
+    private ImageButton btnNewTab;
 
     private LinearLayout topBar;
     private LinearLayout footerBar;
@@ -331,6 +334,7 @@ public class AuraBrowserActivity extends AppCompatActivity {
         btnIncognito     = findViewById(R.id.aura_btn_incognito);
         btnDownloads     = findViewById(R.id.aura_btn_downloads);
         tabCountView     = findViewById(R.id.aura_tab_count);
+        btnNewTab = findViewById(R.id.aura_btn_new_tab);
         android.content.SharedPreferences prefs =
                 getSharedPreferences(PREFS_BROWSER, MODE_PRIVATE);
         forceDark = prefs.getBoolean(PREF_DARK, true);
@@ -363,6 +367,9 @@ public class AuraBrowserActivity extends AppCompatActivity {
             }
         });
 
+        btnNewTab.setOnClickListener(v -> {
+            newTab(null, false);
+        });
         btnBack.setOnClickListener(v -> {
             Tab t = currentTab();
             if (t != null && t.webView.canGoBack()) t.webView.goBack();
@@ -1160,20 +1167,39 @@ public class AuraBrowserActivity extends AppCompatActivity {
 
         final Dialog dialog = new Dialog(this);
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
-        dialog.setCancelable(true);
+        dialog.setCancelable(false);
+        dialog.setCanceledOnTouchOutside(false);
 
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(0xFF0A0A0A);
+        FrameLayout backdrop = new FrameLayout(this);
+        backdrop.setLayoutParams(new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        backdrop.setBackgroundColor(0x88000000);
+        backdrop.setOnClickListener(v -> dialog.dismiss());
+
+        LinearLayout sheet = new LinearLayout(this);
+        sheet.setOrientation(LinearLayout.VERTICAL);
+        sheet.setBackgroundColor(0xFF0A0A0A);
         int pad = dp(8);
-        root.setPadding(pad, pad, pad, pad);
+        sheet.setPadding(pad, pad, pad, pad);
+        sheet.setClickable(true);
+
+        FrameLayout.LayoutParams sheetLp = new FrameLayout.LayoutParams(
+                (int) (getResources().getDisplayMetrics().widthPixels * 0.95),
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        sheetLp.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
+        sheetLp.bottomMargin = footerBar.getHeight() + dp(4);
+        sheet.setLayoutParams(sheetLp);
+
+        backdrop.addView(sheet);
+        dialog.setContentView(backdrop);
 
         TextView title = new TextView(this);
         title.setText("Tabs");
         title.setTextColor(0xFF33FF33);
         title.setTextSize(14);
         title.setPadding(dp(6), dp(4), dp(6), dp(6));
-        root.addView(title);
+        sheet.addView(title);
 
         ScrollView scroll = new ScrollView(this);
         scroll.setLayoutParams(new LinearLayout.LayoutParams(
@@ -1184,17 +1210,26 @@ public class AuraBrowserActivity extends AppCompatActivity {
 
         for (int i = 0; i < tabs.size(); i++) {
             final int idx = i;
-            Tab t = tabs.get(i);
+            final Tab t = tabs.get(i);
 
             LinearLayout row = new LinearLayout(this);
             row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setPadding(dp(8), dp(10), dp(8), dp(10));
             row.setGravity(Gravity.CENTER_VERTICAL);
             LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
             rowLp.setMargins(0, dp(2), 0, dp(2));
             row.setLayoutParams(rowLp);
             row.setBackgroundColor(i == currentTabIndex ? 0xFF1A3A1A : 0xFF111111);
+
+            LinearLayout tapArea = new LinearLayout(this);
+            tapArea.setOrientation(LinearLayout.HORIZONTAL);
+            tapArea.setGravity(Gravity.CENTER_VERTICAL);
+            tapArea.setPadding(dp(8), dp(10), dp(4), dp(10));
+            tapArea.setLayoutParams(new LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            tapArea.setClickable(true);
+            tapArea.setFocusable(true);
 
             ImageView icon = new ImageView(this);
             icon.setImageResource(t.incognito
@@ -1204,7 +1239,7 @@ public class AuraBrowserActivity extends AppCompatActivity {
             LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(dp(20), dp(20));
             iconLp.setMarginEnd(dp(8));
             icon.setLayoutParams(iconLp);
-            row.addView(icon);
+            tapArea.addView(icon);
 
             TextView tv = new TextView(this);
             String tt = t.webView.getTitle();
@@ -1215,63 +1250,58 @@ public class AuraBrowserActivity extends AppCompatActivity {
             tv.setTextSize(13);
             tv.setMaxLines(1);
             tv.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            tv.setLayoutParams(new LinearLayout.LayoutParams(0,
-                    ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-            row.addView(tv);
+            tv.setLayoutParams(new LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            tapArea.addView(tv);
+            row.addView(tapArea);
 
             ImageButton close = new ImageButton(this);
             close.setImageResource(android.R.drawable.ic_menu_close_clear_cancel);
             close.setColorFilter(0xFFFF6666);
             close.setBackground(null);
-            close.setPadding(dp(2), dp(2), dp(2), dp(2));
-            close.setLayoutParams(new LinearLayout.LayoutParams(dp(28), dp(28)));
-            close.setOnClickListener(v -> {
-                dialog.dismiss();
-                closeTab(idx);
-            });
+            close.setPadding(0, 0, 0, 0);
+            close.setScaleType(ImageView.ScaleType.CENTER);
+            close.setLayoutParams(new LinearLayout.LayoutParams(dp(44), dp(44)));
             row.addView(close);
 
-            row.setOnClickListener(v -> {
-                switchToTab(idx);
+            final Tab tabSnapshot = t;
+
+            tapArea.setOnClickListener(v -> {
+                int live = tabs.indexOf(tabSnapshot);
+                if (live < 0) return;
+                switchToTab(live);
                 dialog.dismiss();
+                showTabSheet();
+            });
+
+            close.setOnClickListener(v -> {
+                int live = tabs.indexOf(tabSnapshot);
+                if (live < 0) return;
+                closeTab(live);
+                dialog.dismiss();
+                if (!tabs.isEmpty()) showTabSheet();
             });
 
             list.addView(row);
         }
 
-        root.addView(scroll);
+        sheet.addView(scroll);
 
-        TextView plus = new TextView(this);
-        plus.setText("+   New Tab");
-        plus.setTextColor(0xFF33FF33);
-        plus.setTextSize(14);
-        plus.setGravity(Gravity.CENTER);
-        plus.setPadding(dp(8), dp(12), dp(8), dp(12));
-        LinearLayout.LayoutParams plusLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        plusLp.setMargins(0, dp(6), 0, 0);
-        plus.setLayoutParams(plusLp);
-        plus.setBackgroundColor(0xFF111111);
-        plus.setOnClickListener(v -> {
-            newTab(null, false);
-            dialog.dismiss();
+        dialog.setOnKeyListener((d, keyCode, event) -> {
+            if (keyCode == KeyEvent.KEYCODE_BACK
+                    && event.getAction() == KeyEvent.ACTION_UP) {
+                dialog.dismiss();
+                return true;
+            }
+            return false;
         });
-        root.addView(plus);
-
-        dialog.setContentView(root);
 
         Window w = dialog.getWindow();
         if (w != null) {
             w.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-            w.setLayout(
-                    (int) (getResources().getDisplayMetrics().widthPixels * 0.95),
-                    ViewGroup.LayoutParams.WRAP_CONTENT);
-            w.setGravity(Gravity.BOTTOM);
-            w.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
-            WindowManager.LayoutParams lp = w.getAttributes();
-            lp.dimAmount = 0.5f;
-            lp.y = footerBar.getHeight() + dp(4);
-            w.setAttributes(lp);
+            w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT);
+            w.setGravity(Gravity.FILL);
         }
 
         dialog.show();
@@ -1321,6 +1351,8 @@ public class AuraBrowserActivity extends AppCompatActivity {
             try {
                 WebViewCompat.addDocumentStartJavaScript(
                         wv, DARKREADER_BOOTSTRAP, Collections.singleton("*"));
+                WebViewCompat.addDocumentStartJavaScript(
+                        wv, DOWNLOAD_HOOK_JS, Collections.singleton("*"));
             } catch (Throwable t) {
                 Log.w("AURA-DARK", "addDocumentStartJavaScript failed", t);
             }
@@ -1448,17 +1480,28 @@ public class AuraBrowserActivity extends AppCompatActivity {
 
         if (t.incognito) deleteIncognitoProfile(t.profileName);
 
+        boolean wasCurrent = (index == currentTabIndex);
+
         tabs.remove(index);
 
-        if (tabs.isEmpty()) { finish(); return; }
+        if (tabs.isEmpty()) {
+            updateTabCountBadge();
+            persistTabs();
+            finish();
+            return;
+        }
 
-        if (currentTabIndex >= tabs.size()) currentTabIndex = tabs.size() - 1;
-        switchToTab(currentTabIndex);
+        if (wasCurrent || currentTabIndex >= tabs.size()) {
+            currentTabIndex = Math.min(index, tabs.size() - 1);
+            switchToTab(currentTabIndex);
+        }
+
         updateTabCountBadge();
         persistTabs();
     }
 
     private void updateTabCountBadge() {
+        if (tabCountView == null) return;
         tabCountView.setText(String.valueOf(tabs.size()));
     }
 
@@ -1658,6 +1701,52 @@ public class AuraBrowserActivity extends AppCompatActivity {
         dlg.show();
     }
 
+    private static final String DOWNLOAD_HOOK_JS =
+            "(function(){" +
+                    "  if(window.__auraDlHook)return;window.__auraDlHook=1;" +
+                    "  function streamBlob(url, name){" +
+                    "    var B=window.__AuraBlobBridge; if(!B) return;" +
+                    "    var gid = 'b'+Date.now()+Math.floor(Math.random()*100000);" +
+                    "    var xhr=new XMLHttpRequest();" +
+                    "    xhr.open('GET',url,true);" +
+                    "    xhr.responseType='blob';" +
+                    "    xhr.onload=function(){" +
+                    "      if(xhr.status!==200&&xhr.status!==0){B.error(gid,'HTTP '+xhr.status);return;}" +
+                    "      var blob=xhr.response;" +
+                    "      if(!blob){B.error(gid,'no blob');return;}" +
+                    "      B.start(gid,name,blob.size);" +
+                    "      var CHUNK=256*1024;var off=0;" +
+                    "      function next(){" +
+                    "        if(off>=blob.size){B.finish(gid);return;}" +
+                    "        var end=Math.min(off+CHUNK,blob.size);" +
+                    "        var slice=blob.slice(off,end);" +
+                    "        var r=new FileReader();" +
+                    "        r.onload=function(){" +
+                    "          var s=r.result;var comma=s.indexOf(',');" +
+                    "          B.chunk(gid,s.substring(comma+1));" +
+                    "          off=end;next();" +
+                    "        };" +
+                    "        r.onerror=function(){B.error(gid,'read failed');};" +
+                    "        r.readAsDataURL(slice);" +
+                    "      }" +
+                    "      next();" +
+                    "    };" +
+                    "    xhr.onerror=function(){B.error(gid,'xhr failed');};" +
+                    "    try{xhr.send();}catch(e){B.error(gid,String(e));}" +
+                    "  }" +
+                    "  document.addEventListener('click',function(ev){" +
+                    "    var el=ev.target;" +
+                    "    while(el&&el.tagName!=='A')el=el.parentElement;" +
+                    "    if(!el)return;" +
+                    "    if(!el.hasAttribute('download'))return;" +
+                    "    var href=el.getAttribute('href')||el.href;" +
+                    "    if(!href)return;" +
+                    "    if(href.indexOf('blob:')!==0 && href.indexOf('data:')!==0)return;" +
+                    "    ev.preventDefault();" +
+                    "    streamBlob(href, el.getAttribute('download')||'download');" +
+                    "  },true);" +
+                    "})();";
+
 
 
     private void startBlobDownload(String blobUrl, String contentDisposition,
@@ -1680,51 +1769,39 @@ public class AuraBrowserActivity extends AppCompatActivity {
                         "var name=" + jsStringLiteral(fileName) + ";" +
                         "var url=" + jsStringLiteral(blobUrl) + ";" +
                         "var B=window.__AuraBlobBridge;" +
-                        "if(!B){try{console.error('AuraBlobBridge missing');}catch(e){}return;}" +
-                        "fetch(url).then(function(r){" +
-                        "if(!r.ok)throw new Error('HTTP '+r.status);" +
-                        "var total=parseInt(r.headers.get('Content-Length')||'0',10);" +
-                        "if(!total||total<=0)total=0;" +
-                        "B.start(gid,name,total);" +
-                        "var reader=r.body.getReader();" +
-                        "var buf=[];" +
-                        "var bufLen=0;" +
-                        "function flush(){" +
-                        "if(bufLen===0)return;" +
-                        "var tmp=new Uint8Array(bufLen);" +
-                        "var off=0;" +
-                        "for(var i=0;i<buf.length;i++){tmp.set(buf[i],off);off+=buf[i].length;}" +
-                        "buf=[];bufLen=0;" +
-                        "var bin='';" +
-                        "for(var j=0;j<tmp.length;j++)bin+=String.fromCharCode(tmp[j]);" +
-                        "B.chunk(gid,btoa(bin));" +
-                        "}" +
-                        "function pump(){" +
-                        "return reader.read().then(function(res){" +
-                        "if(res.done){" +
-                        "flush();" +
-                        "B.finish(gid);" +
-                        "return;" +
-                        "}" +
-                        "buf.push(res.value);" +
-                        "bufLen+=res.value.length;" +
-                        "if(bufLen>=256*1024)flush();" +
-                        "return pump();" +
-                        "});" +
-                        "}" +
-                        "return pump();" +
-                        "}).catch(function(e){" +
-                        "try{console.error('blob fetch failed: '+e);}catch(_){}" +
-                        "B.error(gid,String(e&&e.message?e.message:e));" +
-                        "});" +
+                        "if(!B){return;}" +
+                        "var xhr=new XMLHttpRequest();" +
+                        "xhr.open('GET',url,true);" +
+                        "xhr.responseType='blob';" +
+                        "xhr.onload=function(){" +
+                        "  if(xhr.status!==200&&xhr.status!==0){B.error(gid,'HTTP '+xhr.status);return;}" +
+                        "  var blob=xhr.response;" +
+                        "  if(!blob){B.error(gid,'no blob');return;}" +
+                        "  B.start(gid,name,blob.size);" +
+                        "  var CHUNK=256*1024;var off=0;" +
+                        "  function next(){" +
+                        "    if(off>=blob.size){B.finish(gid);return;}" +
+                        "    var end=Math.min(off+CHUNK,blob.size);" +
+                        "    var slice=blob.slice(off,end);" +
+                        "    var r=new FileReader();" +
+                        "    r.onload=function(){" +
+                        "      var s=r.result;var comma=s.indexOf(',');" +
+                        "      B.chunk(gid,s.substring(comma+1));off=end;next();" +
+                        "    };" +
+                        "    r.onerror=function(){B.error(gid,'read failed');};" +
+                        "    r.readAsDataURL(slice);" +
+                        "  }" +
+                        "  next();" +
+                        "};" +
+                        // ★ Report the real transport error, not just "xhr failed"
+                        "xhr.onerror=function(){B.error(gid,'blob URL not readable from this frame (blob:null cross-origin)');};" +
+                        "try{xhr.send();}catch(e){B.error(gid,String(e));}" +
                         "})();";
 
         wv.evaluateJavascript(js, null);
-
         runOnUiThread(() -> {
             if (downloadPanelDialog != null && downloadPanelDialog.isShowing()) return;
-            new Handler(Looper.getMainLooper()).postDelayed(
-                    this::showDownloadPanel, 250);
+            new Handler(Looper.getMainLooper()).postDelayed(this::showDownloadPanel, 250);
         });
     }
 
@@ -1838,7 +1915,7 @@ public class AuraBrowserActivity extends AppCompatActivity {
         final String[] lastJson = {""};
 
         Thread pollThread = new Thread(() -> {
-            while (alive[0]) {
+            while (alive[0] && !isDestroyed() && !isFinishing()) {
                 try {
                     JSONArray arr = AuraDownloadHistory.get(this).listAll();
                     final JSONArray snapshot = arr;
@@ -1868,6 +1945,17 @@ public class AuraBrowserActivity extends AppCompatActivity {
         });
         dialog.show();
     }
+
+    private final BroadcastReceiver blobAnchorReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            if (intent == null) return;
+            String href = intent.getStringExtra("href");
+            String name = intent.getStringExtra("name");
+            if (href == null) return;
+            if (name == null || name.isEmpty()) name = "download";
+            startBlobDownloadWithName(href, null, null, name);
+        }
+    };
 
     private static final String EMPTY_TAG = "__aura_empty__";
 
@@ -2896,6 +2984,21 @@ public class AuraBrowserActivity extends AppCompatActivity {
         }
     }
 
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        for (Tab t : tabs) t.webView.onResume();
+
+        try {
+            androidx.localbroadcastmanager.content.LocalBroadcastManager
+                    .getInstance(this)
+                    .registerReceiver(blobAnchorReceiver,
+                            new android.content.IntentFilter(
+                                    "vaddempudi.gnanesh.syntaxcli.AURA_BLOB_START"));
+        } catch (Exception ignored) {}
+    }
+
     @Override
     protected void onPause() {
         super.onPause();
@@ -2910,33 +3013,33 @@ public class AuraBrowserActivity extends AppCompatActivity {
             } catch (Throwable ignored) {}
         }
         persistTabs();
-    }
 
-    @Override
-    protected void onResume() {
-        super.onResume();
-        for (Tab t : tabs) {
-            t.webView.onResume();
-        }
+        try {
+            androidx.localbroadcastmanager.content.LocalBroadcastManager
+                    .getInstance(this)
+                    .unregisterReceiver(blobAnchorReceiver);
+        } catch (Exception ignored) {}
     }
-
     @Override
     protected void onDestroy() {
+        // ★ stop the download-panel poll thread
+        if (downloadPanelDialog != null) {
+            try { downloadPanelDialog.dismiss(); } catch (Exception ignored) {}
+            downloadPanelDialog = null;
+        }
+        urlBarHandler.removeCallbacksAndMessages(null);
+        if (filePathCallback != null) {
+            try { filePathCallback.onReceiveValue(null); } catch (Exception ignored) {}
+            filePathCallback = null;
+        }
         persistTabs();
-
         for (Tab t : tabs) {
-            try {
-                t.webView.loadUrl("about:blank");
-                t.webView.stopLoading();
-                t.webView.setWebChromeClient(null);
-                t.webView.setWebViewClient(null);
-                t.webView.destroy();
-            } catch (Exception ignored) {}
-
-            if (t.incognito) deleteIncognitoProfile(t.profileName);
+            try { t.webView.stopLoading(); } catch (Throwable ignored) {}
+            try { t.webView.setWebChromeClient(null); } catch (Throwable ignored) {}
+            try { t.webView.setWebViewClient(null); } catch (Throwable ignored) {}
+            try { t.webView.destroy(); } catch (Throwable ignored) {}
         }
         tabs.clear();
-
         super.onDestroy();
     }
 
@@ -2954,4 +3057,5 @@ public class AuraBrowserActivity extends AppCompatActivity {
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         ctx.startActivity(i);
     }
+
 }

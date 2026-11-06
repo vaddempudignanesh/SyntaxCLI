@@ -845,5 +845,16 @@ public class AuraDownloadService extends Service {
     }
 
     @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        for (NativeEngine e : ENGINES.values()) e.pause();
+        ENGINES.clear();
+        INFOS.clear();
+        NOTIF_IDS.clear();
+        stopForeground(true);
+        stopSelf();
+        super.onTaskRemoved(rootIntent);
+    }
+
+    @Override
     public IBinder onBind(Intent intent) { return null; }
 }

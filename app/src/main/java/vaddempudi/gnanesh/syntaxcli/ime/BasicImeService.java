@@ -417,25 +417,46 @@ public class BasicImeService extends InputMethodService
             case BasicKey.CODE_SHIFT: {
                 if (keyboardView == null) return;
                 boolean second = keyboardView.registerShiftTap();
-                if (keyboardView.isShiftLocked()) { keyboardView.clearShiftLock(); return; }
-                if (second) { keyboardView.setShiftLocked(true); keyboardView.setShifted(false); return; }
+                if (keyboardView.isShiftLocked()) {
+                    keyboardView.clearShiftLock();
+                    return;
+                }
+                if (second) {
+                    keyboardView.setShiftLocked(true);
+                    keyboardView.setShifted(false);
+                    return;
+                }
                 keyboardView.setShifted(!keyboardView.isShifted());
                 return;
             }
-            case BasicKey.CODE_SYMBOLS:      setPage(1); return;
-            case BasicKey.CODE_SYMBOLS_2:    setPage(2); return;
-            case BasicKey.CODE_SYM_PAGE_1:   setPage(1); return;
-            case BasicKey.CODE_SYM_PAGE_2:   setPage(2); return;
-            case BasicKey.CODE_SYM_PAGE_3:   setPage(3); return;
-            case BasicKey.CODE_SYM_PAGE_4:   setPage(3); return;
-            case BasicKey.CODE_ABC:          setPage(0); return;
+            case BasicKey.CODE_SYMBOLS:
+                setPage(1);
+                return;
+            case BasicKey.CODE_SYMBOLS_2:
+                setPage(2);
+                return;
+            case BasicKey.CODE_SYM_PAGE_1:
+                setPage(1);
+                return;
+            case BasicKey.CODE_SYM_PAGE_2:
+                setPage(2);
+                return;
+            case BasicKey.CODE_SYM_PAGE_3:
+                setPage(3);
+                return;
+            case BasicKey.CODE_SYM_PAGE_4:
+                setPage(3);
+                return;
+            case BasicKey.CODE_ABC:
+                setPage(0);
+                return;
             case BasicKey.CODE_DELETE:
                 ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL));
-                ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_DEL));
+                ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DEL));
                 return;
             case BasicKey.CODE_ENTER:
                 ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER));
-                ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_ENTER));
+                ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER));
                 return;
             case BasicKey.CODE_SPACE:
                 ic.commitText(" ", 1);
@@ -445,22 +466,24 @@ public class BasicImeService extends InputMethodService
                 return;
             case BasicKey.CODE_LEFT:
                 ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT));
-                ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_DPAD_LEFT));
+                ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_LEFT));
                 return;
             case BasicKey.CODE_RIGHT:
                 ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT));
-                ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_DPAD_RIGHT));
+                ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_RIGHT));
                 return;
         }
 
         if (text != null && text.length() > 0) {
             ic.commitText(text, 1);
+
             if (keyboardView != null
                     && !keyboardView.isSymbols()
                     && !keyboardView.isSymbols2()
                     && !keyboardView.isSymbols3()) {
-                if (keyboardView.isShiftLocked()) keyboardView.setShifted(true);
-                else if (keyboardView.isShifted()) keyboardView.clearManualShift();
+                if (!keyboardView.isShiftLocked() && keyboardView.isShifted()) {
+                    keyboardView.clearManualShift();
+                }
             }
         }
     }

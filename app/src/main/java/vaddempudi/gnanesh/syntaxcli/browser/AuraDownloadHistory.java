@@ -92,6 +92,21 @@ public class AuraDownloadHistory {
      * latest data, but we don't thrash storage.
      */
     public void upsert(JSONObject job) {
+
+        if (tasks.size() > 200) {
+            // prune completed oldest
+            java.util.List<Map.Entry<String, JSONObject>> entries =
+                    new java.util.ArrayList<>(tasks.entrySet());
+            entries.sort((a, b) -> Long.compare(
+                    a.getValue().optLong("__seq", 0),
+                    b.getValue().optLong("__seq", 0)));
+            for (int i = 0; i < 50 && i < entries.size(); i++) {
+                JSONObject o = entries.get(i).getValue();
+                if ("complete".equals(o.optString("status"))) {
+                    tasks.remove(entries.get(i).getKey());
+                }
+            }
+        }
         String gid = job.optString("gid");
         if (gid.isEmpty()) return;
 

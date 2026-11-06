@@ -802,7 +802,8 @@ public class BasicKeyboardView extends View {
             return;
         }
 
-        String text = key.commitText(shifted);
+        // ★ Use BOTH flags so caps-lock uppercases the very first character
+        String text = key.commitText(shifted || shiftLocked);
         listener.onKey(key.code, text);
     }
 

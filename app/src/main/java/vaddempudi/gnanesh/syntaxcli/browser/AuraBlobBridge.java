@@ -115,6 +115,18 @@ public class AuraBlobBridge {
         } catch (Exception ignored) {}
     }
 
+    @JavascriptInterface
+    public void startFromAnchor(String href, String suggestedName) {
+        try {
+            android.content.Intent i = new android.content.Intent(
+                    "vaddempudi.gnanesh.syntaxcli.AURA_BLOB_START");
+            i.putExtra("href", href);
+            i.putExtra("name", suggestedName);
+            androidx.localbroadcastmanager.content.LocalBroadcastManager
+                    .getInstance(appCtx)
+                    .sendBroadcast(i);
+        } catch (Exception ignored) { }
+    }
     private void report(BlobSession s, boolean done) {
         try {
             long now = System.currentTimeMillis();
@@ -166,5 +178,6 @@ public class AuraBlobBridge {
             this.savePath = f.getAbsolutePath();
             this.out = new FileOutputStream(f);
         }
+
     }
 }

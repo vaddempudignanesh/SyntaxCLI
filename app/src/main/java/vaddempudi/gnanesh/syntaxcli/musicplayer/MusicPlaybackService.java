@@ -94,7 +94,7 @@ public class MusicPlaybackService extends Service {
                 }
             }
         };
-        
+
         IntentFilter f = new IntentFilter();
         f.addAction("vaddempudi.gnanesh.syntaxcli.MUSIC_STATE_CHANGED");
         f.addAction("vaddempudi.gnanesh.syntaxcli.MUSIC_TRACK_CHANGED");
