@@ -27,6 +27,9 @@ public class ThumbnailCache {
     private static final int TARGET_PX = 360;
     private static final long MAX_DISK_BYTES = 64L * 1024L * 1024L;
 
+    private long lastEnforceMs = 0L;
+    private static final long ENFORCE_MIN_INTERVAL_MS = 1000L;
+
     private final File cacheDir;
     private final LruCache<String, Bitmap> imageMemory;
     private final LruCache<String, Bitmap> videoMemory;
@@ -174,6 +177,9 @@ public class ThumbnailCache {
     }
 
     private void enforceDiskLimit() {
+        long now = System.currentTimeMillis();
+        if (now - lastEnforceMs < ENFORCE_MIN_INTERVAL_MS) return;
+        lastEnforceMs = now;
         File[] files = cacheDir.listFiles();
         if (files == null) return;
         long total = 0;

@@ -139,41 +139,64 @@ public final class GalleryRepository {
         if (mediaEnded) return;
         if (!mediaLoading.compareAndSet(false, true)) return;
 
-        final int offset = nextOffset;
+        final int startOffset = nextOffset;
 
-        pager.loadPage(offset, MediaStorePager.DEFAULT_PAGE_SIZE,
-                new MediaStorePager.PageCallback() {
-                    @Override
-                    public void onPage(List<GalleryMediaItem> page, boolean end) {
-                        mediaLoading.set(false);
+        ioPool.execute(() -> {
+            int offset = startOffset;
+            boolean end = false;
+            while (!end) {
+                final java.util.concurrent.CountDownLatch latch =
+                        new java.util.concurrent.CountDownLatch(1);
+                final boolean[] endHolder = {false};
+                final List<GalleryMediaItem>[] pageHolder = new List[1];
+                final Throwable[] errHolder = new Throwable[1];
 
-                        synchronized (allItems) {
-                            if (offset == 0) allItems.clear();
-                            mergeByStableKey(allItems, page);
-                            Collections.sort(allItems, LATEST_FIRST);
-                        }
+                pager.loadPage(offset, MediaStorePager.DEFAULT_PAGE_SIZE,
+                        new MediaStorePager.PageCallback() {
+                            @Override public void onPage(List<GalleryMediaItem> page, boolean e) {
+                                pageHolder[0] = page;
+                                endHolder[0] = e;
+                                latch.countDown();
+                            }
+                            @Override public void onError(Throwable error) {
+                                errHolder[0] = error;
+                                latch.countDown();
+                            }
+                        });
 
-                        indexCache.putMediaPage(page);
-                        if (!page.isEmpty()) {
-                            indexCache.putMetadata(KEY_MEDIA_WATERMARK,
-                                    String.valueOf(page.get(0).dateModifiedSeconds));
-                        }
-                        nextOffset = offset + page.size();
-                        mediaEnded = end;
+                try { latch.await(15, java.util.concurrent.TimeUnit.SECONDS); }
+                catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }
 
-                        publishMedia(end);
+                if (errHolder[0] != null) {
+                    mediaLoading.set(false);
+                    for (Listener l : listeners) l.onError(errHolder[0]);
+                    return;
+                }
+                List<GalleryMediaItem> page = pageHolder[0];
+                if (page == null) page = Collections.emptyList();
+                end = endHolder[0];
 
-                        // Keep loading pages until we hit the end, so the UI
-                        // never has to drive pagination by scrolling.
-                        if (!end) loadNextPage();
-                    }
+                // ── Everything below runs on ioPool, NOT the main thread ──
+                synchronized (allItems) {
+                    if (offset == 0) allItems.clear();
+                    mergeByStableKey(allItems, page);
+                    Collections.sort(allItems, LATEST_FIRST);
+                }
+                indexCache.putMediaPage(page);
+                if (!page.isEmpty()) {
+                    indexCache.putMetadata(KEY_MEDIA_WATERMARK,
+                            String.valueOf(page.get(0).dateModifiedSeconds));
+                }
+                offset += page.size();
+                nextOffset = offset;
+                mediaEnded = end;
 
-                    @Override
-                    public void onError(Throwable error) {
-                        mediaLoading.set(false);
-                        for (Listener l : listeners) l.onError(error);
-                    }
-                });
+                publishMedia(end);       // posts snapshot to main; listener works unchanged
+
+                if (page.isEmpty() && !end) break;   // safety: never infinite-loop
+            }
+            mediaLoading.set(false);
+        });
     }
 
     private void mergeByStableKey(ArrayList<GalleryMediaItem> target,

@@ -41,10 +41,11 @@ public final class GalleryMediaItem {
         this.albumPath = albumPath == null ? "" : albumPath;
         this.dateModifiedSeconds = dateModifiedSeconds;
         this.type = type;
-        this.lastModifiedMillis =
-                (path == null || path.isEmpty()) ? 0L : new File(path).lastModified();
+        long fromStore = dateModifiedSeconds > 0 ? dateModifiedSeconds * 1000L : 0L;
+        this.lastModifiedMillis = fromStore > 0
+                ? fromStore
+                : (path == null || path.isEmpty() ? 0L : new File(path).lastModified());
     }
-
     /** Compatibility accessors for legacy code. */
     public String name() { return displayName; }
     public long dateModified() { return dateModifiedSeconds; }

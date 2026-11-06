@@ -483,13 +483,10 @@ public class GalleryActivity extends AppCompatActivity {
                     Set<String> favs = loadFavoritePaths();
                     for (GalleryMediaItem it : items) {
                         boolean trashed = it.path != null && it.path.contains(".trashed.");
-                        GalleryMediaItem copy = new GalleryMediaItem(
-                                it.id, it.path, it.displayName, it.albumPath,
-                                it.dateModifiedSeconds, it.type);
-                        copy.isTrashed = trashed;
-                        copy.isFavorite = it.isFavorite
+                        it.isTrashed = trashed;
+                        it.isFavorite = it.isFavorite
                                 || (it.path != null && favs.contains(it.path));
-                        cachedMedia.add(copy);
+                        cachedMedia.add(it);
                     }
 
                     if (currentFilter == FilterMode.BIN) {
