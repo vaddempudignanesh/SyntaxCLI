@@ -26,6 +26,10 @@ public class CustomVideoView extends SurfaceView implements SurfaceHolder.Callba
     private int videoW, videoH;
     private Fit fit = Fit.SMALLER;
 
+    private android.media.audiofx.LoudnessEnhancer loudnessEnhancer;
+    private int loudnessSessionId = -1;
+    private int maxStreamVolume = 15;
+
     private OnTapListener tapListener;
     private MediaPlayer.OnPreparedListener preparedListener;
     private MediaPlayer.OnErrorListener errorListener;
@@ -199,13 +203,19 @@ public class CustomVideoView extends SurfaceView implements SurfaceHolder.Callba
 
     public void setOnTapListener(OnTapListener l) { tapListener = l; }
 
+    private final java.util.List<MediaPlayer.OnPreparedListener> preparedListeners =
+            new java.util.ArrayList<>();
+
     public void setOnPreparedListener(MediaPlayer.OnPreparedListener l) {
-        preparedListener = l;
+        if (l != null && !preparedListeners.contains(l)) preparedListeners.add(l);
         if (prepared && mp != null && l != null) {
             try { l.onPrepared(mp); } catch (Exception ignored) {}
         }
     }
 
+    public void clearOnPreparedListeners() {
+        preparedListeners.clear();
+    }
     public void setOnErrorListener(MediaPlayer.OnErrorListener l) { errorListener = l; }
     public void setOnCompletionListener(MediaPlayer.OnCompletionListener l) { completionListener = l; }
 
@@ -227,8 +237,9 @@ public class CustomVideoView extends SurfaceView implements SurfaceHolder.Callba
                 prepared = true;
                 int w = m.getVideoWidth(), h = m.getVideoHeight();
                 if (w > 0 && h > 0) applySize(w, h);
-                if (preparedListener != null) {
-                    try { preparedListener.onPrepared(m); } catch (Exception ignored) {}
+                // iterate the list
+                for (MediaPlayer.OnPreparedListener l : new java.util.ArrayList<>(preparedListeners)) {
+                    try { l.onPrepared(m); } catch (Exception ignored) {}
                 }
                 if (playWhenReady && mp == m) {
                     try { m.start(); playWhenReady = false; } catch (IllegalStateException ignored) {}

@@ -22,8 +22,10 @@ import android.view.GestureDetector;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.Button;
+import android.widget.FrameLayout;
 import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -187,6 +189,12 @@ public class GalleryActivity extends AppCompatActivity {
     private Runnable pendingChromeTapRunnable = null;
     private int lastSeekTargetMs = -1;
     private boolean chromeDoubleTapArmed = false;
+    private float lastPerceivedBrightness = -1f;
+    private float lastPerceivedVolume = 1f;
+    private android.media.audiofx.LoudnessEnhancer loudnessEnhancer;
+    private int loudnessSessionId = -1;
+    private int maxStreamVolume = 15;
+    private View brightnessDimOverlay;
     private float playbackSpeedBeforeLongPress = 1.0f;
     private boolean isLandscape = false;
     private View decorView;
@@ -407,12 +415,7 @@ public class GalleryActivity extends AppCompatActivity {
     }
 
 
-    /**
-     * Same as openFullscreenViewer(path) but sources the pager list from the
-     * supplied items instead of screenAdapter. Used when the tap originates
-     * inside an opened album, so swipe-left/right walks the album, not the
-     * main gallery. Falls back to the normal path if items is null/empty.
-     */
+
     private void openFullscreenViewerWithItems(String path, List<GalleryMediaItem> items) {
         if (items == null || items.isEmpty()) {
             openFullscreenViewer(path);
@@ -453,7 +456,7 @@ public class GalleryActivity extends AppCompatActivity {
 
         fullscreenOverlay.setVisibility(View.VISIBLE);
         fullscreenOverlay.bringToFront();
-
+        if (loadingSpinner != null) loadingSpinner.setVisibility(View.GONE);
         View topNav = findViewById(R.id.topNavBar);
         if (topNav != null) topNav.setVisibility(View.GONE);
         View selTop = findViewById(R.id.selectionTopBar);
@@ -2232,6 +2235,7 @@ public class GalleryActivity extends AppCompatActivity {
                 currentFullscreenVideoPosition = position;
                 overlayPendingSeekMs = -1;
 
+
                 String path = (position >= 0 && position < fullscreenMediaPaths.size())
                         ? fullscreenMediaPaths.get(position) : null;
 
@@ -2312,6 +2316,7 @@ public class GalleryActivity extends AppCompatActivity {
                     if (item.path.equals(path)) { moveToTrash(item); break; }
                 }
                 closeFullscreenViewer();
+                if (brightnessDimOverlay != null) brightnessDimOverlay.setVisibility(View.GONE);
                 scheduleMediaRefresh(MEDIA_REFRESH_DEBOUNCE_MS);
             }
         });
@@ -2384,6 +2389,7 @@ public class GalleryActivity extends AppCompatActivity {
                     if (item.path.equals(path)) {
                         moveToTrash(item);
                         closeFullscreenViewer();
+                        if (brightnessDimOverlay != null) brightnessDimOverlay.setVisibility(View.GONE);
                         break;
                     }
                 }
@@ -2492,7 +2498,7 @@ public class GalleryActivity extends AppCompatActivity {
 
         fullscreenOverlay.setVisibility(View.VISIBLE);
         fullscreenOverlay.bringToFront();
-
+        if (loadingSpinner != null) loadingSpinner.setVisibility(View.GONE);
         View topNav = findViewById(R.id.topNavBar);
         if (topNav != null) topNav.setVisibility(View.GONE);
         View selTop = findViewById(R.id.selectionTopBar);
@@ -2522,6 +2528,7 @@ public class GalleryActivity extends AppCompatActivity {
     }
 
     private void closeFullscreenViewer() {
+        if (brightnessDimOverlay != null) brightnessDimOverlay.setVisibility(View.GONE);
         cancelPendingChromeTap();
         if (savedPosSync != null) {
             videoHandler.removeCallbacks(savedPosSync);
@@ -2562,6 +2569,11 @@ public class GalleryActivity extends AppCompatActivity {
             videoControlContainer.setVisibility(View.GONE);
         fullscreenOverlay.setVisibility(View.GONE);
         bottomBar.setVisibility(View.VISIBLE);
+        if (loadingSpinner != null) {
+            int cnt = screenAdapter != null ? screenAdapter.getItemCount() : 0;
+            boolean stillLoading = cnt == 0 && !mediaEverLoaded;
+            loadingSpinner.setVisibility(stillLoading ? View.VISIBLE : View.GONE);
+        }
         View topNav = findViewById(R.id.topNavBar);
         if (topNav != null) topNav.setVisibility(View.VISIBLE);
         updateTopNavBar();
@@ -2651,7 +2663,32 @@ public class GalleryActivity extends AppCompatActivity {
                         currentFullscreenVideoPosition = targetPosition;
                         currentFullscreenPageIsVideo = true;
                         overlayPendingSeekMs = -1;
-
+                        vv.setOnPreparedListener(mp -> {
+                            attachLoudnessEnhancer(mp.getAudioSessionId());
+                            // The FullscreenAdapter installed its own prepared listener that hides
+                            // the per-page progress bar. We just replaced it, so hide it ourselves
+                            // here so the spinner doesn't stay up while the video plays.
+                            //
+                            // Variable names are prefixed with `pb` to avoid shadowing the outer
+                            // `rv`/`i`/`child`/`vh` already declared in this method (Java lambdas
+                            // cannot shadow enclosing locals).
+                            final int pbPos = fullscreenCurrentPosition;
+                            try {
+                                RecyclerView pbRv = (RecyclerView) fullscreenViewPager.getChildAt(0);
+                                if (pbRv != null) {
+                                    final int pbCount = pbRv.getChildCount();
+                                    for (int pbIdx = 0; pbIdx < pbCount; pbIdx++) {
+                                        View pbChild = pbRv.getChildAt(pbIdx);
+                                        RecyclerView.ViewHolder pbVh = pbRv.getChildViewHolder(pbChild);
+                                        if (pbVh != null && pbVh.getBindingAdapterPosition() == pbPos) {
+                                            View pbView = pbChild.findViewById(R.id.fullscreen_progress);
+                                            if (pbView != null) pbView.setVisibility(View.GONE);
+                                            break;
+                                        }
+                                    }
+                                }
+                            } catch (Exception ignored) {}
+                        });
                         vv.setOnTapListener(this::onFullscreenTap);
                         vv.setOnTouchListener((v, event) -> {
                             if (overlayVideoGestureDetector != null)
@@ -2686,6 +2723,52 @@ public class GalleryActivity extends AppCompatActivity {
                     findAndStartVideoForPosition(targetPosition);
             });
         } catch (Exception ignored) {}
+    }
+
+
+    private void attachLoudnessEnhancer(int audioSessionId) {
+        if (audioSessionId == AudioManager.ERROR || audioSessionId <= 0) return;
+
+        // If the same session is already attached, just re-apply the gain.
+        if (loudnessEnhancer != null && loudnessSessionId == audioSessionId) {
+            applyLoudnessGain(lastPerceivedVolume);
+            return;
+        }
+        releaseLoudnessEnhancer();
+
+        try {
+            loudnessEnhancer = new android.media.audiofx.LoudnessEnhancer(audioSessionId);
+            loudnessSessionId = audioSessionId;
+            applyLoudnessGain(lastPerceivedVolume);
+        } catch (Throwable t) {
+            loudnessEnhancer = null;
+            loudnessSessionId = -1;
+        }
+    }
+
+    private void releaseLoudnessEnhancer() {
+        if (loudnessEnhancer != null) {
+            try { loudnessEnhancer.setEnabled(false); } catch (Throwable ignored) {}
+            try { loudnessEnhancer.release(); }        catch (Throwable ignored) {}
+            loudnessEnhancer = null;
+        }
+        loudnessSessionId = -1;
+    }
+
+    private void applyLoudnessGain(float perceivedVolume) {
+        if (loudnessEnhancer == null) return;
+
+        float p = Math.max(0f, Math.min(2f, perceivedVolume));
+        if (p <= 1.0f) {
+            try { loudnessEnhancer.setTargetGain(0); } catch (Throwable ignored) {}
+            return;
+        }
+        // 1.0 → 0 mB, 2.0 → 1000 mB (10 dB ≈ 3.16× perceived)
+        int mB = Math.round((p - 1.0f) * 1000f);
+        if (mB < 0) mB = 0;
+        if (mB > 1000) mB = 1000;
+        try { loudnessEnhancer.setTargetGain(mB); } catch (Throwable ignored) {}
+        try { loudnessEnhancer.setEnabled(true); } catch (Throwable ignored) {}
     }
 
     private void loopWithRetry(MediaPlayer mp, int attempt) {
@@ -2915,6 +2998,55 @@ public class GalleryActivity extends AppCompatActivity {
         scheduleSingleTapOrCancel();
     }
 
+    private void applyPerceivedBrightness(float effectiveBrightness) {
+        lastPerceivedBrightness = effectiveBrightness;
+        if (effectiveBrightness < 0.01f) effectiveBrightness = 0.01f;
+        if (effectiveBrightness > 1.0f)  effectiveBrightness = 1.0f;
+        final float HARDWARE_FLOOR = 0.02f;
+
+        WindowManager.LayoutParams lp = getWindow().getAttributes();
+        float overlayAlpha;
+
+        if (effectiveBrightness >= HARDWARE_FLOOR) {
+            lp.screenBrightness = effectiveBrightness;
+            getWindow().setAttributes(lp);
+            overlayAlpha = 0f;
+        } else {
+            lp.screenBrightness = HARDWARE_FLOOR;
+            getWindow().setAttributes(lp);
+            overlayAlpha = 1f - (effectiveBrightness / HARDWARE_FLOOR);
+            if (overlayAlpha < 0f) overlayAlpha = 0f;
+            if (overlayAlpha > 0.98f) overlayAlpha = 0.98f;   // keep 2% visible
+        }
+
+        ensureBrightnessOverlay();
+        brightnessDimOverlay.setBackgroundColor(
+                (Math.round(overlayAlpha * 255f) << 24) | 0x000000);
+        brightnessDimOverlay.setVisibility(overlayAlpha > 0.001f ? View.VISIBLE : View.GONE);
+        brightnessDimOverlay.bringToFront();
+    }
+
+    private void ensureBrightnessOverlay() {
+        if (brightnessDimOverlay != null) return;
+        brightnessDimOverlay = new View(this);
+        brightnessDimOverlay.setClickable(false);
+        brightnessDimOverlay.setFocusable(false);
+        brightnessDimOverlay.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        ViewGroup parent = fullscreenOverlay;
+        if (parent == null) return;
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT);
+        int index = -1;
+        if (videoControlsOverlay != null) {
+            for (int i = 0; i < parent.getChildCount(); i++) {
+                if (parent.getChildAt(i) == videoControlsOverlay) { index = i; break; }
+            }
+        }
+        if (index >= 0) parent.addView(brightnessDimOverlay, index, lp);
+        else parent.addView(brightnessDimOverlay, lp);
+    }
+
     private void cancelPendingChromeTap() {
         if (pendingChromeTapRunnable != null) {
             videoHandler.removeCallbacks(pendingChromeTapRunnable);
@@ -3111,13 +3243,30 @@ public class GalleryActivity extends AppCompatActivity {
 
                     if (isVolumeSide[0] && audioManager != null) {
                         try {
-                            appliedVolume[0] = audioManager.getStreamVolume(
-                                    AudioManager.STREAM_MUSIC);
+                            maxStreamVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+                            int sysVol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
+                            // Reconstruct perceived volume: if we're above system max in the
+                            // enhancer, sysVol == maxStreamVolume and gain > 0.
+                            int currentM = 0;
+                            if (loudnessEnhancer != null) {
+                                try { currentM = (int) loudnessEnhancer.getTargetGain(); }
+                                catch (Throwable ignored) {}
+                            }
+                            float perceived = sysVol / (float) maxStreamVolume;
+                            if (sysVol >= maxStreamVolume && currentM > 0) {
+                                perceived = 1.0f + (currentM / 1000f);
+                            }
+                            appliedVolume[0] = Math.round(perceived * maxStreamVolume);
                         } catch (Exception ignored) {}
                     } else {
-                        WindowManager.LayoutParams lp = getWindow().getAttributes();
-                        appliedBrightness[0] = lp.screenBrightness < 0
-                                ? 0.5f : lp.screenBrightness;
+                        if (lastPerceivedBrightness > 0f) {
+                            appliedBrightness[0] = lastPerceivedBrightness;
+                        } else {
+                            WindowManager.LayoutParams lp = getWindow().getAttributes();
+                            appliedBrightness[0] = lp.screenBrightness < 0
+                                    ? 0.5f : lp.screenBrightness;
+                            if (appliedBrightness[0] < 0.01f) appliedBrightness[0] = 0.5f;
+                        }
                     }
                     return true;
                 }
@@ -3147,29 +3296,45 @@ public class GalleryActivity extends AppCompatActivity {
 
                     if (isVolumeSide[0]) {
                         if (audioManager == null) return true;
+                        final int maxVol = maxStreamVolume;
                         boolean changed = false;
+
                         while (accumulator[0] >= STEP_PX_VOLUME) {
                             accumulator[0] -= STEP_PX_VOLUME;
-                            appliedVolume[0] = Math.min(maxVolume,
-                                    Math.max(0, appliedVolume[0] + 1));
+                            appliedVolume[0] = Math.min(2 * maxVol, Math.max(0, appliedVolume[0] + 1));
                             changed = true;
                         }
                         while (accumulator[0] <= -STEP_PX_VOLUME) {
                             accumulator[0] += STEP_PX_VOLUME;
-                            appliedVolume[0] = Math.min(maxVolume,
-                                    Math.max(0, appliedVolume[0] - 1));
+                            appliedVolume[0] = Math.min(2 * maxVol, Math.max(0, appliedVolume[0] - 1));
                             changed = true;
                         }
-                        try {
-                            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC,
-                                    appliedVolume[0], 0);
-                        } catch (Exception ignored) {}
+
                         if (changed) {
-                            int percent = maxVolume > 0
-                                    ? (int) Math.round((appliedVolume[0] * 100.0) / maxVolume) : 0;
-                            showMediaHud(true, Math.max(0, Math.min(100, percent)));
+                            // Split perceived volume into (system, enhancer gain).
+                            int sysVol;
+                            float perceived = appliedVolume[0] / (float) maxVol;   // 0 .. 2
+                            if (perceived <= 1.0f) {
+                                sysVol = Math.round(perceived * maxVol);
+                                applyLoudnessGain(0f);
+                            } else {
+                                sysVol = maxVol;
+                                applyLoudnessGain(perceived);
+                            }
+                            try {
+                                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, sysVol, 0);
+                            } catch (Exception ignored) {}
+
+                            lastPerceivedVolume = perceived;
+                            int percent = Math.round(perceived * 100f);
+                            showMediaHud(true, Math.max(0, Math.min(200, percent)));
                         }
                     } else {
+                        // Brightness: 20 discrete steps from 100% down to 1%.
+                        // Below the hardware floor (~2%) applyPerceivedBrightness() fades in
+                        // a black overlay, so the perceived dimming continues smoothly past
+                        // what the panel can physically do.
+                        final float BRIGHTNESS_STEP = 1.0f / 20f;
                         int stepAdvances = 0;
                         while (accumulator[0] >= STEP_PX_BRIGHTNESS) {
                             accumulator[0] -= STEP_PX_BRIGHTNESS; stepAdvances++;
@@ -3178,15 +3343,13 @@ public class GalleryActivity extends AppCompatActivity {
                             accumulator[0] += STEP_PX_BRIGHTNESS; stepAdvances--;
                         }
                         if (stepAdvances != 0) {
-                            appliedBrightness[0] = Math.min(1f, Math.max(0.02f,
-                                    appliedBrightness[0] + stepAdvances * BRIGHTNESS_STEP_VALUE));
+                            appliedBrightness[0] = Math.min(1f, Math.max(0.01f,
+                                    appliedBrightness[0] + stepAdvances * BRIGHTNESS_STEP));
                             try {
-                                WindowManager.LayoutParams lp = getWindow().getAttributes();
-                                lp.screenBrightness = appliedBrightness[0];
-                                getWindow().setAttributes(lp);
+                                applyPerceivedBrightness(appliedBrightness[0]);
                             } catch (Exception ignored) {}
                             int percent = (int) Math.round(appliedBrightness[0] * 100);
-                            showMediaHud(false, Math.max(0, Math.min(100, percent)));
+                            showMediaHud(false, Math.max(1, Math.min(100, percent)));
                         }
                     }
                     return true;
@@ -3248,6 +3411,7 @@ public class GalleryActivity extends AppCompatActivity {
     public void onBackPressed() {
         if (fullscreenOverlay != null && fullscreenOverlay.getVisibility() == View.VISIBLE) {
             closeFullscreenViewer();
+            if (brightnessDimOverlay != null) brightnessDimOverlay.setVisibility(View.GONE);
             return;
         }
         if (selectionMode) {

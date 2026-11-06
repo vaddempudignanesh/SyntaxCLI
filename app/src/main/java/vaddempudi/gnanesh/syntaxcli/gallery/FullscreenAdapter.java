@@ -105,8 +105,7 @@ public class FullscreenAdapter extends RecyclerView.Adapter<FullscreenAdapter.Vi
                 log("  same path → keeping playback state");
             }
 
-            holder.videoView.setOnPreparedListener(null);
-
+            holder.videoView.clearOnPreparedListeners();
             holder.videoView.setOnPreparedListener(mp -> {
                 int adapterPosition = holder.getBindingAdapterPosition();
                 if (adapterPosition != boundPosition
@@ -243,8 +242,8 @@ public class FullscreenAdapter extends RecyclerView.Adapter<FullscreenAdapter.Vi
         log("onViewRecycled");
         try { holder.videoView.stopPlayback(); } catch (Exception ignored) {}
         holder.videoView.setVisibility(View.GONE);
-        holder.videoView.setOnPreparedListener(null);
-        holder.videoView.setOnTapListener(null);
+        holder.videoView.clearOnPreparedListeners();
+    holder.videoView.setOnTapListener(null);
         holder.videoView.setOnTouchListener(null);
         holder.imageView.setVisibility(View.GONE);
         holder.imageView.setImageDrawable(null);
