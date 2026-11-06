@@ -1279,7 +1279,7 @@ public class GalleryActivity extends AppCompatActivity {
         StringBuilder sb = new StringBuilder();
         for (String p : paths) sb.append(p).append("\n");
         prefs.edit().putString(PREF_FAVORITES, sb.toString()).apply();
-        cachedFavoritePaths = paths;  
+        cachedFavoritePaths = paths;
     }
 
     private boolean toggleFavoriteForPath(String path) {

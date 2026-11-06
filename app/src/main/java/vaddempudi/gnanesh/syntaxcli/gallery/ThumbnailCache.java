@@ -38,8 +38,8 @@ public class ThumbnailCache {
 
     private ThumbnailCache(Context context) {
         int maxKb = (int) (Runtime.getRuntime().maxMemory() / 1024L);
-        int imageKb = Math.max(1024, maxKb / 10);
-        int videoKb = Math.max(1024, maxKb / 12);
+        int imageKb = Math.max(4096, maxKb / 4);
+        int videoKb = Math.max(2048, maxKb / 6);
 
         imageMemory = new LruCache<String, Bitmap>(imageKb) {
             @Override protected int sizeOf(String key, Bitmap value) {
@@ -61,6 +61,15 @@ public class ThumbnailCache {
             instance = new ThumbnailCache(context.getApplicationContext());
         }
         return instance;
+    }
+
+
+    public Bitmap getFromMemory(String path, int type) {
+        if (path == null) return null;
+        LruCache<String, Bitmap> pool = pool(type);
+        Bitmap cached = pool.get(path);
+        if (cached != null && !cached.isRecycled()) return cached;
+        return null;
     }
 
     public Bitmap getThumbnail(String path, int type) {

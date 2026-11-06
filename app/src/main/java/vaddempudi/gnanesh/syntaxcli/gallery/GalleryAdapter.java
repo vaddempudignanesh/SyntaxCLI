@@ -114,13 +114,19 @@ public class GalleryAdapter extends RecyclerView.Adapter<GalleryAdapter.ViewHold
     }
 
     public void setSelectedItems(List<String> selected) {
+        List<String> oldSelected = this.selectedItems;
         this.selectedItems = selected == null
                 ? Collections.emptyList()
                 : new ArrayList<>(selected);
 
         List<GalleryMediaItem> current = differ.getCurrentList();
         for (int i = 0; i < current.size(); i++) {
-            notifyItemChanged(i, PAYLOAD_SELECTION);
+            String path = current.get(i).path;
+            boolean wasSelected = oldSelected.contains(path);
+            boolean nowSelected = this.selectedItems.contains(path);
+            if (wasSelected != nowSelected) {
+                notifyItemChanged(i, PAYLOAD_SELECTION);
+            }
         }
     }
 
@@ -289,17 +295,21 @@ public class GalleryAdapter extends RecyclerView.Adapter<GalleryAdapter.ViewHold
 
     private void loadThumbnail(ViewHolder holder, GalleryMediaItem item) {
         final String path = item.path;
-
         Object currentTag = holder.imageView.getTag();
         if (currentTag != null && currentTag.equals(path)
                 && holder.imageView.getDrawable() != null) {
             return;
         }
-
-        holder.imageView.setImageDrawable(null);
         holder.imageView.setTag(path);
-
         final long myGen = holder.bindGeneration.incrementAndGet();
+
+        Bitmap memHit = thumbnailCache.getFromMemory(path, item.type);
+        if (memHit != null) {
+            holder.imageView.setImageBitmap(memHit);
+            return;
+        }
+
+        holder.imageView.setImageResource(android.R.drawable.ic_menu_gallery);
 
         executor.execute(() -> {
             Bitmap bitmap = thumbnailCache.getThumbnail(path, item.type);
@@ -309,9 +319,6 @@ public class GalleryAdapter extends RecyclerView.Adapter<GalleryAdapter.ViewHold
                 if (tag == null || !tag.equals(path)) return;
                 if (bitmap != null) {
                     holder.imageView.setImageBitmap(bitmap);
-                } else {
-                    holder.imageView.setImageResource(
-                            android.R.drawable.ic_menu_gallery);
                 }
             });
         });
@@ -320,6 +327,5 @@ public class GalleryAdapter extends RecyclerView.Adapter<GalleryAdapter.ViewHold
     @Override
     public void onDetachedFromRecyclerView(@NonNull RecyclerView recyclerView) {
         super.onDetachedFromRecyclerView(recyclerView);
-        // shared pool — do not shut down here
     }
 }
