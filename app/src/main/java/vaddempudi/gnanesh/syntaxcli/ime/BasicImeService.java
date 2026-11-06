@@ -449,7 +449,7 @@ public class BasicImeService extends InputMethodService
                 return;
             case BasicKey.CODE_NUMERIC:
                 setPage(4);
-                return;  
+                return;
             case BasicKey.CODE_ABC:
                 setPage(0);
                 return;
@@ -521,27 +521,68 @@ public class BasicImeService extends InputMethodService
         InputConnection ic = getCurrentInputConnection();
 
         try {
+            // TEXT — unchanged
             if (e.type == ClipEntry.TYPE_TEXT) {
                 if (ic != null) ic.commitText(e.text, 1);
                 return;
             }
 
+            String mime = e.mimeType != null ? e.mimeType : "image/png";
+
+            // 1) Preferred: commitContent with a real ClipDescription.
+            //    This delivers the image directly to the focused EditText and
+            //    grants read on the URI to the target app. Works in WhatsApp.
             android.net.Uri fpUri = ClipboardStore.get(this).fileProviderUriFor(e);
-            if (fpUri == null) return;
+            if (ic != null && fpUri != null) {
+                try {
+                    android.content.ClipDescription desc =
+                            new android.content.ClipDescription("image", new String[]{mime});
+                    android.view.inputmethod.InputContentInfo info =
+                            new android.view.inputmethod.InputContentInfo(
+                                    fpUri, desc);
+                    boolean ok = ic.commitContent(
+                            info,
+                            InputConnection.INPUT_CONTENT_GRANT_READ_URI_PERMISSION,
+                            null);
+                    if (ok) return;
+                } catch (Throwable t) {
+                    XLog.w("IME-PASTE", "commitContent failed: " + t);
+                }
+            }
+
+            // 2) Fallback: MediaStore URI on the clipboard.
+            //    FileProvider URI will NOT work for the manual long-press → Paste
+            //    path, because WhatsApp's UID has no read grant on it. MediaStore
+            //    URIs are readable by any app with READ_EXTERNAL_STORAGE.
+            android.net.Uri publicUri = ClipboardStore.get(this).publicImageUriFor(e);
+            if (publicUri == null) {
+                // last resort: put the file URI on the clipboard anyway
+                publicUri = fpUri;
+            }
+            if (publicUri == null) {
+                XLog.w("IME-PASTE", "no URI to paste");
+                return;
+            }
 
             ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
             if (cm != null) {
-                String mime = e.mimeType != null ? e.mimeType : "*/*";
-                android.content.ClipData clip = android.content.ClipData.newUri(
-                        getContentResolver(), "clip", fpUri);
+                android.content.ClipDescription desc =
+                        new android.content.ClipDescription("image", new String[]{mime});
+                android.content.ClipData clip =
+                        new android.content.ClipData(desc, new android.content.ClipData.Item(publicUri));
                 cm.setPrimaryClip(clip);
             }
 
             if (ic != null) {
-                ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_PASTE));
-                ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_PASTE));
+                boolean handled = ic.performContextMenuAction(android.R.id.paste);
+                if (!handled) {
+                    ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_PASTE));
+                    ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_PASTE));
+                }
             }
-        } catch (Throwable ignored) { }
+        } catch (Throwable t) {
+            XLog.e("IME-PASTE", "pasteClip failed", t);
+        }
     }
 
     @Override

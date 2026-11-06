@@ -27,6 +27,9 @@ public final class ClipboardStore {
     private static final int    MAX      = 30;
     private static final long   MAX_FILE = 25L * 1024 * 1024;
 
+    private volatile long lastCaptureMs = 0L;
+    private static final long CAPTURE_DEBOUNCE_MS = 400L;
+
     private static volatile ClipboardStore INSTANCE;
     private static final Object LOCK = new Object();
 
@@ -94,6 +97,9 @@ public final class ClipboardStore {
     }
 
     public void capture(Context ctx) {
+        long now = System.currentTimeMillis();
+        if (now - lastCaptureMs < CAPTURE_DEBOUNCE_MS) return;
+        lastCaptureMs = now;
         try {
             ClipboardManager cm = (ClipboardManager)
                     ctx.getSystemService(Context.CLIPBOARD_SERVICE);
@@ -134,9 +140,11 @@ public final class ClipboardStore {
     }
 
     private void captureImageUri(Uri uri) {
+        File dst = null;
         try {
             Bitmap bmp = MediaStore.Images.Media.getBitmap(appCtx.getContentResolver(), uri);
             if (bmp == null) return;
+
             int maxDim = 1600;
             int w = bmp.getWidth(), h = bmp.getHeight();
             if (w > maxDim || h > maxDim) {
@@ -147,15 +155,56 @@ public final class ClipboardStore {
                 if (scaled != bmp) bmp.recycle();
                 bmp = scaled;
             }
-            File dst = new File(clipDir(), "img_" + System.currentTimeMillis() + ".png");
-            try (OutputStream out = new FileOutputStream(dst)) {
+
+            // Write to a temp file first so we can hash before committing
+            File tmp = new File(clipDir(), "img_tmp_" + System.currentTimeMillis() + ".png");
+            try (OutputStream out = new FileOutputStream(tmp)) {
                 bmp.compress(Bitmap.CompressFormat.PNG, 92, out);
             }
             bmp.recycle();
+
+            // Hash the actual PNG bytes
+            String hash = hashOfFile(tmp);
+            if (hash == null) { tmp.delete(); return; }
+
+            // If we already have this image (same SHA-256 of the PNG), reuse it.
+            for (ClipEntry e : items) {
+                if (e.type != ClipEntry.TYPE_IMAGE) continue;
+                if (e.localPath == null) continue;
+                String existingHash = hashOfFile(new File(e.localPath));
+                if (hash.equals(existingHash)) {
+                    // Bump to top, keep old file, skip writing the temp.
+                    tmp.delete();
+                    ClipEntry bumped = new ClipEntry(
+                            e.type, e.text, e.localPath, e.mimeType, e.displayName,
+                            System.currentTimeMillis());
+                    items.remove(e);
+                    items.add(0, bumped);
+                    persist();
+                    return;
+                }
+            }
+
+            // New image — move temp into place with a stable name derived from hash
+            File dstFinal = new File(clipDir(), "img_" + hash.substring(0, 16) + ".png");
+            if (!tmp.renameTo(dstFinal)) {
+                // fallback: copy then delete
+                try (java.io.InputStream in = new java.io.FileInputStream(tmp);
+                     OutputStream out = new FileOutputStream(dstFinal)) {
+                    byte[] buf = new byte[8192];
+                    int n;
+                    while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                }
+                tmp.delete();
+            }
+
             addEntry(new ClipEntry(ClipEntry.TYPE_IMAGE, null,
-                    dst.getAbsolutePath(), "image/png", dst.getName(),
+                    dstFinal.getAbsolutePath(), "image/png", dstFinal.getName(),
                     System.currentTimeMillis()));
-        } catch (Throwable ignored) { }
+        } catch (Throwable t) {
+            if (dst != null) dst.delete();
+            XLog.e("ClipboardStore", "captureImageUri failed", t);
+        }
     }
 
     private void captureFileUri(Uri uri, String mime) {
@@ -194,6 +243,60 @@ public final class ClipboardStore {
                     System.currentTimeMillis()));
         } catch (Throwable ignored) { }
     }
+
+    /**
+     * Copy the clip's PNG into MediaStore.Images.Media so that any app with
+     * READ_EXTERNAL_STORAGE (WhatsApp, Gmail, Telegram, Instagram, Slack, ...)
+     * can read it via the returned content:// URI. This is what makes
+     * manual long-press → Paste work; a FileProvider URI cannot.
+     *
+     * Returns null on failure.
+     */
+    public android.net.Uri publicImageUriFor(ClipEntry e) {
+        if (e == null || e.type != ClipEntry.TYPE_IMAGE || e.localPath == null) return null;
+
+        File src = new File(e.localPath);
+        if (!src.exists() || src.length() == 0) return null;
+
+        String displayName = "kbd_" + System.currentTimeMillis() + ".png";
+        android.content.ContentValues cv = new android.content.ContentValues();
+        cv.put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, displayName);
+        cv.put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/png");
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            cv.put(android.provider.MediaStore.Images.Media.RELATIVE_PATH,
+                    android.os.Environment.DIRECTORY_PICTURES + "/KeyboardPaste");
+            cv.put(android.provider.MediaStore.Images.Media.IS_PENDING, 1);
+        }
+
+        android.net.Uri dest = null;
+        try {
+            dest = appCtx.getContentResolver().insert(
+                    android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cv);
+            if (dest == null) return null;
+
+            try (java.io.InputStream in = new java.io.FileInputStream(src);
+                 java.io.OutputStream out = appCtx.getContentResolver().openOutputStream(dest)) {
+                if (out == null) { appCtx.getContentResolver().delete(dest, null, null); return null; }
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+            }
+
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                android.content.ContentValues done = new android.content.ContentValues();
+                done.put(android.provider.MediaStore.Images.Media.IS_PENDING, 0);
+                appCtx.getContentResolver().update(dest, done, null, null);
+            }
+            return dest;
+        } catch (Throwable t) {
+            XLog.e("ClipboardStore", "publicImageUriFor failed", t);
+            if (dest != null) {
+                try { appCtx.getContentResolver().delete(dest, null, null); } catch (Throwable ignored) { }
+            }
+            return null;
+        }
+    }
+
 
     public void addText(String text) {
         if (text == null || text.isEmpty()) return;
@@ -251,6 +354,33 @@ public final class ClipboardStore {
                     appCtx,
                     appCtx.getPackageName() + ".ime.fileprovider",
                     f);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private static String sha256(byte[] data) {
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] d = md.digest(data);
+            StringBuilder sb = new StringBuilder();
+            for (byte b : d) sb.append(String.format("%02x", b));
+            return sb.toString();
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private String hashOfFile(File f) {
+        try (java.io.FileInputStream in = new java.io.FileInputStream(f)) {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) > 0) md.update(buf, 0, n);
+            byte[] d = md.digest();
+            StringBuilder sb = new StringBuilder();
+            for (byte b : d) sb.append(String.format("%02x", b));
+            return sb.toString();
         } catch (Throwable t) {
             return null;
         }
