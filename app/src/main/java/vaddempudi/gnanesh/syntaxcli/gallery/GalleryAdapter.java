@@ -110,15 +110,7 @@ public class GalleryAdapter extends RecyclerView.Adapter<GalleryAdapter.ViewHold
                 : Collections.unmodifiableList(new ArrayList<>(items));
 
         forcedEmpty = false;
-
-        differ.submitList(immutable, () -> {
-            // Force the RecyclerView to re-bind in the submitted order.
-            // AsyncListDiffer only emits payloads for items whose
-            // areContentsTheSame() returns false, so a pure reorder of
-            // identical items produces no notifications and the visible
-            // rows keep their old positions.
-            notifyDataSetChanged();
-        });
+        differ.submitList(immutable);
     }
 
     public void setSelectedItems(List<String> selected) {

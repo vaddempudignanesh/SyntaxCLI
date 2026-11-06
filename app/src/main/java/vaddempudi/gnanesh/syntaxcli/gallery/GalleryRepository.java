@@ -173,10 +173,7 @@ public final class GalleryRepository {
                     return;
                 }
                 List<GalleryMediaItem> page = pageHolder[0];
-                if (page == null) page = Collections.emptyList();
                 end = endHolder[0];
-
-                // ── Everything below runs on ioPool, NOT the main thread ──
                 synchronized (allItems) {
                     if (offset == 0) allItems.clear();
                     mergeByStableKey(allItems, page);

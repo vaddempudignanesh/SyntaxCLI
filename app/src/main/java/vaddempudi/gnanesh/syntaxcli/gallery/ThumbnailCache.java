@@ -83,7 +83,6 @@ public class ThumbnailCache {
             Bitmap bmp = BitmapFactory.decodeFile(diskImage.getAbsolutePath());
             if (bmp != null) {
                 pool.put(path, bmp);
-                diskImage.setLastModified(System.currentTimeMillis());
                 return bmp;
             }
         }

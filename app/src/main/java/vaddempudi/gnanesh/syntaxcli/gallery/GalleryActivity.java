@@ -91,6 +91,7 @@ public class GalleryActivity extends AppCompatActivity {
     private final Handler videoHandler = new Handler(Looper.getMainLooper());
     private Runnable pendingMediaRefresh;
 
+    private Set<String> cachedFavoritePaths = null;
     private String pendingAlbumLoad = null;
     private RecyclerView recyclerView;
     private RecyclerView albumRecycler;
@@ -1261,20 +1262,24 @@ public class GalleryActivity extends AppCompatActivity {
     }
 
     private Set<String> loadFavoritePaths() {
+        if (cachedFavoritePaths != null) return cachedFavoritePaths;
         if (prefs == null) return new HashSet<>();
         String raw = prefs.getString(PREF_FAVORITES, "");
         Set<String> set = new HashSet<>();
         if (raw != null && !raw.isEmpty()) {
             for (String p : raw.split("\n")) if (!p.isEmpty()) set.add(p);
         }
+        cachedFavoritePaths = set;
         return set;
     }
+
 
     private void saveFavoritePaths(Set<String> paths) {
         if (prefs == null) return;
         StringBuilder sb = new StringBuilder();
         for (String p : paths) sb.append(p).append("\n");
         prefs.edit().putString(PREF_FAVORITES, sb.toString()).apply();
+        cachedFavoritePaths = paths;  
     }
 
     private boolean toggleFavoriteForPath(String path) {
@@ -2833,7 +2838,6 @@ public class GalleryActivity extends AppCompatActivity {
             videoHandler.removeCallbacks(pendingChromeTapRunnable);
             pendingChromeTapRunnable = null;
         }
-        chromeDoubleTapArmed = false;
     }
 
     private void showAllControlsWithTimeout() {

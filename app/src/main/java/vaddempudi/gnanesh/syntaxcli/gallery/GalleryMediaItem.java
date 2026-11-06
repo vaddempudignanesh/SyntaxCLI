@@ -1,6 +1,5 @@
 package vaddempudi.gnanesh.syntaxcli.gallery;
 
-import java.io.File;
 
 /**
  * Immutable media model. Replaces {@code GalleryActivity.MediaItem}.
@@ -42,9 +41,7 @@ public final class GalleryMediaItem {
         this.dateModifiedSeconds = dateModifiedSeconds;
         this.type = type;
         long fromStore = dateModifiedSeconds > 0 ? dateModifiedSeconds * 1000L : 0L;
-        this.lastModifiedMillis = fromStore > 0
-                ? fromStore
-                : (path == null || path.isEmpty() ? 0L : new File(path).lastModified());
+        this.lastModifiedMillis = dateModifiedSeconds > 0 ? dateModifiedSeconds * 1000L : 0L;
     }
     /** Compatibility accessors for legacy code. */
     public String name() { return displayName; }
