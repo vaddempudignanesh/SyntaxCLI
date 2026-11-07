@@ -3243,16 +3243,7 @@ public class GalleryActivity extends AppCompatActivity {
 
     private void wireFullscreenControls() {
         if (fsBtnBin != null) fsBtnBin.setOnClickListener(v -> {
-            int pos = fullscreenCurrentPosition;
-            if (pos >= 0 && pos < fullscreenMediaPaths.size()) {
-                String path = fullscreenMediaPaths.get(pos);
-                for (GalleryMediaItem item : cachedMedia) {
-                    if (item.path.equals(path)) { moveToTrash(item); break; }
-                }
-                closeFullscreenViewer();
-                if (brightnessDimOverlay != null) brightnessDimOverlay.setVisibility(View.GONE);
-                scheduleMediaRefresh(MEDIA_REFRESH_DEBOUNCE_MS);
-            }
+            deleteCurrentFromViewer();
         });
 
         if (fsBtnShare != null) fsBtnShare.setOnClickListener(v -> {
@@ -3316,18 +3307,7 @@ public class GalleryActivity extends AppCompatActivity {
             }
         });
         if (btnDeleteOverlay != null) btnDeleteOverlay.setOnClickListener(v -> {
-            if (fullscreenCurrentPosition >= 0
-                    && fullscreenCurrentPosition < fullscreenMediaPaths.size()) {
-                String path = fullscreenMediaPaths.get(fullscreenCurrentPosition);
-                for (GalleryMediaItem item : cachedMedia) {
-                    if (item.path.equals(path)) {
-                        moveToTrash(item);
-                        closeFullscreenViewer();
-                        if (brightnessDimOverlay != null) brightnessDimOverlay.setVisibility(View.GONE);
-                        break;
-                    }
-                }
-            }
+            deleteCurrentFromViewer();
         });
 
         if (videoSeekBar != null) {
@@ -3358,17 +3338,13 @@ public class GalleryActivity extends AppCompatActivity {
     private void openFullscreenViewer(String path) {
         if (fullscreenViewPager != null) fullscreenViewPager.setUserInputEnabled(true);
 
-        // Save grid scroll so back returns to the same row.
         GridLayoutManager glm = (GridLayoutManager) recyclerView.getLayoutManager();
         savedGridScrollPosition = glm != null
                 ? glm.findFirstVisibleItemPosition() : -1;
 
-        // Build the list from the adapter's CURRENT items.
         fullscreenMediaPaths.clear();
         List<GalleryMediaItem> current = screenAdapter.getItems();
 
-        // If the requested path isn't in the list, insert it at index 0
-        // so we never fall back to "open the first file".
         boolean present = false;
         for (GalleryMediaItem item : current) {
             if (item.path != null && item.path.equals(path)) { present = true; break; }
@@ -3396,7 +3372,6 @@ public class GalleryActivity extends AppCompatActivity {
             current = merged;
         }
 
-        // Build fullscreenMediaPaths with the target at the correct index.
         int currentIndex = -1;
         for (int i = 0; i < current.size(); i++) {
             GalleryMediaItem item = current.get(i);
@@ -3407,8 +3382,6 @@ public class GalleryActivity extends AppCompatActivity {
             fullscreenMediaPaths.add(item.path);
         }
 
-        // Safety net: if the target somehow still isn't in the list
-        // (e.g. it was trashed), append it explicitly and open at that index.
         if (currentIndex < 0) {
             fullscreenMediaPaths.add(0, path);
             currentIndex = 0;
@@ -3460,6 +3433,81 @@ public class GalleryActivity extends AppCompatActivity {
             fullscreenViewPager.post(() -> findAndStartVideoForPosition(finalIndex));
         }
     }
+
+
+
+    private void deleteCurrentFromViewer() {
+        if (!isActivityAlive()) return;
+        final int pos = fullscreenCurrentPosition;
+        if (pos < 0 || pos >= fullscreenMediaPaths.size()) return;
+        final String path = fullscreenMediaPaths.get(pos);
+        if (path == null) return;
+        GalleryMediaItem target = null;
+        for (GalleryMediaItem it : cachedMedia) {
+            if (it.path != null && it.path.equals(path)) { target = it; break; }
+        }
+
+        if (target != null) {
+            if (currentFilter == FilterMode.PRIVATE) {
+                File f = new File(target.path);
+                if (privateVault != null && privateVault.deletePrivate(f)) {
+                    for (int i = cachedMedia.size() - 1; i >= 0; i--) {
+                        if (path.equals(cachedMedia.get(i).path)) {
+                            cachedMedia.remove(i);
+                            break;
+                        }
+                    }
+                    mtimeCache.clear();
+                    Toast.makeText(this, "Deleted", Toast.LENGTH_SHORT).show();
+                }
+            } else {
+                moveToTrash(target);
+            }
+        }
+
+        final int removedIndex = pos;
+        fullscreenMediaPaths.remove(removedIndex);
+
+        if (fullscreenMediaPaths.isEmpty()) {
+            closeFullscreenViewer();
+            if (brightnessDimOverlay != null)
+                brightnessDimOverlay.setVisibility(View.GONE);
+            scheduleMediaRefresh(MEDIA_REFRESH_DEBOUNCE_MS);
+            return;
+        }
+        int newIndex = removedIndex;
+        if (newIndex >= fullscreenMediaPaths.size()) {
+            newIndex = fullscreenMediaPaths.size() - 1;
+        }
+
+        fullscreenCurrentPosition = newIndex;
+        currentFullscreenVideo = null;
+        currentFullscreenVideoPosition = -1;
+        currentFullscreenPageIsVideo = false;
+        isOverlayVideoPlaying = false;
+        overlayControlsVisible = false;
+        overlayPendingSeekMs = -1;
+        fullscreenAdapter.notifyDataSetChanged();
+        fullscreenViewPager.setCurrentItem(newIndex, false);
+
+        updateFullscreenInfo(newIndex);
+        setFullscreenChromeVisible(true);
+
+        String nextPath = fullscreenMediaPaths.get(newIndex);
+        if (isVideoPath(nextPath)) {
+            videoControlContainer.setVisibility(View.VISIBLE);
+            overlayControlsVisible = true;
+            int finalIndex = newIndex;
+            fullscreenViewPager.post(() -> findAndStartVideoForPosition(finalIndex));
+        } else {
+            videoControlContainer.setVisibility(View.GONE);
+            overlayControlsVisible = false;
+            updateFullscreenFavoriteIcon(nextPath);
+        }
+
+        scheduleMediaRefresh(MEDIA_REFRESH_DEBOUNCE_MS);
+    }
+
 
     private void closeFullscreenViewer() {
         if (brightnessDimOverlay != null) brightnessDimOverlay.setVisibility(View.GONE);
