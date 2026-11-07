@@ -113,6 +113,12 @@ public class AuraBrowserActivity extends AppCompatActivity {
     private int blockedPopupsThisSession = 0;
     private ActionMode currentSelectionActionMode;
 
+    private Dialog tabSheetDialog = null;
+    private LinearLayout tabSheetList = null;
+
+    private static final List<Tab> RETAINED_TABS = new ArrayList<>();
+    private static int retainedCurrentIndex = -1;
+    private static FrameLayout RETAINED_WEB_CONTAINER = null;
     private static final int  STATE_DISPLAY  = 0;
     private static final int  STATE_SELECTED = 1;
     private static final int  STATE_EDIT     = 2;
@@ -318,6 +324,18 @@ public class AuraBrowserActivity extends AppCompatActivity {
         }
 
         setContentView(R.layout.activity_aura_browser);
+        webContainer = findViewById(R.id.aura_web_container);
+        if (RETAINED_WEB_CONTAINER == null) {
+            RETAINED_WEB_CONTAINER = new FrameLayout(this);
+            RETAINED_WEB_CONTAINER.setLayoutParams(new FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT));
+        }
+        if (RETAINED_WEB_CONTAINER.getParent() instanceof ViewGroup) {
+            ((ViewGroup) RETAINED_WEB_CONTAINER.getParent()).removeView(RETAINED_WEB_CONTAINER);
+        }
+        webContainer.removeAllViews();
+        webContainer.addView(RETAINED_WEB_CONTAINER);
 
         new Thread(() -> AdBlocker.init(getApplicationContext()), "adblock-init").start();
 
@@ -431,9 +449,35 @@ public class AuraBrowserActivity extends AppCompatActivity {
         String startUrl = resolveUrlFromIntent(intent);
 
         boolean explicitOpen = (startUrl != null && !startUrl.trim().isEmpty()) || startIncognito;
+        if (!explicitOpen && !RETAINED_TABS.isEmpty()) {
+            tabs.addAll(RETAINED_TABS);
+            RETAINED_TABS.clear();
 
-        if (explicitOpen) {
+            for (Tab t : tabs) {
+                try {
+                    if (t.webView.getParent() != RETAINED_WEB_CONTAINER) {
+                        if (t.webView.getParent() instanceof ViewGroup) {
+                            ((ViewGroup) t.webView.getParent()).removeView(t.webView);
+                        }
+                        RETAINED_WEB_CONTAINER.addView(t.webView);
+                    }
+                } catch (Throwable ignored) {}
+                t.webView.setVisibility(View.GONE);
+                try { RETAINED_WEB_CONTAINER.removeView(t.webView); } catch (Throwable ignored) {}
+                try { RETAINED_WEB_CONTAINER.addView(t.webView); } catch (Throwable ignored) {}
+            }
+
+            int idx = Math.max(0, Math.min(retainedCurrentIndex, tabs.size() - 1));
+            retainedCurrentIndex = -1;
+            currentTabIndex = -1;
+            switchToTab(idx);
+            updateTabCountBadge();
+            persistTabs();
+
+        } else if (explicitOpen) {
             TabStore.clear(this);
+            RETAINED_TABS.clear();
+            retainedCurrentIndex = -1;
             newTab(startUrl, startIncognito);
         } else {
             TabStore.Snapshot snap = TabStore.load(this);
@@ -1165,6 +1209,14 @@ public class AuraBrowserActivity extends AppCompatActivity {
     private void showTabSheet() {
         if (tabs.isEmpty()) return;
 
+        // If the sheet is already open, just refresh its list in place.
+        // This is what eliminates the flicker: no dismiss + reopen cycle,
+        // no window animation, no re-creation of the dialog.
+        if (tabSheetDialog != null && tabSheetDialog.isShowing() && tabSheetList != null) {
+            rebuildTabSheetRows();
+            return;
+        }
+
         final Dialog dialog = new Dialog(this);
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
         dialog.setCancelable(false);
@@ -1204,9 +1256,62 @@ public class AuraBrowserActivity extends AppCompatActivity {
         ScrollView scroll = new ScrollView(this);
         scroll.setLayoutParams(new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(280)));
+
         LinearLayout list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(list);
+        sheet.addView(scroll);
+
+        // Persist references so rebuildTabSheetRows() can find them.
+        tabSheetDialog = dialog;
+        tabSheetList = list;
+
+        dialog.setOnKeyListener((d, keyCode, event) -> {
+            if (keyCode == KeyEvent.KEYCODE_BACK
+                    && event.getAction() == KeyEvent.ACTION_UP) {
+                dialog.dismiss();
+                return true;
+            }
+            return false;
+        });
+
+        dialog.setOnDismissListener(d -> {
+            if (tabSheetDialog == d) {
+                tabSheetDialog = null;
+                tabSheetList = null;
+            }
+        });
+
+        Window w = dialog.getWindow();
+        if (w != null) {
+            w.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT);
+            w.setGravity(Gravity.FILL);
+        }
+
+        dialog.show();
+
+        // Build the rows exactly once, after the dialog is showing, so the
+        // first frame the user sees already contains the full list.
+        rebuildTabSheetRows();
+    }
+
+    /**
+     * Rebuilds the rows of the currently open tab sheet *in place*.
+     * Called both from showTabSheet() (first open) and from the tab-close
+     * handler (subsequent updates while the sheet stays open). Never
+     * allocates a new Dialog, never runs a window animation, so no flicker.
+     */
+    private void rebuildTabSheetRows() {
+        if (tabSheetDialog == null || tabSheetList == null) return;
+        if (!tabSheetDialog.isShowing()) return;
+        if (tabs.isEmpty()) {
+            tabSheetDialog.dismiss();
+            return;
+        }
+
+        tabSheetList.removeAllViews();
 
         for (int i = 0; i < tabs.size(); i++) {
             final int idx = i;
@@ -1269,43 +1374,36 @@ public class AuraBrowserActivity extends AppCompatActivity {
             tapArea.setOnClickListener(v -> {
                 int live = tabs.indexOf(tabSnapshot);
                 if (live < 0) return;
+                if (tabSheetDialog != null) tabSheetDialog.dismiss();
                 switchToTab(live);
-                dialog.dismiss();
-                showTabSheet();
             });
 
             close.setOnClickListener(v -> {
                 int live = tabs.indexOf(tabSnapshot);
                 if (live < 0) return;
                 closeTab(live);
-                dialog.dismiss();
-                if (!tabs.isEmpty()) showTabSheet();
+                // Sheet stays open. Rebuild its rows in place — no dismiss,
+                // no reopen, no animation, no flicker.
+                if (tabs.isEmpty()) {
+                    if (tabSheetDialog != null) tabSheetDialog.dismiss();
+                } else {
+                    rebuildTabSheetRows();
+                }
             });
 
-            list.addView(row);
+            tabSheetList.addView(row);
         }
-
-        sheet.addView(scroll);
-
-        dialog.setOnKeyListener((d, keyCode, event) -> {
-            if (keyCode == KeyEvent.KEYCODE_BACK
-                    && event.getAction() == KeyEvent.ACTION_UP) {
-                dialog.dismiss();
-                return true;
-            }
-            return false;
-        });
-
-        Window w = dialog.getWindow();
-        if (w != null) {
-            w.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-            w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT);
-            w.setGravity(Gravity.FILL);
-        }
-
-        dialog.show();
     }
+
+    private final BroadcastReceiver openTabReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            if (intent == null) return;
+            String url = intent.getStringExtra("url");
+            boolean incog = intent.getBooleanExtra("incognito", false);
+            if (url == null || url.isEmpty()) return;
+            newTab(url, incog);
+        }
+    };
 
     private int dp(int v) {
         return (int) (v * getResources().getDisplayMetrics().density);
@@ -1372,7 +1470,7 @@ public class AuraBrowserActivity extends AppCompatActivity {
         Tab tab = new Tab(wv, incognito, normalized, profileName);
         tabs.add(tab);
 
-        webContainer.addView(wv);
+        RETAINED_WEB_CONTAINER.addView(wv);
         wv.setVisibility(View.GONE);
 
         wv.loadUrl(normalized);
@@ -1439,19 +1537,12 @@ public class AuraBrowserActivity extends AppCompatActivity {
         Tab old = currentTab();
         if (old != null) {
             old.webView.setVisibility(View.GONE);
-            try {
-                old.webView.evaluateJavascript(
-                        "(function(){try{" +
-                                "var m=document.querySelectorAll('video,audio');" +
-                                "for(var i=0;i<m.length;i++){try{m[i].pause();}catch(e){}}" +
-                                "}catch(e){}})();", null);
-            } catch (Throwable ignored) {}
             try { old.webView.onPause(); } catch (Throwable ignored) {}
         }
-
         currentTabIndex = index;
         Tab t = tabs.get(index);
         t.webView.setVisibility(View.VISIBLE);
+        try { t.webView.bringToFront(); } catch (Throwable ignored) {}
         t.webView.requestFocus();
         try { t.webView.onResume(); } catch (Throwable ignored) {}
         setUrlBarText(t.url != null ? t.url : DEFAULT_HOME);
@@ -1470,9 +1561,11 @@ public class AuraBrowserActivity extends AppCompatActivity {
 
         Tab t = tabs.get(index);
         try {
-            webContainer.removeView(t.webView);
-            t.webView.loadUrl("about:blank");
+            if (t.webView.getParent() instanceof ViewGroup) {
+                ((ViewGroup) t.webView.getParent()).removeView(t.webView);
+            }
             t.webView.stopLoading();
+            t.webView.loadUrl("about:blank");
             t.webView.setWebChromeClient(null);
             t.webView.setWebViewClient(null);
             t.webView.destroy();
@@ -2996,6 +3089,13 @@ public class AuraBrowserActivity extends AppCompatActivity {
                     .registerReceiver(blobAnchorReceiver,
                             new android.content.IntentFilter(
                                     "vaddempudi.gnanesh.syntaxcli.AURA_BLOB_START"));
+            try {
+                androidx.localbroadcastmanager.content.LocalBroadcastManager
+                        .getInstance(this)
+                        .registerReceiver(openTabReceiver,
+                                new android.content.IntentFilter(
+                                        "vaddempudi.gnanesh.syntaxcli.AURA_OPEN_TAB"));
+            } catch (Exception ignored) {}
         } catch (Exception ignored) {}
     }
 
@@ -3004,13 +3104,6 @@ public class AuraBrowserActivity extends AppCompatActivity {
         super.onPause();
         for (Tab t : tabs) {
             try { t.webView.onPause(); } catch (Throwable ignored) {}
-            try {
-                t.webView.evaluateJavascript(
-                        "(function(){try{" +
-                                "var m=document.querySelectorAll('video,audio');" +
-                                "for(var i=0;i<m.length;i++){try{m[i].pause();}catch(e){}}" +
-                                "}catch(e){}})();", null);
-            } catch (Throwable ignored) {}
         }
         persistTabs();
 
@@ -3018,14 +3111,23 @@ public class AuraBrowserActivity extends AppCompatActivity {
             androidx.localbroadcastmanager.content.LocalBroadcastManager
                     .getInstance(this)
                     .unregisterReceiver(blobAnchorReceiver);
+            try {
+                androidx.localbroadcastmanager.content.LocalBroadcastManager
+                        .getInstance(this)
+                        .unregisterReceiver(openTabReceiver);
+            } catch (Exception ignored) {}
         } catch (Exception ignored) {}
     }
     @Override
     protected void onDestroy() {
-        // ★ stop the download-panel poll thread
         if (downloadPanelDialog != null) {
             try { downloadPanelDialog.dismiss(); } catch (Exception ignored) {}
             downloadPanelDialog = null;
+        }
+        if (tabSheetDialog != null) {
+            try { tabSheetDialog.dismiss(); } catch (Exception ignored) {}
+            tabSheetDialog = null;
+            tabSheetList = null;
         }
         urlBarHandler.removeCallbacksAndMessages(null);
         if (filePathCallback != null) {
@@ -3033,15 +3135,24 @@ public class AuraBrowserActivity extends AppCompatActivity {
             filePathCallback = null;
         }
         persistTabs();
-        for (Tab t : tabs) {
-            try { t.webView.stopLoading(); } catch (Throwable ignored) {}
-            try { t.webView.setWebChromeClient(null); } catch (Throwable ignored) {}
-            try { t.webView.setWebViewClient(null); } catch (Throwable ignored) {}
-            try { t.webView.destroy(); } catch (Throwable ignored) {}
-        }
+
+        RETAINED_TABS.clear();
+        RETAINED_TABS.addAll(tabs);
+        retainedCurrentIndex = currentTabIndex;
+        try {
+            if (RETAINED_WEB_CONTAINER != null
+                    && RETAINED_WEB_CONTAINER.getParent() instanceof ViewGroup) {
+                ((ViewGroup) RETAINED_WEB_CONTAINER.getParent())
+                        .removeView(RETAINED_WEB_CONTAINER);
+            }
+        } catch (Throwable ignored) {}
+
         tabs.clear();
+        currentTabIndex = -1;
+
         super.onDestroy();
     }
+
 
     public static void open(Context ctx, String url) {
         Intent i = new Intent(ctx, AuraBrowserActivity.class);

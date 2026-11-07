@@ -1,6 +1,7 @@
 package vaddempudi.gnanesh.syntaxcli.browser;
 
 import android.app.Activity;
+import android.content.Intent;
 import android.net.Uri;
 import android.os.Message;
 import android.util.Log;
@@ -149,12 +150,20 @@ public final class SecureWebViewLayer {
                     if (onPopupBlocked != null) onPopupBlocked.run();
                     return true;
                 }
-
                 WebView.HitTestResult hit = view.getHitTestResult();
                 String data = hit != null ? hit.getExtra() : null;
 
                 if (data != null && isLoadableUrl(data)) {
-                    view.loadUrl(data);
+                    try {
+                        Intent newTab = new Intent("vaddempudi.gnanesh.syntaxcli.AURA_OPEN_TAB");
+                        newTab.putExtra("url", data);
+                        newTab.putExtra("incognito", false);
+                        androidx.localbroadcastmanager.content.LocalBroadcastManager
+                                .getInstance(view.getContext())
+                                .sendBroadcast(newTab);
+                    } catch (Throwable t) {
+                        Log.w(TAG, "AURA_OPEN_TAB broadcast failed", t);
+                    }
                     if (onPopupBlocked != null) onPopupBlocked.run();
                     return true;
                 }
