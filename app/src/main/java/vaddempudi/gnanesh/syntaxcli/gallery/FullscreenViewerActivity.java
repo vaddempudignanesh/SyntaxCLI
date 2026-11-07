@@ -24,13 +24,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 import vaddempudi.gnanesh.syntaxcli.R;
+import android.view.GestureDetector;
+import android.view.MotionEvent;
 
-/**
- * FullscreenViewerActivity — fullscreen image/video viewer.
- *
- * Logs activity identity hash, adapter identity hash, callback identity hash
- * on every relevant operation so we can trace the exact instance graph.
- */
+
 public class FullscreenViewerActivity extends AppCompatActivity {
 
     private static final String LOG_TAG = "gallery-tui";
@@ -49,6 +46,9 @@ public class FullscreenViewerActivity extends AppCompatActivity {
     private FullscreenAdapter adapter;
     private List<String> mediaPaths = new ArrayList<>();
     private int currentPosition = 0;
+
+    private boolean suppressChromeUntilNextTap = false;
+
 
     private CustomVideoView currentVideoView = null;
     private View videoControlContainer;
@@ -117,7 +117,6 @@ public class FullscreenViewerActivity extends AppCompatActivity {
         videoTimeTotal = findViewById(R.id.videoTimeTotal);
         videoTitle = findViewById(R.id.videoTitle);
         videoSeekBar = findViewById(R.id.videoSeekBar);
-
         rootLayout = findViewById(R.id.videoControlsOverlay);
         if (rootLayout != null) {
             rootLayout.setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE
@@ -227,6 +226,7 @@ public class FullscreenViewerActivity extends AppCompatActivity {
             @Override
             public void onPageSelected(int position) {
                 super.onPageSelected(position);
+                suppressChromeUntilNextTap = false;
                 Log.d(LOG_TAG, src() + " onPageSelected: " + position + " (was " + currentPosition + ")");
 
                 if (position != currentPosition) {
@@ -252,17 +252,97 @@ public class FullscreenViewerActivity extends AppCompatActivity {
     }
 
     private void setupTapToToggleChrome() {
-        // ZoomableImageView's OnTapListener is wired via the adapter
+        final GestureDetector gd = new GestureDetector(this,
+                new GestureDetector.SimpleOnGestureListener() {
+                    @Override public boolean onDown(MotionEvent e) { return true; }
+
+                    @Override public boolean onDoubleTap(MotionEvent e) {
+                        cancelPendingChromeTap();
+                        if (!currentPageIsVideo || currentVideoView == null) return false;
+                        suppressChromeUntilNextTap = true;
+                        float w = getWindow().getDecorView().getWidth();
+                        if (w <= 0) return false;
+                        if (e.getX() < w / 3f) skipByMs(-SKIP_BACKWARD_MS);
+                        else if (e.getX() > w * 2f / 3f) skipByMs(SKIP_FORWARD_MS);
+                        else togglePlayPause();
+                        return true;
+                    }
+
+                    @Override public boolean onDoubleTapEvent(MotionEvent e) {
+                        cancelPendingChromeTap();
+                        return true;
+                    }
+                });
+
+        View decor = getWindow().getDecorView();
+        decor.setOnTouchListener((v, ev) -> {
+            gd.onTouchEvent(ev);
+            return false;
+        });
     }
 
-    private void toggleControlsVisibility() {
-        if (controlsVisible) {
-            hideControls();
-        } else {
-            showControls();
+
+    private void skipByMs(int deltaMs) {
+        if (currentVideoView == null) return;
+        int dur = currentVideoView.getDuration();
+        if (dur <= 0) return;
+        int cur = currentVideoView.getCurrentPosition();
+        int target = Math.max(0, Math.min(cur + deltaMs, dur));
+        currentVideoView.seekTo(target);
+        updateSeekBar();
+        if (!suppressChromeUntilNextTap) {
+            showVideoControlsWithTimeout();
+        }
+    }
+    private Runnable pendingChromeTapRunnable = null;
+
+    private void cancelPendingChromeTap() {
+        if (pendingChromeTapRunnable != null) {
+            videoHandler.removeCallbacks(pendingChromeTapRunnable);
+            pendingChromeTapRunnable = null;
         }
     }
 
+    private void scheduleSingleTapOrCancel() {
+        cancelPendingChromeTap();
+        pendingChromeTapRunnable = () -> {
+            pendingChromeTapRunnable = null;
+            suppressChromeUntilNextTap = false;
+            if (controlsVisible) hideControls();
+            else showControls();
+        };
+        videoHandler.postDelayed(pendingChromeTapRunnable, 260L);
+    }
+
+    private void toggleControlsVisibility() {
+        if (controlsVisible) hideControls();
+        else showControls();
+    }
+
+    private void showControls() {
+        if (!isActivityAlive()) return;
+        setChromeVisible(true);
+
+        videoHandler.removeCallbacks(hideControlsRunnable);
+        if (currentPageIsVideo && isVideoPlaying) {
+            hideControlsRunnable = this::hideControls;
+            videoHandler.postDelayed(hideControlsRunnable, CONTROLS_TIMEOUT);
+        }
+    }
+
+    private void hideControls() {
+        setChromeVisible(false);
+        videoHandler.removeCallbacks(hideControlsRunnable);
+    }
+
+    private void showVideoControlsWithTimeout() {
+        if (suppressChromeUntilNextTap) return;
+        setChromeVisible(true);
+
+        videoHandler.removeCallbacks(hideControlsRunnable);
+        hideControlsRunnable = this::hideControls;
+        videoHandler.postDelayed(hideControlsRunnable, CONTROLS_TIMEOUT);
+    }
 
     private void killPagerScrollBars(ViewPager2 vp) {
         if (vp == null) return;
@@ -288,38 +368,17 @@ public class FullscreenViewerActivity extends AppCompatActivity {
     }
 
 
-    private void showControls() {
-        if (!isActivityAlive()) return;
-        controlsVisible = true;
-        if (videoControlContainer != null) {
-            videoControlContainer.setVisibility(currentPageIsVideo ? View.VISIBLE : View.GONE);
-        }
-        setImmersiveFullscreen();
+    private void setChromeVisible(boolean visible) {
+        controlsVisible = visible;
 
-        videoHandler.removeCallbacks(hideControlsRunnable);
-        if (currentPageIsVideo && isVideoPlaying) {
-            hideControlsRunnable = this::hideControls;
-            videoHandler.postDelayed(hideControlsRunnable, CONTROLS_TIMEOUT);
-        }
-    }
-
-    private void hideControls() {
-        controlsVisible = false;
         if (videoControlContainer != null) {
-            videoControlContainer.setVisibility(View.GONE);
+            videoControlContainer.setVisibility(
+                    visible && currentPageIsVideo ? View.VISIBLE : View.GONE);
         }
-        videoHandler.removeCallbacks(hideControlsRunnable);
         setImmersiveFullscreen();
     }
 
-    private void showVideoControlsWithTimeout() {
-        if (videoControlContainer != null) {
-            videoControlContainer.setVisibility(View.VISIBLE);
-        }
-        videoHandler.removeCallbacks(hideControlsRunnable);
-        hideControlsRunnable = this::hideControls;
-        videoHandler.postDelayed(hideControlsRunnable, CONTROLS_TIMEOUT);
-    }
+
 
     private void resetVideoUi() {
         btnCenterPlayPause.setImageResource(android.R.drawable.ic_media_play);

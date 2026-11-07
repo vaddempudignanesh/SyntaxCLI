@@ -137,6 +137,8 @@ public class GalleryActivity extends AppCompatActivity {
     private RelativeLayout videoPlayerContainer;
     private VideoView videoView;
 
+    private boolean suppressChromeUntilNextTap = false;
+
     private final LinkedHashMap<String, GalleryMediaItem> trashedByPath = new LinkedHashMap<>();
     private final LinkedHashMap<String, String> albumDisplayNames = new LinkedHashMap<>();
 
@@ -162,6 +164,7 @@ public class GalleryActivity extends AppCompatActivity {
     private boolean dragSelectDeselectMode = false;
     private String dragAnchorPath = null;
     private float dragLastY = -1f;
+    private long lastDoubleTapTime = 0L;
     private float dragLastX = -1f;
     private int dragLastRectMinRow = -1, dragLastRectMaxRow = -1;
     private int dragLastRectMinCol = -1, dragLastRectMaxCol = -1;
@@ -1076,9 +1079,15 @@ public class GalleryActivity extends AppCompatActivity {
             for (String path : paths) {
                 File src = new File(path);
                 if (!src.exists()) { failed++; continue; }
-                if (privateVault.moveIntoPrivate(src) != null) {
+                File resultFile = privateVault.moveIntoPrivate(src);
+                if (resultFile != null) {
                     moved++;
                     movedFrom.add(path);
+                    if (src.exists()) {
+                        try { resultFile.delete(); } catch (Throwable ignored) {}
+                        moved--; failed++;
+                        movedFrom.remove(movedFrom.size() - 1);
+                    }
                 } else {
                     failed++;
                 }
@@ -1262,13 +1271,13 @@ public class GalleryActivity extends AppCompatActivity {
         cancelPendingChromeTap();
         pendingChromeTapRunnable = () -> {
             pendingChromeTapRunnable = null;
+            suppressChromeUntilNextTap = false;
             boolean newVisible = !fullscreenChromeVisible;
             if (newVisible) showAllControlsWithTimeout();
             else hideAllControls();
         };
         videoHandler.postDelayed(pendingChromeTapRunnable, SINGLE_TAP_DELAY_MS);
     }
-
     private Set<String> loadBinPaths() {
         if (prefs == null) return new HashSet<>();
         String raw = prefs.getString(PREF_BIN_PATHS, "");
@@ -2102,29 +2111,18 @@ public class GalleryActivity extends AppCompatActivity {
             int moved = 0, failed = 0;
             List<String> writtenPublicPaths = new ArrayList<>();
 
-            File picturesDir = new File(
+            File galleryDir = new File(
                     android.os.Environment.getExternalStoragePublicDirectory(
                             android.os.Environment.DIRECTORY_PICTURES), "AuraGallery");
-            File moviesDir = new File(
-                    android.os.Environment.getExternalStoragePublicDirectory(
-                            android.os.Environment.DIRECTORY_MOVIES), "AuraGallery");
-            if (!picturesDir.exists()) picturesDir.mkdirs();
-            if (!moviesDir.exists()) moviesDir.mkdirs();
+            if (!galleryDir.exists()) galleryDir.mkdirs();
 
             for (String path : paths) {
                 File src = new File(path);
                 if (!src.exists()) { failed++; continue; }
 
-                String lower = src.getName().toLowerCase(Locale.ROOT);
-                boolean isVideo = lower.endsWith(".mp4") || lower.endsWith(".mkv")
-                        || lower.endsWith(".webm") || lower.endsWith(".avi")
-                        || lower.endsWith(".mov") || lower.endsWith(".3gp")
-                        || lower.endsWith(".m4v") || lower.endsWith(".flv")
-                        || lower.endsWith(".wmv");
-                File dir = isVideo ? moviesDir : picturesDir;
+                File dir = galleryDir;
 
-                // Strip the "p_<epoch>_" (and optional "_<n>") prefix from the
-                // filename so the user gets a clean name back in the public folder.
+
                 String clean = stripPrivatePrefix(src.getName());
                 File dst = new File(dir, clean);
                 if (dst.exists()) {
@@ -2149,19 +2147,30 @@ public class GalleryActivity extends AppCompatActivity {
                 } catch (Exception ignored) {}
 
                 if (ok) {
-                    try { dst.setLastModified(src.lastModified()); } catch (Exception ignored) {}
-                    writtenPublicPaths.add(dst.getAbsolutePath());
-                    if (src.delete()) moved++;
-                    else moved++;
-                } else {
+                    boolean srcDeleted = src.delete();
+                    if (srcDeleted) {
+                        try { dst.setLastModified(src.lastModified()); } catch (Exception ignored) {}
+                        writtenPublicPaths.add(dst.getAbsolutePath());
+                        moved++;
+                    } else {
+                        try { dst.delete(); } catch (Exception ignored) {}
+                        failed++;
+                    }
+                }else {
                     dst.delete();
                     failed++;
                 }
             }
 
             if (!writtenPublicPaths.isEmpty()) {
+
+                final java.util.concurrent.CountDownLatch scanLatch =
+                        new java.util.concurrent.CountDownLatch(writtenPublicPaths.size());
                 MediaScannerConnection.scanFile(this,
-                        writtenPublicPaths.toArray(new String[0]), null, null);
+                        writtenPublicPaths.toArray(new String[0]), null,
+                        (path, uri) -> scanLatch.countDown());
+                try { scanLatch.await(3, java.util.concurrent.TimeUnit.SECONDS); }
+                catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
             }
 
             final int m = moved, f = failed;
@@ -2170,6 +2179,8 @@ public class GalleryActivity extends AppCompatActivity {
                 if (!isActivityAlive()) return;
                 mtimeCache.clear();
                 clearSelection();
+                // ★ Force the album cache to be rebuilt on the next open.
+                if (albumsController != null) albumsController.invalidateAlbums();
                 refreshCurrentList();
                 scheduleMediaRefresh(0L);
                 Toast.makeText(this,
@@ -2895,8 +2906,9 @@ public class GalleryActivity extends AppCompatActivity {
 
     private void buildFullscreenAdapter() {
         fullscreenAdapter = new FullscreenAdapter(fullscreenMediaPaths, this);
-        fullscreenAdapter.setTapCallback(null);   // handled by overlay listener
-
+        fullscreenAdapter.setTapCallback(() -> {
+            scheduleSingleTapOrCancel();
+        });
         fullscreenAdapter.setVideoTouchForwarder(event -> {
             if (overlayVideoGestureDetector != null) {
                 overlayVideoGestureDetector.onTouchEvent(event);
@@ -2920,14 +2932,19 @@ public class GalleryActivity extends AppCompatActivity {
                     @Override public boolean onDown(MotionEvent e) { return true; }
 
                     @Override public boolean onDoubleTap(MotionEvent e) {
+                        lastDoubleTapTime = System.currentTimeMillis();
                         cancelPendingChromeTap();
                         if (!currentFullscreenPageIsVideo || currentFullscreenVideo == null) return false;
-                        float tapX = e.getX();
-                        float w = fullscreenOverlay.getWidth();
-                        if (w <= 0) return false;
-                        if (tapX < w / 3f) skipByMs(-SKIP_BACKWARD_MS);
-                        else if (tapX > w * 2f / 3f) skipByMs(SKIP_FORWARD_MS);
-                        else toggleOverlayPlayPause();
+                        suppressChromeUntilNextTap = true;
+                        try {
+                            float tapX = e.getX();
+                            float w = fullscreenOverlay.getWidth();
+                            if (w <= 0) return false;
+                            if (tapX < w / 3f) skipByMs(-SKIP_BACKWARD_MS);
+                            else if (tapX > w * 2f / 3f) skipByMs(SKIP_FORWARD_MS);
+                            else toggleOverlayPlayPause();
+                        } finally {
+                        }
                         return true;
                     }
 
@@ -3003,11 +3020,8 @@ public class GalleryActivity extends AppCompatActivity {
                 } else {
                     retryProgressStart(15);
                 }
-                if (!userIsSwiping) {
-                    if (videoControlContainer != null)
-                        videoControlContainer.setVisibility(View.VISIBLE);
-                    setFullscreenChromeVisible(true);
-                    overlayControlsVisible = true;
+                if (!userIsSwiping && !overlayControlsVisible && !suppressChromeUntilNextTap) {
+                    showAllControlsWithTimeout();
                 }
             }
         });
@@ -3398,7 +3412,9 @@ public class GalleryActivity extends AppCompatActivity {
                                 && currentFullscreenVideoPosition == targetPosition) {
                             restoreSavedPlaybackState(vv, targetPosition);
                             syncOverlayPlayPauseIcon();
-                            showAllControlsWithTimeout();
+                            if (!overlayControlsVisible && !suppressChromeUntilNextTap) {
+                                showAllControlsWithTimeout();
+                            }
                             return;
                         }
 
@@ -3408,13 +3424,6 @@ public class GalleryActivity extends AppCompatActivity {
                         overlayPendingSeekMs = -1;
                         vv.setOnPreparedListener(mp -> {
                             attachLoudnessEnhancer(mp.getAudioSessionId());
-                            // The FullscreenAdapter installed its own prepared listener that hides
-                            // the per-page progress bar. We just replaced it, so hide it ourselves
-                            // here so the spinner doesn't stay up while the video plays.
-                            //
-                            // Variable names are prefixed with `pb` to avoid shadowing the outer
-                            // `rv`/`i`/`child`/`vh` already declared in this method (Java lambdas
-                            // cannot shadow enclosing locals).
                             final int pbPos = fullscreenCurrentPosition;
                             try {
                                 RecyclerView pbRv = (RecyclerView) fullscreenViewPager.getChildAt(0);
@@ -3798,6 +3807,7 @@ public class GalleryActivity extends AppCompatActivity {
     }
 
     private void showAllControlsWithTimeout() {
+        if (suppressChromeUntilNextTap) return;
         setFullscreenChromeVisible(true);
         if (currentFullscreenPageIsVideo && videoControlContainer != null) {
             videoControlContainer.setVisibility(View.VISIBLE);
@@ -3814,7 +3824,6 @@ public class GalleryActivity extends AppCompatActivity {
             videoHandler.postDelayed(overlayHideControlsRunnable, OVERLAY_CONTROLS_TIMEOUT);
         }
     }
-
     private void hideAllControls() {
         setFullscreenChromeVisible(false);
         if (videoControlContainer != null)
@@ -4105,8 +4114,13 @@ public class GalleryActivity extends AppCompatActivity {
                             && Math.abs(event.getY() - startY[0]) < DEAD_ZONE_PX
                             && Math.abs(event.getX() - startX[0]) < DEAD_ZONE_PX;
                     if (wasTap) {
-                        if (suppressNextUpTap[0]) suppressNextUpTap[0] = false;
-                        else scheduleSingleTapOrCancel();   // ← delayed, not immediate
+                        long sinceDoubleTap = System.currentTimeMillis() - lastDoubleTapTime;
+                        if (sinceDoubleTap > 100L) {
+                            if (suppressNextUpTap[0]) suppressNextUpTap[0] = false;
+                            else scheduleSingleTapOrCancel();
+                        } else {
+                            suppressNextUpTap[0] = false;
+                        }
                     } else {
                         suppressNextUpTap[0] = false;
                     }

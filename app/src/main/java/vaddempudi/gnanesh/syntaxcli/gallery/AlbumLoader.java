@@ -209,7 +209,10 @@ public final class AlbumLoader {
                 String path = dataCol >= 0 ? c.getString(dataCol) : null;
                 if (TextUtils.isEmpty(path)) continue;
                 if (!path.startsWith(prefix)) continue;
-
+                String fileName = new File(path).getName();
+                if (fileName.startsWith(".trashed.")) continue;
+                if (path.contains("/.trashed.")) continue;
+                if (fileName.startsWith("p_")) continue;
                 long id = idCol >= 0 ? c.getLong(idCol) : -1L;
                 String name = nameCol >= 0 ? c.getString(nameCol) : null;
                 if (TextUtils.isEmpty(name)) name = new File(path).getName();
