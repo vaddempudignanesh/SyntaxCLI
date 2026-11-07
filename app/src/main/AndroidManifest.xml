@@ -184,6 +184,7 @@
             android:name=".managers.notifications.KeeperService"
             android:enabled="true"
             android:exported="false"
+            android:process=":keeper"
             android:foregroundServiceType="specialUse">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_TYPE"
                 android:value="Maintains the launcher console state and provides persistent access to T-UI commands via notification."/>
@@ -192,6 +193,7 @@
         <service
             android:name=".ime.BasicImeService"
             android:label="@string/app_name"
+            android:process=":keyboard"
             android:permission="android.permission.BIND_INPUT_METHOD"
             android:exported="true">
             <intent-filter>
@@ -204,11 +206,13 @@
 
         <service
             android:name=".browser.AuraDownloadService"
+            android:process=":downloads"
             android:foregroundServiceType="dataSync"
             android:exported="false" />
 
         <service
             android:name=".musicplayer.MusicPlaybackService"
+            android:process=":music"
             android:foregroundServiceType="mediaPlayback"
             android:exported="false"
             android:stopWithTask="false" />
@@ -216,6 +220,7 @@
         <service
             android:name=".managers.music.MusicService"
             android:enabled="true"
+            android:process=":music"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
 
@@ -316,6 +321,7 @@
             android:name=".alarm.AlarmService"
             android:enabled="true"
             android:exported="false"
+            android:process=":alarm"
             android:foregroundServiceType="specialUse"
             android:stopWithTask="false">
             <property
@@ -325,6 +331,7 @@
 
         <receiver
             android:name=".alarm.AlarmReceiver"
+            android:process=":alarm"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
