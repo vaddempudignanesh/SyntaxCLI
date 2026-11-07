@@ -337,55 +337,7 @@ public class GalleryActivity extends AppCompatActivity {
             btnPrivateLogout.setOnClickListener(v -> exitPrivateMode());
         }
     }
-
-
-    private void pickFromGalleryToAddToPrivate() {
-        // Build the candidate list from what the gallery actually has.
-        // We use cachedMedia because it is the authoritative list the grid
-        // renders from, so every item the user can see in the grid is
-        // selectable here.
-        final List<GalleryMediaItem> candidates = new ArrayList<>();
-        for (GalleryMediaItem it : cachedMedia) {
-            if (it == null || it.path == null) continue;
-            if (it.isTrashed) continue;                                  // don't re-add trashed
-            if (it.path.contains("/private/")) continue;                 // already private
-            File f = new File(it.path);
-            if (!f.exists()) continue;
-            candidates.add(it);
-        }
-
-        if (candidates.isEmpty()) {
-            Toast.makeText(this, "No gallery items to move", Toast.LENGTH_SHORT).show();
-            return;
-        }
-
-        // Multi-select via AlertDialog.setMultiChoiceItems. We keep a
-        // parallel boolean[] so we can read the final selection on OK.
-        final boolean[] checked = new boolean[candidates.size()];
-        final CharSequence[] labels = new CharSequence[candidates.size()];
-        for (int i = 0; i < candidates.size(); i++) {
-            GalleryMediaItem it = candidates.get(i);
-            String name = it.displayName != null ? it.displayName : new File(it.path).getName();
-            String kind = it.type == GalleryMediaItem.TYPE_VIDEO ? "[VIDEO] " : "[IMAGE] ";
-            labels[i] = kind + name;
-        }
-
-        new AlertDialog.Builder(this)
-                .setTitle("Pick from Gallery → Private")
-                .setMultiChoiceItems(labels, checked,
-                        (d, which, isChecked) -> checked[which] = isChecked)
-                .setPositiveButton("MOVE TO PRIVATE", (d, w) -> {
-                    List<File> toMove = new ArrayList<>();
-                    for (int i = 0; i < candidates.size(); i++) {
-                        if (checked[i]) toMove.add(new File(candidates.get(i).path));
-                    }
-                    if (toMove.isEmpty()) return;
-                    moveFilesToPrivate(toMove);
-                })
-                .setNegativeButton("Cancel", null)
-                .show();
-    }
-
+    
 
     private void moveFilesToPrivate(List<File> files) {
         if (privateVault == null) return;
@@ -421,35 +373,6 @@ public class GalleryActivity extends AppCompatActivity {
         });
     }
 
-    private void updatePrivateAddButtonVisibility() {
-        boolean visible = currentFilter == FilterMode.PRIVATE;
-        if (privateAddButton != null) {
-            privateAddButton.setVisibility(visible ? View.VISIBLE : View.GONE);
-        }
-        if (privateChangePwButton != null) {
-            privateChangePwButton.setVisibility(visible ? View.VISIBLE : View.GONE);
-        }
-    }
-
-    private void changePrivatePassword() {
-        if (privateVault == null) return;
-        if (!privateUnlocked) {
-            Toast.makeText(this, "Unlock the private tab first", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        // The dialog's "change" mode asks for old + new + confirm.
-        PrivateLockDialog.showChange(this, privateVault,
-                new PrivateLockDialog.OnResult() {
-                    @Override public void onUnlocked() {
-                        Toast.makeText(GalleryActivity.this,
-                                "Password changed", Toast.LENGTH_SHORT).show();
-                    }
-                    @Override public void onCancelled() {
-                        Toast.makeText(GalleryActivity.this,
-                                "Password unchanged", Toast.LENGTH_SHORT).show();
-                    }
-                });
-    }
 
 
     private void bindViews() {
@@ -629,12 +552,12 @@ public class GalleryActivity extends AppCompatActivity {
     }
 
 
-    /** True while an album's media grid is the one on screen. */
+
     private boolean albumIsActive() {
         return albumsController != null && albumsController.isAlbumOpen();
     }
 
-    /** Idempotently install the SAME drag-select interceptor on the album grid. */
+
     private void attachDragSelectToAlbumRecycler() {
         if (!albumIsActive()) return;
         RecyclerView mr = albumsController.getMediaRecycler();
@@ -684,10 +607,6 @@ public class GalleryActivity extends AppCompatActivity {
             return true;
         }
         return false;
-    }
-    private boolean repositoryIsFullyLoaded() {
-
-        return repositoryAtEnd;
     }
 
 
@@ -1789,17 +1708,6 @@ public class GalleryActivity extends AppCompatActivity {
         selectionBar.addView(btn);
     }
 
-    private void onAlbumSelected(AlbumRecord album) {
-        albumsController.openAlbum(album);
-    }
-
-    private void navigateBackFromAlbum() {
-        if (!albumsController.onBack()) {
-            // Nothing to go back to.
-        }
-        updateTopNavBar();
-        updateBarsVisibility();
-    }
 
     private void updateTopNavBar() {
         ImageButton btnBack = findViewById(R.id.btnBackGallery);
@@ -1886,24 +1794,6 @@ public class GalleryActivity extends AppCompatActivity {
         }
     }
 
-    private void installChangePwInTopBar() {
-        if (selectionTopBar == null) return;
-        ViewGroup group = (ViewGroup) selectionTopBar;
-        if (group.findViewWithTag("change_pw_topbar") != null) return;
-
-        privateChangePwInTopBar = new TextView(this);
-        privateChangePwInTopBar.setTag("change_pw_topbar");
-        privateChangePwInTopBar.setText("CHANGE PW");
-        privateChangePwInTopBar.setTextColor(0xFF33FF33);
-        privateChangePwInTopBar.setTypeface(android.graphics.Typeface.MONOSPACE);
-        privateChangePwInTopBar.setTextSize(11);
-        privateChangePwInTopBar.setPadding(dpToPx(10), dpToPx(8), dpToPx(10), dpToPx(8));
-        privateChangePwInTopBar.setClickable(true);
-        privateChangePwInTopBar.setFocusable(true);
-        privateChangePwInTopBar.setOnClickListener(v -> changePrivatePassword());
-        privateChangePwInTopBar.setVisibility(View.GONE);
-        group.addView(privateChangePwInTopBar);
-    }
     private void showEmptyState() {
         View emptyView = findViewById(R.id.emptyStateContainer);
         if (emptyView == null) return;
@@ -2290,7 +2180,7 @@ public class GalleryActivity extends AppCompatActivity {
         });
     }
 
-    /** Removes "p_<epoch>_" and the optional "_<n>" collision suffix. */
+
     private String stripPrivatePrefix(String name) {
         if (name == null || !name.startsWith("p_")) return name;
         int firstUnderscore = name.indexOf('_');
