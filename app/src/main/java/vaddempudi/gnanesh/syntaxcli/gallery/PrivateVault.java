@@ -47,10 +47,14 @@ public final class PrivateVault {
     private static final String K_SALT = "private_pw_salt";
     private static final String FILE_DIR = "t-ui";
     private static final String FILE_NAME = "private_password.txt";
-
+    private static final String K_MANIFEST = "private_manifest";
     private static final int PBKDF2_ITERATIONS = 100_000;
     private static final int PBKDF2_KEY_BITS = 256;
     private static final int SALT_BYTES = 16;
+
+    private final java.util.Map<String, String> manifest = new java.util.HashMap<>();
+    private boolean manifestLoaded = false;
+
 
     private final Context appCtx;
     private final SharedPreferences prefs;
@@ -72,17 +76,83 @@ public final class PrivateVault {
         return loadStoredPassword() != null;
     }
 
-    /**
-     * Creates the password. Returns false if a password already exists
-     * (use {@link #changePassword(String, String)} for that path).
-     */
+
+    private synchronized void ensureManifestLoaded() {
+        if (manifestLoaded) return;
+        manifestLoaded = true;
+        String raw = prefs.getString(K_MANIFEST, "");
+        if (raw == null || raw.isEmpty()) return;
+        for (String line : raw.split("\n")) {
+            if (line.isEmpty()) continue;
+            int tab = line.indexOf('\t');
+            if (tab <= 0 || tab >= line.length() - 1) continue;
+            manifest.put(line.substring(0, tab), line.substring(tab + 1));
+        }
+    }
+
+    private synchronized void saveManifest() {
+        StringBuilder sb = new StringBuilder();
+        for (java.util.Map.Entry<String, String> e : manifest.entrySet()) {
+            sb.append(e.getKey()).append('\t').append(e.getValue()).append('\n');
+        }
+        prefs.edit().putString(K_MANIFEST, sb.toString()).apply();
+    }
+
+    public String getOriginalPath(String privateFileName) {
+        if (privateFileName == null) return null;
+        ensureManifestLoaded();
+        synchronized (this) { return manifest.get(privateFileName); }
+    }
+
+    public void rememberOriginal(String privateFileName, String originalPath) {
+        if (privateFileName == null || originalPath == null) return;
+        ensureManifestLoaded();
+        synchronized (this) {
+            manifest.put(privateFileName, originalPath);
+            saveManifest();
+        }
+    }
+
+    public interface CopyProgress {
+        void onProgress(long bytesDone, long bytesTotal, String currentFileName);
+    }
+
+    private static long copyWithProgress(File src, File dst, long bytesBefore,
+                                         long bytesTotal, CopyProgress cb) throws Exception {
+        final int BUF = 256 * 1024;              // 256 KB — bigger for video
+        long copied = 0;
+        long lastReport = 0;
+
+        try (InputStream in = new java.io.BufferedInputStream(new FileInputStream(src), BUF);
+             OutputStream out = new java.io.BufferedOutputStream(new FileOutputStream(dst), BUF)) {
+            byte[] buf = new byte[BUF];
+            int n;
+            while ((n = in.read(buf)) > 0) {
+                out.write(buf, 0, n);
+                copied += n;
+                if (cb != null && (copied - lastReport >= 1_000_000L)) {  // every ~1 MB
+                    lastReport = copied;
+                    cb.onProgress(bytesBefore + copied, bytesTotal, src.getName());
+                }
+            }
+            out.flush();
+        }
+        return copied;
+    }
+    public void forgetOriginal(String privateFileName) {
+        if (privateFileName == null) return;
+        ensureManifestLoaded();
+        synchronized (this) {
+            if (manifest.remove(privateFileName) != null) saveManifest();
+        }
+    }
+
     public boolean createPassword(String plain) {
         if (plain == null || plain.isEmpty()) return false;
         if (hasPassword()) return false;
         return writePassword(plain);
     }
 
-    /** Verifies a password against the stored hash. */
     public boolean verifyPassword(String plain) {
         if (plain == null || plain.isEmpty()) return false;
         Stored s = loadStoredPassword();
@@ -92,7 +162,6 @@ public final class PrivateVault {
         return constantTimeEquals(candidate, s.hash);
     }
 
-    /** Changes the password. Requires the old one. */
     public boolean changePassword(String oldPlain, String newPlain) {
         if (!verifyPassword(oldPlain)) return false;
         if (newPlain == null || newPlain.isEmpty()) return false;
@@ -195,25 +264,22 @@ public final class PrivateVault {
         }
     }
 
-    // ── Media moving ─────────────────────────────────────────────────
 
-    /**
-     * Copies {@code source} into the private directory under a unique name,
-     * then deletes the source. Returns the new File, or null on failure.
-     *
-     * The extension is preserved so the type (image vs video) can still be
-     * determined from the name. The original name is kept (sanitized) so
-     * the user can recognise files in the private grid.
-     */
     public File moveIntoPrivate(File source) {
+        return moveIntoPrivate(source, null, 0L, 0L);
+    }
+
+    public File moveIntoPrivate(File source, CopyProgress cb,
+                                long bytesBefore, long bytesTotal) {
         if (source == null || !source.exists() || !source.isFile()) return null;
         if (source.length() <= 0) return null;
+
+        final String originalPath = source.getAbsolutePath();
+        final long srcLen = source.length();
 
         String name = source.getName();
         String sanitized = sanitizeName(name);
         File dest = new File(privateDir, "p_" + System.currentTimeMillis() + "_" + sanitized);
-
-        // Avoid a collision (two moves in the same millisecond).
         int suffix = 1;
         while (dest.exists()) {
             dest = new File(privateDir, "p_" + System.currentTimeMillis()
@@ -221,12 +287,12 @@ public final class PrivateVault {
             suffix++;
         }
 
-        try (InputStream in = new FileInputStream(source);
-             OutputStream out = new FileOutputStream(dest)) {
-            byte[] buf = new byte[64 * 1024];
-            int n;
-            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
-            out.flush();
+        long copied;
+        try {
+            copied = copyWithProgress(source, dest,
+                    bytesBefore,
+                    bytesTotal > 0 ? bytesTotal : srcLen,
+                    cb);
         } catch (Throwable t) {
             Log.w(TAG, "copy failed for " + source, t);
             //noinspection ResultOfMethodCallIgnored
@@ -234,23 +300,22 @@ public final class PrivateVault {
             return null;
         }
 
-        if (dest.length() > 0) {
+        if (copied > 0 && dest.length() > 0) {
             try { dest.setLastModified(source.lastModified()); } catch (Throwable ignored) {}
 
             source.delete();
+            rememberOriginal(dest.getName(), originalPath);
             return dest;
         }
         dest.delete();
         return null;
     }
 
-    /** Deletes a private file permanently. */
     public boolean deletePrivate(File f) {
         if (f == null) return false;
         return f.delete();
     }
 
-    /** Lists the private files as GalleryMediaItem, newest first. */
     public List<GalleryMediaItem> listPrivateItems() {
         List<GalleryMediaItem> out = new ArrayList<>();
         File[] files = privateDir.listFiles();
@@ -300,7 +365,6 @@ public final class PrivateVault {
 
     public File getPrivateDir() { return privateDir; }
 
-    // ── helpers ─────────────────────────────────────────────────────
 
     private static String sanitizeName(String name) {
         // Strip any path separators and nulls; cap length.

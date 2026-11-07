@@ -210,6 +210,11 @@ public class GalleryActivity extends AppCompatActivity {
     private boolean isLandscape = false;
     private View decorView;
 
+    private AlertDialog moveProgressDialog;
+    private TextView   moveProgressText;
+    private ProgressBar moveProgressBar;
+    private long       lastProgressUiPostMs = 0L;
+
     private TextView privateTabImages, privateTabVideos, privateTabPFiles;
     private LinearLayout privateTabsBar;
     private TextView btnPrivateLogout;
@@ -340,32 +345,46 @@ public class GalleryActivity extends AppCompatActivity {
             btnPrivateLogout.setOnClickListener(v -> exitPrivateMode());
         }
     }
-    
+
 
     private void moveFilesToPrivate(List<File> files) {
-        if (privateVault == null) return;
-        final Toast progress = Toast.makeText(this, "Moving to Private…", Toast.LENGTH_SHORT);
-        progress.show();
+        if (privateVault == null || files == null || files.isEmpty()) return;
+
+        long totalBytes = 0;
+        for (File f : files) if (f != null && f.exists()) totalBytes += f.length();
+        final long grandTotal = totalBytes;
+
+        showMoveProgress("MOVING TO PRIVATE",
+                grandTotal > 0 ? "0 B / " + formatFileSize(grandTotal) : "Preparing…");
 
         executor.execute(() -> {
             int moved = 0, failed = 0;
+            long bytesBefore = 0;
+            List<String> oldPaths = new ArrayList<>();
+
+            PrivateVault.CopyProgress cb = (done, total, name) ->
+                    updateMoveProgress(done, grandTotal, name);
+
             for (File source : files) {
                 if (source == null || !source.exists()) { failed++; continue; }
-                if (privateVault.moveIntoPrivate(source) != null) moved++;
-                else failed++;
+                long srcLen = source.length();
+                if (privateVault.moveIntoPrivate(source, cb, bytesBefore, grandTotal) != null) {
+                    bytesBefore += srcLen;
+                    moved++;
+                    oldPaths.add(source.getAbsolutePath());
+                } else {
+                    failed++;
+                }
             }
+
             final int m = moved, f = failed;
+            final List<String> oldPathsFinal = oldPaths;
             runOnUiThread(() -> {
-                progress.cancel();
+                dismissMoveProgress();
                 if (!isActivityAlive()) return;
 
-                java.util.List<String> oldPaths = new java.util.ArrayList<>();
-                for (File src : files) {
-                    if (src != null) oldPaths.add(src.getAbsolutePath());
-                }
-
                 mtimeCache.clear();
-                notifyMediaStoreDeleted(oldPaths);
+                notifyMediaStoreDeleted(oldPathsFinal);
                 scheduleMediaRefresh(0L);
                 refreshCurrentList();
 
@@ -1070,17 +1089,35 @@ public class GalleryActivity extends AppCompatActivity {
         }
 
         final List<String> paths = new ArrayList<>(selectedItems);
-        final Toast progress = Toast.makeText(this, "Moving to Private…", Toast.LENGTH_SHORT);
-        progress.show();
+
+        // ★ Sum bytes for the progress bar.
+        long totalBytes = 0;
+        for (String p : paths) {
+            File f = new File(p);
+            if (f.exists()) totalBytes += f.length();
+        }
+        final long grandTotal = totalBytes;
+
+        showMoveProgress("MOVING TO PRIVATE",
+                grandTotal > 0 ? "0 B / " + formatFileSize(grandTotal) : "Preparing…");
 
         executor.execute(() -> {
             int moved = 0, failed = 0;
+            long bytesBefore = 0;
             List<String> movedFrom = new ArrayList<>();
+
+            PrivateVault.CopyProgress cb = (done, total, name) ->
+                    updateMoveProgress(done, grandTotal, name);
+
             for (String path : paths) {
                 File src = new File(path);
                 if (!src.exists()) { failed++; continue; }
-                File resultFile = privateVault.moveIntoPrivate(src);
+
+                long srcLen = src.length();
+                File resultFile = privateVault.moveIntoPrivate(src, cb,
+                        bytesBefore, grandTotal);
                 if (resultFile != null) {
+                    bytesBefore += srcLen;
                     moved++;
                     movedFrom.add(path);
                     if (src.exists()) {
@@ -1092,12 +1129,12 @@ public class GalleryActivity extends AppCompatActivity {
                     failed++;
                 }
             }
+
             final int m = moved, f = failed;
             final List<String> movedPaths = movedFrom;
             runOnUiThread(() -> {
-                progress.cancel();
+                dismissMoveProgress();
                 if (!isActivityAlive()) return;
-
 
                 for (int i = cachedMedia.size() - 1; i >= 0; i--) {
                     if (movedPaths.contains(cachedMedia.get(i).path)) {
@@ -1976,7 +2013,89 @@ public class GalleryActivity extends AppCompatActivity {
         }
     }
 
+    private void showMoveProgress(String title, String initialMessage) {
+        if (!isActivityAlive()) return;
+        if (moveProgressDialog != null && moveProgressDialog.isShowing()) return;
 
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dpToPx(24), dpToPx(20), dpToPx(24), dpToPx(20));
+        root.setBackgroundColor(0xFF000000);
+
+        TextView t = new TextView(this);
+        t.setText(title);
+        t.setTextColor(0xFF33FF33);
+        t.setTypeface(android.graphics.Typeface.MONOSPACE);
+        t.setTextSize(14);
+        t.setGravity(Gravity.CENTER);
+        t.setPadding(0, 0, 0, dpToPx(12));
+        root.addView(t);
+
+        moveProgressBar = new ProgressBar(this, null,
+                android.R.attr.progressBarStyleHorizontal);
+        moveProgressBar.setMax(1000);
+        moveProgressBar.setProgress(0);
+        root.addView(moveProgressBar, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dpToPx(8)));
+
+        moveProgressText = new TextView(this);
+        moveProgressText.setText(initialMessage);
+        moveProgressText.setTextColor(0xFFCCCCCC);
+        moveProgressText.setTypeface(android.graphics.Typeface.MONOSPACE);
+        moveProgressText.setTextSize(11);
+        moveProgressText.setGravity(Gravity.CENTER);
+        moveProgressText.setPadding(0, dpToPx(10), 0, 0);
+        root.addView(moveProgressText);
+
+        moveProgressDialog = new AlertDialog.Builder(this, 0)
+                .setView(root)
+                .setCancelable(false)
+                .create();
+        moveProgressDialog.setOnDismissListener(d -> {
+            moveProgressDialog = null;
+            moveProgressText = null;
+            moveProgressBar = null;
+        });
+        moveProgressDialog.show();
+        if (moveProgressDialog.getWindow() != null) {
+            moveProgressDialog.getWindow().setBackgroundDrawableResource(
+                    android.R.color.transparent);
+            moveProgressDialog.getWindow().setLayout(
+                    (int) (getResources().getDisplayMetrics().widthPixels * 0.85f),
+                    WindowManager.LayoutParams.WRAP_CONTENT);
+        }
+    }
+
+    private void updateMoveProgress(final long done, final long total,
+                                    final String fileName) {
+        // Throttle: never post more than ~20 fps worth of updates.
+        long now = System.currentTimeMillis();
+        if (now - lastProgressUiPostMs < 50L && done < total) return;
+        lastProgressUiPostMs = now;
+
+        runOnUiThread(() -> {
+            if (moveProgressBar == null || moveProgressText == null) return;
+            int pct = total > 0
+                    ? (int) Math.min(1000L, (done * 1000L) / total)
+                    : 0;
+            moveProgressBar.setProgress(pct);
+
+            String humanDone = formatFileSize(done);
+            String humanTotal = total > 0 ? formatFileSize(total) : "?";
+            String name = fileName == null ? "" : fileName;
+            if (name.length() > 32) name = "…" + name.substring(name.length() - 31);
+            moveProgressText.setText(humanDone + " / " + humanTotal + "\n" + name);
+        });
+    }
+
+    private void dismissMoveProgress() {
+        if (moveProgressDialog != null) {
+            try { moveProgressDialog.dismiss(); } catch (Exception ignored) {}
+            moveProgressDialog = null;
+        }
+        moveProgressText = null;
+        moveProgressBar = null;
+    }
 
     private void toggleSelection(String path) {
         if (selectedItems.contains(path)) selectedItems.remove(path);
@@ -2103,83 +2222,120 @@ public class GalleryActivity extends AppCompatActivity {
         if (selectedItems.isEmpty() || privateVault == null) return;
 
         final List<String> paths = new ArrayList<>(selectedItems);
-        final Toast progress = Toast.makeText(this, "Moving out of Private…",
-                Toast.LENGTH_SHORT);
-        progress.show();
+
+        long totalBytes = 0;
+        for (String p : paths) {
+            File f = new File(p);
+            if (f.exists()) totalBytes += f.length();
+        }
+        final long grandTotal = totalBytes;
+
+        showMoveProgress("MOVING OUT OF PRIVATE",
+                grandTotal > 0 ? "0 B / " + formatFileSize(grandTotal) : "Preparing…");
 
         executor.execute(() -> {
             int moved = 0, failed = 0;
+            long bytesBefore = 0;
             List<String> writtenPublicPaths = new ArrayList<>();
-
-            File galleryDir = new File(
-                    android.os.Environment.getExternalStoragePublicDirectory(
-                            android.os.Environment.DIRECTORY_PICTURES), "AuraGallery");
-            if (!galleryDir.exists()) galleryDir.mkdirs();
 
             for (String path : paths) {
                 File src = new File(path);
                 if (!src.exists()) { failed++; continue; }
 
-                File dir = galleryDir;
+                final long srcMtime = src.lastModified();
+                final long srcLen   = src.length();
+                final String fileName = src.getName();
+                final String clean = stripPrivatePrefix(fileName);
 
+                String originalPath = privateVault.getOriginalPath(fileName);
 
-                String clean = stripPrivatePrefix(src.getName());
-                File dst = new File(dir, clean);
-                if (dst.exists()) {
-                    String base = clean, ext = "";
-                    int dot = clean.lastIndexOf(".");
-                    if (dot > 0) { base = clean.substring(0, dot); ext = clean.substring(dot); }
-                    int suffix = 1;
-                    while (dst.exists()) {
-                        dst = new File(dir, base + "_" + suffix + ext);
-                        suffix++;
+                File dst;
+                if (originalPath != null) {
+                    File origFile = new File(originalPath);
+                    File origDir = origFile.getParentFile();
+                    if (origDir != null && !origDir.exists()) {
+                        try { origDir.mkdirs(); } catch (Throwable ignored) {}
                     }
+                    if (origDir != null && origDir.isDirectory()) {
+                        String base = clean, ext = "";
+                        int dot = clean.lastIndexOf('.');
+                        if (dot > 0) { base = clean.substring(0, dot); ext = clean.substring(dot); }
+                        File candidate = new File(origDir, clean);
+                        int suffix = 1;
+                        while (candidate.exists()) {
+                            candidate = new File(origDir, base + "_" + suffix + ext);
+                            suffix++;
+                        }
+                        dst = candidate;
+                    } else {
+                        dst = fallbackOutTarget(clean);
+                    }
+                } else {
+                    dst = fallbackOutTarget(clean);
                 }
 
+                if (dst == null) { failed++; continue; }
+
+                // ★ Stream with progress.
                 boolean ok = false;
-                try (java.io.InputStream in = new java.io.FileInputStream(src);
-                     java.io.OutputStream out = new java.io.FileOutputStream(dst)) {
-                    byte[] buf = new byte[64 * 1024];
+                final int BUF = 256 * 1024;
+                long copied = 0;
+                long lastReport = 0;
+                try (java.io.InputStream in =
+                             new java.io.BufferedInputStream(new java.io.FileInputStream(src), BUF);
+                     java.io.OutputStream out =
+                             new java.io.BufferedOutputStream(new java.io.FileOutputStream(dst), BUF)) {
+                    byte[] buf = new byte[BUF];
                     int n;
-                    while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                    while ((n = in.read(buf)) > 0) {
+                        out.write(buf, 0, n);
+                        copied += n;
+                        if (copied - lastReport >= 1_000_000L) {
+                            lastReport = copied;
+                            updateMoveProgress(bytesBefore + copied, grandTotal, fileName);
+                        }
+                    }
                     out.flush();
                     ok = dst.length() > 0;
                 } catch (Exception ignored) {}
 
                 if (ok) {
+                    if (srcMtime > 0L) {
+                        try { dst.setLastModified(srcMtime); } catch (Exception ignored) {}
+                    }
+
                     boolean srcDeleted = src.delete();
                     if (srcDeleted) {
-                        try { dst.setLastModified(src.lastModified()); } catch (Exception ignored) {}
+                        bytesBefore += srcLen;
                         writtenPublicPaths.add(dst.getAbsolutePath());
+                        privateVault.forgetOriginal(fileName);
                         moved++;
                     } else {
                         try { dst.delete(); } catch (Exception ignored) {}
                         failed++;
                     }
-                }else {
+                } else {
                     dst.delete();
                     failed++;
                 }
             }
 
             if (!writtenPublicPaths.isEmpty()) {
-
                 final java.util.concurrent.CountDownLatch scanLatch =
                         new java.util.concurrent.CountDownLatch(writtenPublicPaths.size());
                 MediaScannerConnection.scanFile(this,
                         writtenPublicPaths.toArray(new String[0]), null,
-                        (path, uri) -> scanLatch.countDown());
+                        (p, uri) -> scanLatch.countDown());
                 try { scanLatch.await(3, java.util.concurrent.TimeUnit.SECONDS); }
                 catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
             }
 
             final int m = moved, f = failed;
             runOnUiThread(() -> {
-                progress.cancel();
+                dismissMoveProgress();
                 if (!isActivityAlive()) return;
                 mtimeCache.clear();
                 clearSelection();
-                // ★ Force the album cache to be rebuilt on the next open.
                 if (albumsController != null) albumsController.invalidateAlbums();
                 refreshCurrentList();
                 scheduleMediaRefresh(0L);
@@ -2191,6 +2347,25 @@ public class GalleryActivity extends AppCompatActivity {
         });
     }
 
+    private File fallbackOutTarget(String cleanName) {
+        File dir = new File(
+                android.os.Environment.getExternalStoragePublicDirectory(
+                        android.os.Environment.DIRECTORY_PICTURES), "AuraGallery");
+        if (!dir.exists()) dir.mkdirs();
+        if (!dir.isDirectory()) return null;
+
+        String base = cleanName, ext = "";
+        int dot = cleanName.lastIndexOf('.');
+        if (dot > 0) { base = cleanName.substring(0, dot); ext = cleanName.substring(dot); }
+
+        File dst = new File(dir, cleanName);
+        int suffix = 1;
+        while (dst.exists()) {
+            dst = new File(dir, base + "_" + suffix + ext);
+            suffix++;
+        }
+        return dst;
+    }
 
     private String stripPrivatePrefix(String name) {
         if (name == null || !name.startsWith("p_")) return name;
@@ -2572,6 +2747,10 @@ public class GalleryActivity extends AppCompatActivity {
 
     private void moveSelectedToTrash() {
         if (selectedItems.isEmpty()) return;
+
+        // In the Private tab the correct action is handled by
+        // rebuildSelectionActions → moveSelectedOutOfPrivate(), so a direct
+        // call here should just delete (matches old behaviour). Keep it simple.
         if (currentFilter == FilterMode.PRIVATE) {
             final List<String> paths = new ArrayList<>(selectedItems);
             final Toast t = Toast.makeText(this, "Deleting…", Toast.LENGTH_SHORT);
@@ -2587,7 +2766,6 @@ public class GalleryActivity extends AppCompatActivity {
                 runOnUiThread(() -> {
                     t.cancel();
                     if (!isActivityAlive()) return;
-                    // Drop deleted items from the in-memory cache.
                     for (String path : paths) {
                         for (int i = cachedMedia.size() - 1; i >= 0; i--) {
                             if (cachedMedia.get(i).path.equals(path)) {
@@ -2599,15 +2777,15 @@ public class GalleryActivity extends AppCompatActivity {
                     mtimeCache.clear();
                     clearSelection();
                     refreshCurrentList();
-                    Toast.makeText(this, "Deleted " + dd
-                                    + (ff > 0 ? ", failed " + ff : ""),
+                    Toast.makeText(this,
+                            "Deleted " + dd + (ff > 0 ? ", failed " + ff : ""),
                             Toast.LENGTH_SHORT).show();
                 });
             });
             return;
         }
 
-        // ... existing (public gallery) rename-to-.trashed. code follows unchanged ...
+        // Public gallery → rename to ".trashed." (existing behaviour).
         final List<String> paths = new ArrayList<>(selectedItems);
         final Toast t = Toast.makeText(this, "Moving…", Toast.LENGTH_SHORT);
         t.show();
