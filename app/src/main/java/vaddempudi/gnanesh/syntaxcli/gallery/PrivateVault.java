@@ -234,13 +234,12 @@ public final class PrivateVault {
             return null;
         }
 
-        // Only delete the source once the copy is verified.
         if (dest.length() > 0) {
-            //noinspection ResultOfMethodCallIgnored
+            try { dest.setLastModified(source.lastModified()); } catch (Throwable ignored) {}
+
             source.delete();
             return dest;
         }
-        //noinspection ResultOfMethodCallIgnored
         dest.delete();
         return null;
     }

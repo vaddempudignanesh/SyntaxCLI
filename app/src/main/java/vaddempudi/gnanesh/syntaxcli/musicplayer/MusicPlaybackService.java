@@ -80,7 +80,6 @@ public class MusicPlaybackService extends Service {
         super.onCreate();
         createChannel();
         initMediaSession();
-        // NOTE: do NOT requestAudioFocus() here. Only request it when playback starts.
 
         updateReceiver = new BroadcastReceiver() {
             @Override public void onReceive(Context context, Intent intent) {
@@ -336,10 +335,6 @@ public class MusicPlaybackService extends Service {
         long dur = state != null
                 ? state.getLongExtra(EXTRA_DUR_MS, MusicPlayerActivity.lastKnownDurationMs)
                 : MusicPlayerActivity.lastKnownDurationMs;
-        if (dur > 0) {
-            text += "  \u2022  " + fmt(pos) + " / " + fmt(dur);
-        }
-
         Intent openIntent = new Intent(this, MusicPlayerActivity.class);
         openIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP
                 | Intent.FLAG_ACTIVITY_CLEAR_TOP);

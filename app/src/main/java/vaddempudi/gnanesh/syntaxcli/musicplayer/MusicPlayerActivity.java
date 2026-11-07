@@ -154,6 +154,10 @@ public class MusicPlayerActivity extends AppCompatActivity {
     private List<Track> currentPlaybackList = null;
     private boolean currentPlaybackIsPlaylist = false;
 
+    private static final String KEY_LAST_PLAYED_ID    = "last_played_id";
+    private static final String KEY_LAST_PLAYED_TITLE = "last_played_title";
+
+
     private RecyclerView recycler;
     private TrackAdapter adapter;
     private LinearLayout topBar;
@@ -777,6 +781,7 @@ public class MusicPlayerActivity extends AppCompatActivity {
     }
 
     private void loadTracks() {
+        restoreLastPlayed();
         io.execute(() -> {
             List<Track> found = new ArrayList<>();
             ContentResolver cr = getContentResolver();
@@ -1036,6 +1041,30 @@ public class MusicPlayerActivity extends AppCompatActivity {
         popup.show();
     }
 
+    private void persistLastPlayed(long id, String title) {
+        try {
+            getSharedPreferences(PREFS, MODE_PRIVATE)
+                    .edit()
+                    .putLong(KEY_LAST_PLAYED_ID, id)
+                    .putString(KEY_LAST_PLAYED_TITLE, title == null ? "" : title)
+                    .apply();
+        } catch (Exception ignored) { }
+    }
+
+    private void restoreLastPlayed() {
+        if (lastPlayedId >= 0) return;
+        try {
+            android.content.SharedPreferences p = getSharedPreferences(PREFS, MODE_PRIVATE);
+            long id = p.getLong(KEY_LAST_PLAYED_ID, -1L);
+            String title = p.getString(KEY_LAST_PLAYED_TITLE, "");
+            if (id >= 0) {
+                lastPlayedId = id;
+                lastPlayedTitle = title == null ? "" : title;
+            }
+        } catch (Exception ignored) { }
+    }
+
+
     private void togglePlayPause() {
         if (player == null) return;
         try {
@@ -1189,6 +1218,7 @@ public class MusicPlayerActivity extends AppCompatActivity {
 
         lastPlayedId = t.id;
         lastPlayedTitle = t.title;
+        persistLastPlayed(lastPlayedId, lastPlayedTitle);
 
         releasePlayer();
         try {
@@ -1361,7 +1391,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
     private void releasePlayer() {
         ui.removeCallbacks(progressTick);
         isPaused = false;
-        isPausedStatic = true;
         staticPlayer = null;
         if (player != null) {
             try { player.stop(); } catch (Exception ignored) { }
@@ -1381,14 +1410,18 @@ public class MusicPlayerActivity extends AppCompatActivity {
 
         switch (cmd) {
             case CMD_PLAY:
-                if (userStoppedPlayback) {
-                    // Focus regained but the user stopped us — do NOT resume.
-                    return;
-                }
-                if (player != null && !player.isPlaying() && isPaused) {
+                userStoppedPlayback = false;
+                MusicPlaybackService.userStoppedPlayback = false;
+                if (player == null) {
+                    List<Track> walk = resolvePlaybackList();
+                    if (walk.isEmpty()) {
+                        pendingCmdFromLaunch = CMD_PLAY;
+                        pendingStartLast = false;
+                    } else {
+                        playFromList(walk, lastPlayedId);
+                    }
+                } else if (!player.isPlaying()) {
                     togglePlayPause();
-                } else if (player == null) {
-                    playFromList(resolvePlaybackList(), lastPlayedId);
                 }
                 break;
             case CMD_PAUSE:
@@ -1403,8 +1436,16 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 }
                 break;
             case CMD_TOGGLE:
+                userStoppedPlayback = false;
+                MusicPlaybackService.userStoppedPlayback = false;
                 if (player == null) {
-                    playFromList(resolvePlaybackList(), lastPlayedId);
+                    List<Track> walk = resolvePlaybackList();
+                    if (walk.isEmpty()) {
+                        pendingCmdFromLaunch = CMD_TOGGLE;
+                        pendingStartLast = false;
+                    } else {
+                        playFromList(walk, lastPlayedId);
+                    }
                 } else {
                     togglePlayPause();
                 }

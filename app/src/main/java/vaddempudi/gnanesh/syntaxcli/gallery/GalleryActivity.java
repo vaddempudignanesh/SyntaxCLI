@@ -403,14 +403,20 @@ public class GalleryActivity extends AppCompatActivity {
             runOnUiThread(() -> {
                 progress.cancel();
                 if (!isActivityAlive()) return;
-                        Toast.makeText(this,
-                                "Moved " + m + (f > 0 ? ", failed " + f : "") + " to Private",
-                                Toast.LENGTH_SHORT).show();
+
+                java.util.List<String> oldPaths = new java.util.ArrayList<>();
+                for (File src : files) {
+                    if (src != null) oldPaths.add(src.getAbsolutePath());
+                }
+
                 mtimeCache.clear();
+                notifyMediaStoreDeleted(oldPaths);
                 scheduleMediaRefresh(0L);
                 refreshCurrentList();
-                scheduleMediaRefresh(0L);
-                refreshCurrentList();
+
+                Toast.makeText(this,
+                        "Moved " + m + (f > 0 ? ", failed " + f : "") + " to Private",
+                        Toast.LENGTH_SHORT).show();
             });
         });
     }
@@ -569,7 +575,7 @@ public class GalleryActivity extends AppCompatActivity {
         recyclerView.setAdapter(screenAdapter);
         recyclerView.setHasFixedSize(true);
         recyclerView.setItemViewCacheSize(40);
-        recyclerView.setItemAnimator(new androidx.recyclerview.widget.DefaultItemAnimator());
+        recyclerView.setItemAnimator(null);
         setupDragToSelect();
 
 
@@ -1062,11 +1068,7 @@ public class GalleryActivity extends AppCompatActivity {
         installPrivateMoveAction();   // ← ADD THIS LINE
     }
 
-    /**
-     * Moves every currently selected file from the public gallery into the
-     * private folder. Requires a valid private password (which is created
-     * automatically on first use). Runs on the executor.
-     */
+
     private void moveSelectedToPrivate() {
         if (selectedItems.isEmpty()) return;
 
@@ -1111,14 +1113,14 @@ public class GalleryActivity extends AppCompatActivity {
                 progress.cancel();
                 if (!isActivityAlive()) return;
 
-                // Remove moved items from cachedMedia so the main grid drops them
-                // immediately, without waiting for MediaStore to notice.
+
                 for (int i = cachedMedia.size() - 1; i >= 0; i--) {
                     if (movedPaths.contains(cachedMedia.get(i).path)) {
                         cachedMedia.remove(i);
                     }
                 }
                 mtimeCache.clear();
+                notifyMediaStoreDeleted(movedPaths);
                 clearSelection();
                 refreshCurrentList();
                 scheduleMediaRefresh(0L);
@@ -1507,6 +1509,23 @@ public class GalleryActivity extends AppCompatActivity {
         recyclerView.post(() -> openFullscreenViewer(openPath));
     }
 
+    private void notifyMediaStoreDeleted(List<String> oldPaths) {
+        if (oldPaths == null || oldPaths.isEmpty()) return;
+        try {
+            for (String p : oldPaths) {
+                if (p == null) continue;
+                try {
+                    getContentResolver().delete(
+                            MediaStore.Files.getContentUri("external"),
+                            MediaStore.MediaColumns.DATA + "=?",
+                            new String[]{p});
+                } catch (Exception ignored) {}
+            }
+            MediaScannerConnection.scanFile(
+                    this, oldPaths.toArray(new String[0]), null, null);
+        } catch (Exception ignored) {}
+    }
+
 
     private void refreshCurrentList() {
         if (!isActivityAlive()) return;
@@ -1545,72 +1564,94 @@ public class GalleryActivity extends AppCompatActivity {
             updateTopNavBar();
             return;
         }
-        if (currentFilter == FilterMode.PRIVATE) {
-            if (!privateUnlocked || privateVault == null) {
-                screenAdapter.submitList(new ArrayList<>());
+
+            if (currentFilter == FilterMode.PRIVATE) {
+                if (!privateUnlocked || privateVault == null) {
+                    screenAdapter.submitList(new ArrayList<>());
+                    if (loadingSpinner != null) loadingSpinner.setVisibility(View.GONE);
+                    recyclerView.setVisibility(View.VISIBLE);
+                    showEmptyState();
+                    updateTopNavBar();
+                    return;
+                }
+                if (privateTab != PrivateTab.PFILES
+                        && cachedMedia.isEmpty()
+                        && repository != null) {
+                    if (loadingSpinner != null) loadingSpinner.setVisibility(View.VISIBLE);
+                    View ev = findViewById(R.id.emptyStateContainer);
+                    if (ev != null) ev.setVisibility(View.GONE);
+                    recyclerView.setVisibility(View.GONE);
+                    repository.loadCachedFirstPage();
+                    repository.refreshFirstPage();
+                    return;
+                }
+
+                List<GalleryMediaItem> privateItems = privateVault.listPrivateItems();
+                List<GalleryMediaItem> out = new ArrayList<>();
+
+                if (privateTab == PrivateTab.PFILES) {
+                    for (GalleryMediaItem it : privateItems) {
+                        if (it == null || it.path == null) continue;
+                        if (it.isTrashed) continue;
+                        if (it.path.contains(".trashed.")) continue;
+                        out.add(it);
+                    }
+                } else {
+                    Set<String> privatePaths = new HashSet<>();
+                    for (GalleryMediaItem it : privateItems) {
+                        if (it.path == null) continue;
+                        privatePaths.add(it.path);
+                        try { privatePaths.add(new File(it.path).getCanonicalPath()); }
+                        catch (Exception ignored) {}
+                    }
+
+                    String privateRoot;
+                    try { privateRoot = privateVault.getPrivateDir().getCanonicalPath() + "/"; }
+                    catch (Exception e) { privateRoot = privateVault.getPrivateDir().getAbsolutePath() + "/"; }
+                    final String privateRootFinal = privateRoot;
+
+                    for (GalleryMediaItem it : cachedMedia) {
+                        if (it.path == null) continue;
+                        if (it.isTrashed) continue;
+                        if (fileMtimeCached(it.path) == 0L) continue;
+
+                        String canon;
+                        try { canon = new File(it.path).getCanonicalPath(); }
+                        catch (Exception e) { canon = it.path; }
+
+                        if (canon.startsWith(privateRootFinal)) continue;
+                        if (privatePaths.contains(it.path) || privatePaths.contains(canon)) continue;
+
+                        if (privateTab == PrivateTab.IMAGES && it.type != GalleryMediaItem.TYPE_IMAGE) continue;
+                        if (privateTab == PrivateTab.VIDEOS && it.type != GalleryMediaItem.TYPE_VIDEO) continue;
+                        out.add(it);
+                    }
+                }
+
+                for (GalleryMediaItem it : out) {
+                    if (it == null || it.path == null) continue;
+                    long fileMs = fileMtimeCached(it.path);
+                    if (fileMs > it.lastModifiedMillis) {
+                        it.lastModifiedMillis = fileMs;
+                    }
+                }
+                Collections.sort(out, (a, b) -> {
+                    int c = Long.compare(b.lastModifiedMillis, a.lastModifiedMillis);
+                    if (c != 0) return c;
+                    String pa = a.path == null ? "" : a.path;
+                    String pb = b.path == null ? "" : b.path;
+                    return pb.compareTo(pa);
+                });
+
+                screenAdapter.submitList(new ArrayList<>(out));
                 if (loadingSpinner != null) loadingSpinner.setVisibility(View.GONE);
                 recyclerView.setVisibility(View.VISIBLE);
+                updateSelectionUI();
                 showEmptyState();
                 updateTopNavBar();
                 return;
-            }
-
-            List<GalleryMediaItem> privateItems = privateVault.listPrivateItems();
-            List<GalleryMediaItem> out = new ArrayList<>();
-
-            if (privateTab == PrivateTab.PFILES) {
-                // Only private files.
-                out.addAll(privateItems);
-            } else {
-                // IMAGES / VIDEOS: show public media that has NOT already been
-                // moved into the vault, filtered by type.
-                Set<String> privatePaths = new HashSet<>();
-                for (GalleryMediaItem it : privateItems) if (it.path != null) privatePaths.add(it.path);
-
-                for (GalleryMediaItem it : cachedMedia) {
-                    if (it.path == null) continue;
-                    if (it.isTrashed) continue;
-                    if (it.path.contains("/private/")) continue;
-                    if (privatePaths.contains(it.path)) continue;
-                    if (privateTab == PrivateTab.IMAGES && it.type != GalleryMediaItem.TYPE_IMAGE) continue;
-                    if (privateTab == PrivateTab.VIDEOS && it.type != GalleryMediaItem.TYPE_VIDEO) continue;
-                    out.add(it);
-                }
-                // Append any private items of the same type so they appear too.
-                for (GalleryMediaItem it : privateItems) {
-                    if (it.path == null) continue;
-                    if (privateTab == PrivateTab.IMAGES && it.type != GalleryMediaItem.TYPE_IMAGE) continue;
-                    if (privateTab == PrivateTab.VIDEOS && it.type != GalleryMediaItem.TYPE_VIDEO) continue;
-                    out.add(it);
-                }
-            }
-
-            for (GalleryMediaItem it : out) {
-                if (it == null || it.path == null) continue;
-                File f = new File(it.path);
-                if (!f.exists()) continue;
-                long fileMs = f.lastModified();
-                if (fileMs > it.lastModifiedMillis) {
-                    it.lastModifiedMillis = fileMs;
-                }
-            }
-            Collections.sort(out, (a, b) -> {
-                int c = Long.compare(b.lastModifiedMillis, a.lastModifiedMillis);
-                if (c != 0) return c;
-                String pa = a.path == null ? "" : a.path;
-                String pb = b.path == null ? "" : b.path;
-                return pb.compareTo(pa);
-            });
-
-            screenAdapter.submitList(new ArrayList<>(out));
-            if (loadingSpinner != null) loadingSpinner.setVisibility(View.GONE);
-            recyclerView.setVisibility(View.VISIBLE);
-            updateSelectionUI();
-            showEmptyState();
-            updateTopNavBar();
-            return;
+            
         }
-
         for (GalleryMediaItem it : cachedMedia) {
             if (it == null || it.path == null) continue;
             if (it.isTrashed) continue;
@@ -1782,6 +1823,9 @@ public class GalleryActivity extends AppCompatActivity {
         if (binBottomBar != null) {
             boolean hasSelection = !selectedItems.isEmpty();
             binBottomBar.setVisibility(hasSelection ? View.VISIBLE : View.GONE);
+            if (!hasSelection && bottomBar != null) {
+                bottomBar.setVisibility(View.VISIBLE);
+            }
         }
     }
 
@@ -1835,7 +1879,6 @@ public class GalleryActivity extends AppCompatActivity {
             recyclerView.setVisibility(View.VISIBLE);
         }
         updateFastScrollBar();
-
     }
 
     private Set<String> loadFavoritePaths() {
@@ -2153,7 +2196,7 @@ public class GalleryActivity extends AppCompatActivity {
                 } catch (Exception ignored) {}
 
                 if (ok) {
-                    try { dst.setLastModified(System.currentTimeMillis()); } catch (Exception ignored) {}
+                    try { dst.setLastModified(src.lastModified()); } catch (Exception ignored) {}
                     writtenPublicPaths.add(dst.getAbsolutePath());
                     if (src.delete()) moved++;
                     else moved++;
@@ -2197,13 +2240,13 @@ public class GalleryActivity extends AppCompatActivity {
     private void clearSelection() {
         selectedItems.clear();
         selectionMode = false;
-        if (bottomBar != null) bottomBar.setVisibility(View.VISIBLE);
         if (selectionBar != null) selectionBar.setVisibility(View.GONE);
         if (binBottomBar != null) binBottomBar.setVisibility(View.GONE);
         if (selectionTopBar != null) selectionTopBar.setVisibility(View.GONE);
         if (screenAdapter != null) screenAdapter.setSelectedItems(selectedItems);
         resetDragState();
         updateFastScrollBar();
+        updateBarsVisibility();   // ← let the filter decide what bar shows
     }
 
     private void startLongPressDrag(String path) {
@@ -2531,10 +2574,45 @@ public class GalleryActivity extends AppCompatActivity {
 
     private void moveSelectedToTrash() {
         if (selectedItems.isEmpty()) return;
+        if (currentFilter == FilterMode.PRIVATE) {
+            final List<String> paths = new ArrayList<>(selectedItems);
+            final Toast t = Toast.makeText(this, "Deleting…", Toast.LENGTH_SHORT);
+            t.show();
+            executor.execute(() -> {
+                int deleted = 0, failed = 0;
+                for (String path : paths) {
+                    File f = new File(path);
+                    if (!f.exists() || f.delete()) deleted++;
+                    else failed++;
+                }
+                final int dd = deleted, ff = failed;
+                runOnUiThread(() -> {
+                    t.cancel();
+                    if (!isActivityAlive()) return;
+                    // Drop deleted items from the in-memory cache.
+                    for (String path : paths) {
+                        for (int i = cachedMedia.size() - 1; i >= 0; i--) {
+                            if (cachedMedia.get(i).path.equals(path)) {
+                                cachedMedia.remove(i);
+                                break;
+                            }
+                        }
+                    }
+                    mtimeCache.clear();
+                    clearSelection();
+                    refreshCurrentList();
+                    Toast.makeText(this, "Deleted " + dd
+                                    + (ff > 0 ? ", failed " + ff : ""),
+                            Toast.LENGTH_SHORT).show();
+                });
+            });
+            return;
+        }
+
+        // ... existing (public gallery) rename-to-.trashed. code follows unchanged ...
         final List<String> paths = new ArrayList<>(selectedItems);
         final Toast t = Toast.makeText(this, "Moving…", Toast.LENGTH_SHORT);
         t.show();
-
         executor.execute(() -> {
             int moved = 0, failed = 0;
             List<String> newTrashPaths = new ArrayList<>();
@@ -2557,8 +2635,6 @@ public class GalleryActivity extends AppCompatActivity {
             runOnUiThread(() -> {
                 t.cancel();
                 if (!isActivityAlive()) return;
-
-                // Update cachedMedia for each moved path.
                 for (String newPath : movedPaths) {
                     File nf = new File(newPath);
                     File parent = nf.getParentFile();
@@ -2592,7 +2668,6 @@ public class GalleryActivity extends AppCompatActivity {
                 clearSelection();
                 refreshCurrentList();
                 scheduleMediaRefresh(MEDIA_REFRESH_DEBOUNCE_MS);
-
             });
         });
     }
