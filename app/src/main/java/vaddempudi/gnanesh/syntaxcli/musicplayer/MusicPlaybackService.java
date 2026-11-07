@@ -149,9 +149,21 @@ public class MusicPlaybackService extends Service {
     }
     @Override
     public void onTaskRemoved(Intent rootIntent) {
-        // User swiped the activity away from recents.
-        // Send a stop to the activity (in case it's still alive briefly),
-        // then tear down the service completely so music stops.
+        // Android calls this on EVERY service in the app when ANY task is
+        // removed from recents — not just the task that started the service.
+        // In this app the browser and the music player share a package, so
+        // swiping the browser away would otherwise tear down music playback.
+        //
+        // Rule: only stop the service if the music player activity is gone.
+        // If it's still alive, another task (browser, gallery, launcher...)
+        // was the one removed, and playback must continue.
+        if (MusicPlayerActivity.alive) {
+            super.onTaskRemoved(rootIntent);
+            return;
+        }
+
+        // Music player activity is dead — treat this as "user closed the app".
+        // Pause, drop audio focus, dismiss the notification, stop the service.
         try {
             sendCmd(MusicPlayerActivity.CMD_PAUSE);
         } catch (Exception ignored) { }

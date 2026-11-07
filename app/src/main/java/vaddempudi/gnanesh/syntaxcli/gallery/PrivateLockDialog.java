@@ -40,7 +40,6 @@ public final class PrivateLockDialog {
         root.setPadding(dp(ctx, 24), dp(ctx, 24), dp(ctx, 24), dp(ctx, 24));
         root.setBackgroundColor(0xFF000000);
 
-
         // ── Title ────────────────────────────────────────────────────
         TextView title = new TextView(ctx);
         title.setText(firstTime ? "CREATE PRIVATE PASSWORD" : "UNLOCK PRIVATE");
@@ -82,7 +81,7 @@ public final class PrivateLockDialog {
             confirm = null;
         }
 
-        // ── Buttons ─────────────────────────────────────────────────
+        // ── Buttons (CANCEL / UNLOCK) ───────────────────────────────
         LinearLayout btnRow = new LinearLayout(ctx);
         btnRow.setOrientation(LinearLayout.HORIZONTAL);
         btnRow.setPadding(0, dp(ctx, 20), 0, 0);
@@ -136,6 +135,31 @@ public final class PrivateLockDialog {
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
         root.addView(btnRow);
+
+        // ── CHANGE PASSWORD — only in unlock mode ──────────────────
+        // Opens the existing three-field change dialog. The unlock dialog
+        // is dismissed so the two dialogs never stack.
+        if (!firstTime) {
+            TextView changePw = makeButton(ctx, "CHANGE PASSWORD", 0xFF33FF33);
+            changePw.setTextSize(11);
+            LinearLayout.LayoutParams chLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            chLp.topMargin = dp(ctx, 10);
+            changePw.setLayoutParams(chLp);
+            changePw.setOnClickListener(v -> {
+                dlg.dismiss();
+                if (cb != null) cb.onCancelled();   // user backed out of unlock
+                showChange(ctx, vault, new OnResult() {
+                    @Override public void onUnlocked() {
+                        // Password changed — the user still needs to unlock
+                        // with the NEW password. Re-open the unlock dialog.
+                        show(ctx, vault, cb);
+                    }
+                    @Override public void onCancelled() { }
+                });
+            });
+            root.addView(changePw);
+        }
 
         dlg.setContentView(root);
         Window w = dlg.getWindow();
