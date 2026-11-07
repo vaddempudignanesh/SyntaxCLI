@@ -24,6 +24,9 @@ final class AlbumsController {
         void onAlbumOpened(AlbumRecord album);
         void onAlbumClosed();
         void onAlbumMediaClicked(String path);
+        void onAlbumMediaLongPress(String path);
+        void onAlbumMediaToggled(String path);
+        boolean isAlbumSelectionMode();
     }
 
     private final AtomicLong generation = new AtomicLong(0);
@@ -131,6 +134,9 @@ final class AlbumsController {
     }
 
 
+    AlbumMediaAdapter getCurrentAlbumAdapter() { return currentAlbumAdapter; }
+    RecyclerView getMediaRecycler() { return mediaRecycler; }
+
     void invalidateAlbums() {
         cachedAlbums = null;
     }
@@ -156,6 +162,15 @@ final class AlbumsController {
                     }
                     @Override public void onVideoClick(String path) {
                         if (host != null) host.onAlbumMediaClicked(path);
+                    }
+                    @Override public void onItemLongPress(String path) {
+                        if (host != null) host.onAlbumMediaLongPress(path);
+                    }
+                    @Override public void onItemClick(String path) {
+                        if (host != null) host.onAlbumMediaToggled(path);
+                    }
+                    @Override public boolean isSelectionMode() {
+                        return host != null && host.isAlbumSelectionMode();
                     }
                 });
         currentAlbumAdapter = freshAdapter;

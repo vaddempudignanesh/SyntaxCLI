@@ -610,10 +610,67 @@ public class GalleryActivity extends AppCompatActivity {
                                 : null;
                         openFullscreenViewerWithItems(path, albumItems);
                     }
+
+                    // ★ 3 new methods — reuse existing selection machinery.
+                    @Override public void onAlbumMediaLongPress(String path) {
+                        if (!isActivityAlive()) return;
+                        attachDragSelectToAlbumRecycler();
+                        startLongPressDrag(path);
+                    }
+                    @Override public void onAlbumMediaToggled(String path) {
+                        if (isActivityAlive()) toggleSelection(path);
+                    }
+                    @Override public boolean isAlbumSelectionMode() {
+                        return selectionMode && isActivityAlive();
+                    }
                 },
                 loader, albumAdapter);
+
     }
 
+
+    /** True while an album's media grid is the one on screen. */
+    private boolean albumIsActive() {
+        return albumsController != null && albumsController.isAlbumOpen();
+    }
+
+    /** Idempotently install the SAME drag-select interceptor on the album grid. */
+    private void attachDragSelectToAlbumRecycler() {
+        if (!albumIsActive()) return;
+        RecyclerView mr = albumsController.getMediaRecycler();
+        if (mr == null) return;
+        if (Boolean.TRUE.equals(mr.getTag(R.id.galleryRecycler))) return; // already attached
+        mr.setTag(R.id.galleryRecycler, Boolean.TRUE);
+        mr.addOnItemTouchListener(new RecyclerView.SimpleOnItemTouchListener() {
+            @Override
+            public boolean onInterceptTouchEvent(@NonNull RecyclerView rv, @NonNull MotionEvent e) {
+                if (!dragSelectActive) return false;
+                switch (e.getActionMasked()) {
+                    case MotionEvent.ACTION_MOVE:
+                        handleDragMove(rv, e.getX(), e.getY());
+                        return true;
+                    case MotionEvent.ACTION_UP:
+                    case MotionEvent.ACTION_CANCEL:
+                        resetDragState();
+                        return true;
+                }
+                return false;
+            }
+            @Override
+            public void onTouchEvent(@NonNull RecyclerView rv, @NonNull MotionEvent e) {
+                if (!dragSelectActive) return;
+                switch (e.getActionMasked()) {
+                    case MotionEvent.ACTION_MOVE:
+                        handleDragMove(rv, e.getX(), e.getY());
+                        break;
+                    case MotionEvent.ACTION_UP:
+                    case MotionEvent.ACTION_CANCEL:
+                        resetDragState();
+                        break;
+                }
+            }
+        });
+    }
     private boolean isInAlbum(GalleryMediaItem it, String albumPath) {
         if (it == null || it.path == null || albumPath == null) return false;
 
@@ -2021,11 +2078,17 @@ public class GalleryActivity extends AppCompatActivity {
     }
 
 
+
     private void toggleSelection(String path) {
         if (selectedItems.contains(path)) selectedItems.remove(path);
         else selectedItems.add(path);
         updateSelectionUI();
-        if (screenAdapter != null) screenAdapter.setSelectedItems(selectedItems);
+        if (albumIsActive()) {
+            AlbumMediaAdapter a = albumsController.getCurrentAlbumAdapter();
+            if (a != null) a.setSelectedItems(selectedItems);
+        } else if (screenAdapter != null) {
+            screenAdapter.setSelectedItems(selectedItems);
+        }
     }
 
     private void updateSelectionUI() {
@@ -2243,18 +2306,37 @@ public class GalleryActivity extends AppCompatActivity {
         if (selectionBar != null) selectionBar.setVisibility(View.GONE);
         if (binBottomBar != null) binBottomBar.setVisibility(View.GONE);
         if (selectionTopBar != null) selectionTopBar.setVisibility(View.GONE);
-        if (screenAdapter != null) screenAdapter.setSelectedItems(selectedItems);
+        if (albumIsActive()) {
+            AlbumMediaAdapter a = albumsController.getCurrentAlbumAdapter();
+            if (a != null) a.setSelectedItems(selectedItems);
+        } else if (screenAdapter != null) {
+            screenAdapter.setSelectedItems(selectedItems);
+        }
         resetDragState();
         updateFastScrollBar();
-        updateBarsVisibility();   // ← let the filter decide what bar shows
+        updateBarsVisibility();
     }
 
+
+
     private void startLongPressDrag(String path) {
-        if (!isActivityAlive() || screenAdapter == null) return;
-        List<GalleryMediaItem> items = screenAdapter.getItems();
+        if (!isActivityAlive()) return;
+
+        List<GalleryMediaItem> items;
+        if (albumIsActive()) {
+            AlbumMediaAdapter a = albumsController.getCurrentAlbumAdapter();
+            items = a != null ? a.getItemsSnapshot() : Collections.<GalleryMediaItem>emptyList();
+        } else {
+            if (screenAdapter == null) return;
+            items = screenAdapter.getItems();
+        }
+
         int anchorIdx = -1;
         for (int i = 0; i < items.size(); i++) {
-            if (items.get(i).path.equals(path)) { anchorIdx = i; break; }
+            if (items.get(i).path.equals(path)) {
+                anchorIdx = i;
+                break;
+            }
         }
         if (anchorIdx < 0) return;
 
@@ -2281,9 +2363,9 @@ public class GalleryActivity extends AppCompatActivity {
 
         applyDragRectangle(anchorIdx, anchorIdx);
         updateSelectionUI();
-    }
 
-    private void setupDragToSelect() {
+    }
+        private void setupDragToSelect() {
         if (recyclerView == null) return;
         recyclerView.addOnItemTouchListener(new RecyclerView.SimpleOnItemTouchListener() {
             @Override
@@ -2331,8 +2413,14 @@ public class GalleryActivity extends AppCompatActivity {
     }
 
     private int indexOfPath(String path) {
-        if (screenAdapter == null) return -1;
-        List<GalleryMediaItem> items = screenAdapter.getItems();
+        List<GalleryMediaItem> items;
+        if (albumIsActive()) {
+            AlbumMediaAdapter a = albumsController.getCurrentAlbumAdapter();
+            items = a != null ? a.getItemsSnapshot() : Collections.<GalleryMediaItem>emptyList();
+        } else {
+            if (screenAdapter == null) return -1;
+            items = screenAdapter.getItems();
+        }
         for (int i = 0; i < items.size(); i++) {
             if (items.get(i).path.equals(path)) return i;
         }
@@ -2393,7 +2481,15 @@ public class GalleryActivity extends AppCompatActivity {
     };
 
     private void applyDragRectangle(int anchorIndex, int currentIndex) {
-        int total = screenAdapter == null ? 0 : screenAdapter.getItems().size();
+        List<GalleryMediaItem> items;
+        if (albumIsActive()) {
+            AlbumMediaAdapter a = albumsController.getCurrentAlbumAdapter();
+            items = a != null ? a.getItemsSnapshot() : Collections.<GalleryMediaItem>emptyList();
+        } else {
+            if (screenAdapter == null) return;
+            items = screenAdapter.getItems();
+        }
+        int total = items.size();
         if (total == 0) return;
 
         int anchor = Math.max(0, Math.min(anchorIndex, total - 1));
@@ -2405,8 +2501,6 @@ public class GalleryActivity extends AppCompatActivity {
         if (lo == dragLastRectMinRow && hi == dragLastRectMaxRow) return;
         dragLastRectMinRow = lo;
         dragLastRectMaxRow = hi;
-
-        List<GalleryMediaItem> items = screenAdapter.getItems();
 
         Set<String> rangeNow = new HashSet<>();
         for (int i = lo; i <= hi; i++) {
@@ -2427,7 +2521,10 @@ public class GalleryActivity extends AppCompatActivity {
         selectedItems.clear();
         selectedItems.addAll(desired);
 
-        if (screenAdapter != null) {
+        if (albumIsActive()) {
+            AlbumMediaAdapter a = albumsController.getCurrentAlbumAdapter();
+            if (a != null) a.setSelectedItems(selectedItems);
+        } else if (screenAdapter != null) {
             screenAdapter.setSelectedItems(selectedItems);
         }
 
