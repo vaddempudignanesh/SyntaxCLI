@@ -85,6 +85,20 @@ public class UIManager implements OnTouchListener {
     public static String ACTION_WEATHER_DELAY = BuildConfig.APPLICATION_ID + "ui_weather_delay";
     public static String ACTION_WEATHER_MANUAL_UPDATE = BuildConfig.APPLICATION_ID + "ui_weather_update";
 
+    private SuggestionsManager suggestionsManager;
+    private TextView terminalView;
+
+    private String doubleTapCmd;
+    private boolean lockOnDbTap;
+
+    private BroadcastReceiver receiver;
+
+    public MainPack pack;
+    private TextView kProgressView;
+    private Runnable kProgressHideRunnable;
+    public static String ACTION_K_PROGRESS = BuildConfig.APPLICATION_ID + ".ui_k_progress";
+    public static String EXTRA_K_PROGRESS = "k_msg";
+
     public static String FILE_NAME = "fileName";
     public static String PREFS_NAME = "ui";
 
@@ -742,21 +756,14 @@ public class UIManager implements OnTouchListener {
         }
     }
 
-    private SuggestionsManager suggestionsManager;
-    private TextView terminalView;
 
-    private String doubleTapCmd;
-    private boolean lockOnDbTap;
-
-    private BroadcastReceiver receiver;
-
-    public MainPack pack;
 
     private boolean clearOnLock;
 
     protected UIManager(final Context context, final ViewGroup rootView, MainPack mainPack, boolean canApplyTheme, CommandExecuter executer) {
 
         IntentFilter filter = new IntentFilter();
+        filter.addAction(ACTION_K_PROGRESS);
         filter.addAction(ACTION_UPDATE_SUGGESTIONS);
         filter.addAction(ACTION_UPDATE_HINT);
         filter.addAction(ACTION_ROOT);
@@ -1438,20 +1445,75 @@ public class UIManager implements OnTouchListener {
         }
     }
 
+    private void ensureKProgressView() {
+        if (kProgressView != null) return;
+        if (mContext == null) return;
+        ViewGroup parent = (ViewGroup) labelViews[0].getParent();
+        if (parent == null) return;
+
+        kProgressView = new TextView(mContext);
+        kProgressView.setTypeface(Tuils.getTypeface(mContext));
+        kProgressView.setTextSize(labelSizes[Label.ram.ordinal()]);
+        kProgressView.setTextColor(0xFF33FF33);
+        kProgressView.setSingleLine(false);
+        kProgressView.setMaxLines(3);
+        kProgressView.setEllipsize(TextUtils.TruncateAt.END);
+        kProgressView.setVisibility(View.GONE);
+        kProgressView.setPadding(dp(mContext, 8), dp(mContext, 4),
+                dp(mContext, 8), dp(mContext, 4));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = dp(mContext, 4);
+        kProgressView.setLayoutParams(lp);
+        parent.addView(kProgressView);
+    }
+
+    private void showKProgress(String msg) {
+        if (handler == null) return;
+        ensureKProgressView();
+        if (kProgressView == null) return;
+
+        kProgressView.setText(msg);
+        kProgressView.setVisibility(View.VISIBLE);
+
+        if (kProgressHideRunnable != null) handler.removeCallbacks(kProgressHideRunnable);
+        kProgressHideRunnable = () -> {
+            if (kProgressView != null) kProgressView.setVisibility(View.GONE);
+            kProgressHideRunnable = null;
+        };
+        handler.postDelayed(kProgressHideRunnable, 60_000L);
+    }
+
     public void dispose() {
+        // ── 1. Clear k-progress hold before killing the handler ──
+        if (kProgressHideRunnable != null && handler != null) {
+            handler.removeCallbacks(kProgressHideRunnable);
+        }
+        kProgressHideRunnable = null;
+        kProgressView = null;
+
+        // ── 2. Stop cyberpunk ──
         if (cyberpunkRunnable != null && handler != null) {
             handler.removeCallbacks(cyberpunkRunnable);
         }
         cyberpunkEnabled = false;
         uiVisible = false;
+
+        // ── 3. Kill all remaining handler work, then drop it ──
         if (handler != null) {
             handler.removeCallbacksAndMessages(null);
             handler = null;
         }
+
+        // ── 4. Managers ──
         if (suggestionsManager != null) suggestionsManager.dispose();
         if (notesManager != null) notesManager.dispose(mContext);
+
+        // ── 5. Receivers ──
         try {
-            LocalBroadcastManager.getInstance(mContext.getApplicationContext()).unregisterReceiver(receiver);
+            LocalBroadcastManager.getInstance(mContext.getApplicationContext())
+                    .unregisterReceiver(receiver);
         } catch (Exception ignored) {}
         Tuils.unregisterBatteryReceiver(mContext);
         Tuils.cancelFont();
