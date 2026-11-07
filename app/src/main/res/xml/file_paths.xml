@@ -44,4 +44,13 @@
 
         <files-path name="clipboard_files" path="clipboard/" />
 
+
+        <!-- existing entries -->
+        <external-path name="external" path="." />
+        <root-path name="root" path="/storage/8B2E-101F/apks" />
+
+        <!-- NEW: private files (internal app storage) -->
+        <files-path name="private_files" path="private/" />
+
+
 </paths>

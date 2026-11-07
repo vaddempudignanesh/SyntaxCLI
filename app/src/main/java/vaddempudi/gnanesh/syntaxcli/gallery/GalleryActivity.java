@@ -19,6 +19,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.provider.MediaStore;
 import android.view.GestureDetector;
+import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.View;
@@ -83,8 +84,9 @@ public class GalleryActivity extends AppCompatActivity {
     private FilterMode lastRenderedFilter = null;
     private int lastRenderedCount = -1;
     private AlbumsController albumsController;
-    private enum FilterMode { ALL, IMAGES, VIDEOS, FAVORITES, BIN }
-
+    private enum FilterMode { ALL, IMAGES, VIDEOS, FAVORITES, BIN, PRIVATE }
+    private PrivateVault privateVault;
+    private boolean privateUnlocked = false;
     private SharedPreferences prefs;
     private GalleryRepository repository;
     private GalleryAdapter screenAdapter;
@@ -98,6 +100,8 @@ public class GalleryActivity extends AppCompatActivity {
     private RecyclerView recyclerView;
     private RecyclerView albumRecycler;
     private ProgressBar loadingSpinner;
+    private TextView privateChangePwInTopBar;
+
     private TextView titleView;
     private LinearLayout sortOptions;
     private LinearLayout bottomBar, selectionBar, binBottomBar;
@@ -192,6 +196,10 @@ public class GalleryActivity extends AppCompatActivity {
     private float lastPerceivedBrightness = -1f;
     private float lastPerceivedVolume = 1f;
     private android.media.audiofx.LoudnessEnhancer loudnessEnhancer;
+    private TextView privateAddButton;
+    private TextView privateChangePwButton;
+
+    private final HashMap<String, Long> mtimeCache = new HashMap<>();
     private int loudnessSessionId = -1;
     private int maxStreamVolume = 15;
     private View brightnessDimOverlay;
@@ -199,7 +207,11 @@ public class GalleryActivity extends AppCompatActivity {
     private boolean isLandscape = false;
     private View decorView;
 
-    // External intent
+    private TextView privateTabImages, privateTabVideos, privateTabPFiles;
+    private LinearLayout privateTabsBar;
+    private TextView btnPrivateLogout;
+    private enum PrivateTab { IMAGES, VIDEOS, PFILES }
+    private PrivateTab privateTab = PrivateTab.IMAGES;
     private boolean launchedFromExternalIntent = false;
     private String pendingInitialPath;
 
@@ -229,15 +241,17 @@ public class GalleryActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_gallery);
         prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
-
+        privateVault = new PrivateVault(this);
         configureWindow();
         bindViews();
+        bindPrivateViews();
         installFastScrollBar();
         buildAdapter();
         setupAlbums();
         wireToolbarButtons();
         wireSortMenu();
         wireSelectionBar();
+        wirePrivateTabs();
         buildFullscreenAdapter();
         wireFullscreenControls();
         wireVolumeBrightness();
@@ -263,6 +277,174 @@ public class GalleryActivity extends AppCompatActivity {
         getWindow().setBackgroundDrawableResource(android.R.color.transparent);
         decorView = getWindow().getDecorView();
     }
+
+
+    private void wirePrivateTabs() {
+        if (privateTabImages != null)
+            privateTabImages.setOnClickListener(v -> selectPrivateTab(PrivateTab.IMAGES));
+        if (privateTabVideos != null)
+            privateTabVideos.setOnClickListener(v -> selectPrivateTab(PrivateTab.VIDEOS));
+        if (privateTabPFiles != null)
+            privateTabPFiles.setOnClickListener(v -> selectPrivateTab(PrivateTab.PFILES));
+    }
+
+    private void selectPrivateTab(PrivateTab tab) {
+        privateTab = tab;
+        updatePrivateTabHighlights();
+        refreshCurrentList();
+    }
+
+    private void updatePrivateTabHighlights() {
+        if (privateTabImages == null) return;
+        int active = 0xFF33FF33;
+        int idle   = 0xFFFFFFFF;
+        privateTabImages.setTextColor(privateTab == PrivateTab.IMAGES ? active : idle);
+        privateTabVideos.setTextColor(privateTab == PrivateTab.VIDEOS ? active : idle);
+        privateTabPFiles.setTextColor(privateTab == PrivateTab.PFILES ? active : idle);
+    }
+
+    private void exitPrivateMode() {
+        privateUnlocked = false;
+        privateTab = PrivateTab.IMAGES;
+
+        currentFilter = FilterMode.ALL;
+        currentAlbum = null;
+        whatsappOnly = false;
+        showAlbums = false;
+        pendingAlbumLoad = null;
+
+        if (titleView != null) titleView.setText("Gallery");
+        if (albumRecycler != null) albumRecycler.setVisibility(View.GONE);
+        if (recyclerView != null) recyclerView.setVisibility(View.VISIBLE);
+        if (sortOptions != null) sortOptions.setVisibility(View.GONE);
+
+        clearSelection();
+        refreshCurrentList();
+        updateBarsVisibility();
+        updateTopNavBar();
+    }
+
+
+
+    private void bindPrivateViews() {
+        privateTabsBar = findViewById(R.id.privateTabsBar);
+        privateTabImages = findViewById(R.id.tabPrivateImages);
+        privateTabVideos = findViewById(R.id.tabPrivateVideos);
+        privateTabPFiles = findViewById(R.id.tabPrivatePFiles);
+        btnPrivateLogout = findViewById(R.id.btnPrivateLogout);
+
+        if (btnPrivateLogout != null) {
+            btnPrivateLogout.setOnClickListener(v -> exitPrivateMode());
+        }
+    }
+
+
+    private void pickFromGalleryToAddToPrivate() {
+        // Build the candidate list from what the gallery actually has.
+        // We use cachedMedia because it is the authoritative list the grid
+        // renders from, so every item the user can see in the grid is
+        // selectable here.
+        final List<GalleryMediaItem> candidates = new ArrayList<>();
+        for (GalleryMediaItem it : cachedMedia) {
+            if (it == null || it.path == null) continue;
+            if (it.isTrashed) continue;                                  // don't re-add trashed
+            if (it.path.contains("/private/")) continue;                 // already private
+            File f = new File(it.path);
+            if (!f.exists()) continue;
+            candidates.add(it);
+        }
+
+        if (candidates.isEmpty()) {
+            Toast.makeText(this, "No gallery items to move", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        // Multi-select via AlertDialog.setMultiChoiceItems. We keep a
+        // parallel boolean[] so we can read the final selection on OK.
+        final boolean[] checked = new boolean[candidates.size()];
+        final CharSequence[] labels = new CharSequence[candidates.size()];
+        for (int i = 0; i < candidates.size(); i++) {
+            GalleryMediaItem it = candidates.get(i);
+            String name = it.displayName != null ? it.displayName : new File(it.path).getName();
+            String kind = it.type == GalleryMediaItem.TYPE_VIDEO ? "[VIDEO] " : "[IMAGE] ";
+            labels[i] = kind + name;
+        }
+
+        new AlertDialog.Builder(this)
+                .setTitle("Pick from Gallery → Private")
+                .setMultiChoiceItems(labels, checked,
+                        (d, which, isChecked) -> checked[which] = isChecked)
+                .setPositiveButton("MOVE TO PRIVATE", (d, w) -> {
+                    List<File> toMove = new ArrayList<>();
+                    for (int i = 0; i < candidates.size(); i++) {
+                        if (checked[i]) toMove.add(new File(candidates.get(i).path));
+                    }
+                    if (toMove.isEmpty()) return;
+                    moveFilesToPrivate(toMove);
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+
+    private void moveFilesToPrivate(List<File> files) {
+        if (privateVault == null) return;
+        final Toast progress = Toast.makeText(this, "Moving to Private…", Toast.LENGTH_SHORT);
+        progress.show();
+
+        executor.execute(() -> {
+            int moved = 0, failed = 0;
+            for (File source : files) {
+                if (source == null || !source.exists()) { failed++; continue; }
+                if (privateVault.moveIntoPrivate(source) != null) moved++;
+                else failed++;
+            }
+            final int m = moved, f = failed;
+            runOnUiThread(() -> {
+                progress.cancel();
+                if (!isActivityAlive()) return;
+                        Toast.makeText(this,
+                                "Moved " + m + (f > 0 ? ", failed " + f : "") + " to Private",
+                                Toast.LENGTH_SHORT).show();
+                mtimeCache.clear();
+                scheduleMediaRefresh(0L);
+                refreshCurrentList();
+                scheduleMediaRefresh(0L);
+                refreshCurrentList();
+            });
+        });
+    }
+
+    private void updatePrivateAddButtonVisibility() {
+        boolean visible = currentFilter == FilterMode.PRIVATE;
+        if (privateAddButton != null) {
+            privateAddButton.setVisibility(visible ? View.VISIBLE : View.GONE);
+        }
+        if (privateChangePwButton != null) {
+            privateChangePwButton.setVisibility(visible ? View.VISIBLE : View.GONE);
+        }
+    }
+
+    private void changePrivatePassword() {
+        if (privateVault == null) return;
+        if (!privateUnlocked) {
+            Toast.makeText(this, "Unlock the private tab first", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        // The dialog's "change" mode asks for old + new + confirm.
+        PrivateLockDialog.showChange(this, privateVault,
+                new PrivateLockDialog.OnResult() {
+                    @Override public void onUnlocked() {
+                        Toast.makeText(GalleryActivity.this,
+                                "Password changed", Toast.LENGTH_SHORT).show();
+                    }
+                    @Override public void onCancelled() {
+                        Toast.makeText(GalleryActivity.this,
+                                "Password unchanged", Toast.LENGTH_SHORT).show();
+                    }
+                });
+    }
+
 
     private void bindViews() {
         recyclerView = findViewById(R.id.galleryRecycler);
@@ -330,13 +512,41 @@ public class GalleryActivity extends AppCompatActivity {
                     openFullscreenViewer(path);
             }
             @Override public void onFavoriteToggle(GalleryMediaItem item) {
+                if (currentFilter == FilterMode.PRIVATE) {
+                    return;
+                }
                 if (!isActivityAlive()) return;
+                if (currentFilter == FilterMode.PRIVATE) {
+                    Toast.makeText(GalleryActivity.this,
+                            "Favorites are not available for private files",
+                            Toast.LENGTH_SHORT).show();
+                    return;
+                }
                 toggleFavoriteForPath(item.path);
-                // No refreshCurrentList() here — toggleFavoriteForPath already
-                // submitted a fresh list with the correct state.
             }
             @Override public void onDelete(GalleryMediaItem item) {
-                if (isActivityAlive()) moveToTrash(item);
+                if (currentFilter == FilterMode.PRIVATE) {
+                    return;
+                }
+                if (!isActivityAlive()) return;
+                if (currentFilter == FilterMode.PRIVATE) {
+                    new AlertDialog.Builder(GalleryActivity.this)
+                            .setTitle("Delete from Private")
+                            .setMessage("Delete \"" + item.displayName + "\" permanently?")
+                            .setPositiveButton("Delete", (d, w) -> {
+                                File f = new File(item.path);
+                                if (privateVault != null && privateVault.deletePrivate(f)) {
+                                    refreshCurrentList();
+                                } else {
+                                    Toast.makeText(GalleryActivity.this,
+                                            "Could not delete", Toast.LENGTH_SHORT).show();
+                                }
+                            })
+                            .setNegativeButton("Cancel", null)
+                            .show();
+                    return;
+                }
+                moveToTrash(item);
             }
             @Override public void onItemClick(String path) {
                 if (isActivityAlive()) toggleSelection(path);
@@ -348,6 +558,9 @@ public class GalleryActivity extends AppCompatActivity {
                 return selectionMode && isActivityAlive();
             }
             @Override public void onRestore(GalleryMediaItem item) {
+                if (currentFilter == FilterMode.PRIVATE) {
+                    return;
+                }
                 if (isActivityAlive()) restoreFromTrash(item);
             }
         });
@@ -413,6 +626,7 @@ public class GalleryActivity extends AppCompatActivity {
 
         return repositoryAtEnd;
     }
+
 
 
 
@@ -580,6 +794,7 @@ public class GalleryActivity extends AppCompatActivity {
                     }
 
                     transientLoading = false;
+                    mtimeCache.clear();
                     refreshCurrentList();
                     recyclerView.post(() -> {
                         if (pendingInitialPath != null) tryOpenPendingInitialPath();
@@ -714,6 +929,73 @@ public class GalleryActivity extends AppCompatActivity {
         if (sortBin != null) sortBin.setOnClickListener(v -> applyQuickFilter(FilterMode.BIN, "Bin"));
 
         refreshBinMenuVisibility();
+        installPrivateMenuEntry();
+    }
+    private void installPrivateMenuEntry() {
+        if (sortOptions == null) return;
+        if (sortOptions.findViewWithTag("private_entry") != null) return;
+
+        TextView tv = new TextView(this);
+        tv.setTag("private_entry");
+        tv.setText("Private");
+        tv.setTextColor(0xFF33FF33);
+        tv.setTypeface(android.graphics.Typeface.MONOSPACE);
+        tv.setTextSize(16);                                            // was 13
+        tv.setGravity(Gravity.CENTER);                                 // was default
+        tv.setPadding(dpToPx(14), dpToPx(8), dpToPx(14), dpToPx(8));
+        tv.setBackgroundColor(0xFF000000);                             // match siblings
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dpToPx(48));      // same height as others
+        tv.setLayoutParams(lp);
+        tv.setClickable(true);
+        tv.setFocusable(true);
+        tv.setOnClickListener(v -> openPrivateTab());
+        sortOptions.addView(tv);
+    }
+
+    private void openPrivateTab() {
+        if (sortOptions != null) sortOptions.setVisibility(View.GONE);
+
+        if (privateUnlocked && privateVault != null && privateVault.hasPassword()) {
+            enterPrivateTab();
+            return;
+        }
+
+        if (privateVault == null) privateVault = new PrivateVault(this);
+
+        PrivateLockDialog.show(this, privateVault, new PrivateLockDialog.OnResult() {
+            @Override public void onUnlocked() {
+                privateUnlocked = true;
+                enterPrivateTab();
+            }
+            @Override public void onCancelled() {
+                // User backed out — stay on whatever they were on.
+            }
+        });
+    }
+
+    private void enterPrivateTab() {
+        albumsController.leaveAlbums();
+        pendingAlbumLoad = null;
+        currentFilter = FilterMode.PRIVATE;
+        currentAlbum = null;
+        whatsappOnly = false;
+        showAlbums = false;
+        privateTab = PrivateTab.IMAGES;
+
+        if (titleView != null) titleView.setText("Private");
+        albumRecycler.setVisibility(View.GONE);
+        recyclerView.setVisibility(View.VISIBLE);
+        if (sortOptions != null) sortOptions.setVisibility(View.GONE);
+
+        recyclerView.setLayoutManager(new GridLayoutManager(this, GRID_COLUMNS));
+        recyclerView.setAdapter(screenAdapter);
+        setupDragToSelect();
+
+        updatePrivateTabHighlights();
+        refreshCurrentList();
+        updateBarsVisibility();
+        updateTopNavBar();
     }
 
     private void refreshBinMenuVisibility() {
@@ -777,8 +1059,76 @@ public class GalleryActivity extends AppCompatActivity {
         if (btnShareSelected != null) btnShareSelected.setOnClickListener(v -> shareSelectedItems());
         if (btnInfoSelected != null) btnInfoSelected.setOnClickListener(v -> showSelectedItemInfo());
         if (btnFavoriteSelected != null) btnFavoriteSelected.setOnClickListener(v -> addSelectedToFavorites());
+        installPrivateMoveAction();   // ← ADD THIS LINE
     }
 
+    /**
+     * Moves every currently selected file from the public gallery into the
+     * private folder. Requires a valid private password (which is created
+     * automatically on first use). Runs on the executor.
+     */
+    private void moveSelectedToPrivate() {
+        if (selectedItems.isEmpty()) return;
+
+        // Make sure the vault exists and is unlocked. First-ever call has no
+        // password yet, so show the "create password" dialog.
+        if (privateVault == null) privateVault = new PrivateVault(this);
+        if (!privateVault.hasPassword()) {
+            PrivateLockDialog.show(this, privateVault, new PrivateLockDialog.OnResult() {
+                @Override public void onUnlocked() {
+                    privateUnlocked = true;
+                    moveSelectedToPrivate();
+                }
+                @Override public void onCancelled() {
+                    Toast.makeText(GalleryActivity.this,
+                            "Password required to move files to Private",
+                            Toast.LENGTH_SHORT).show();
+                }
+            });
+            return;
+        }
+
+        final List<String> paths = new ArrayList<>(selectedItems);
+        final Toast progress = Toast.makeText(this, "Moving to Private…", Toast.LENGTH_SHORT);
+        progress.show();
+
+        executor.execute(() -> {
+            int moved = 0, failed = 0;
+            List<String> movedFrom = new ArrayList<>();
+            for (String path : paths) {
+                File src = new File(path);
+                if (!src.exists()) { failed++; continue; }
+                if (privateVault.moveIntoPrivate(src) != null) {
+                    moved++;
+                    movedFrom.add(path);
+                } else {
+                    failed++;
+                }
+            }
+            final int m = moved, f = failed;
+            final List<String> movedPaths = movedFrom;
+            runOnUiThread(() -> {
+                progress.cancel();
+                if (!isActivityAlive()) return;
+
+                // Remove moved items from cachedMedia so the main grid drops them
+                // immediately, without waiting for MediaStore to notice.
+                for (int i = cachedMedia.size() - 1; i >= 0; i--) {
+                    if (movedPaths.contains(cachedMedia.get(i).path)) {
+                        cachedMedia.remove(i);
+                    }
+                }
+                mtimeCache.clear();
+                clearSelection();
+                refreshCurrentList();
+                scheduleMediaRefresh(0L);
+
+                Toast.makeText(this,
+                        "Moved " + m + (f > 0 ? ", failed " + f : "") + " to Private",
+                        Toast.LENGTH_SHORT).show();
+            });
+        });
+    }
 
     private void installFastScrollBar() {
         android.view.ViewGroup content =
@@ -1195,6 +1545,80 @@ public class GalleryActivity extends AppCompatActivity {
             updateTopNavBar();
             return;
         }
+        if (currentFilter == FilterMode.PRIVATE) {
+            if (!privateUnlocked || privateVault == null) {
+                screenAdapter.submitList(new ArrayList<>());
+                if (loadingSpinner != null) loadingSpinner.setVisibility(View.GONE);
+                recyclerView.setVisibility(View.VISIBLE);
+                showEmptyState();
+                updateTopNavBar();
+                return;
+            }
+
+            List<GalleryMediaItem> privateItems = privateVault.listPrivateItems();
+            List<GalleryMediaItem> out = new ArrayList<>();
+
+            if (privateTab == PrivateTab.PFILES) {
+                // Only private files.
+                out.addAll(privateItems);
+            } else {
+                // IMAGES / VIDEOS: show public media that has NOT already been
+                // moved into the vault, filtered by type.
+                Set<String> privatePaths = new HashSet<>();
+                for (GalleryMediaItem it : privateItems) if (it.path != null) privatePaths.add(it.path);
+
+                for (GalleryMediaItem it : cachedMedia) {
+                    if (it.path == null) continue;
+                    if (it.isTrashed) continue;
+                    if (it.path.contains("/private/")) continue;
+                    if (privatePaths.contains(it.path)) continue;
+                    if (privateTab == PrivateTab.IMAGES && it.type != GalleryMediaItem.TYPE_IMAGE) continue;
+                    if (privateTab == PrivateTab.VIDEOS && it.type != GalleryMediaItem.TYPE_VIDEO) continue;
+                    out.add(it);
+                }
+                // Append any private items of the same type so they appear too.
+                for (GalleryMediaItem it : privateItems) {
+                    if (it.path == null) continue;
+                    if (privateTab == PrivateTab.IMAGES && it.type != GalleryMediaItem.TYPE_IMAGE) continue;
+                    if (privateTab == PrivateTab.VIDEOS && it.type != GalleryMediaItem.TYPE_VIDEO) continue;
+                    out.add(it);
+                }
+            }
+
+            for (GalleryMediaItem it : out) {
+                if (it == null || it.path == null) continue;
+                File f = new File(it.path);
+                if (!f.exists()) continue;
+                long fileMs = f.lastModified();
+                if (fileMs > it.lastModifiedMillis) {
+                    it.lastModifiedMillis = fileMs;
+                }
+            }
+            Collections.sort(out, (a, b) -> {
+                int c = Long.compare(b.lastModifiedMillis, a.lastModifiedMillis);
+                if (c != 0) return c;
+                String pa = a.path == null ? "" : a.path;
+                String pb = b.path == null ? "" : b.path;
+                return pb.compareTo(pa);
+            });
+
+            screenAdapter.submitList(new ArrayList<>(out));
+            if (loadingSpinner != null) loadingSpinner.setVisibility(View.GONE);
+            recyclerView.setVisibility(View.VISIBLE);
+            updateSelectionUI();
+            showEmptyState();
+            updateTopNavBar();
+            return;
+        }
+
+        for (GalleryMediaItem it : cachedMedia) {
+            if (it == null || it.path == null) continue;
+            if (it.isTrashed) continue;
+            long fileMs = fileMtimeCached(it.path);
+            if (fileMs > it.lastModifiedMillis) {
+                it.lastModifiedMillis = fileMs;
+            }
+        }
         Collections.sort(cachedMedia, (a, b) -> {
             int c = Long.compare(b.lastModifiedMillis, a.lastModifiedMillis);
             if (c != 0) return c;
@@ -1250,6 +1674,22 @@ public class GalleryActivity extends AppCompatActivity {
     }
 
 
+    private void installPrivateMoveAction() {
+        if (selectionBar == null) return;
+        if (selectionBar.findViewWithTag("move_to_private") != null) return;
+
+        TextView btn = new TextView(this);
+        btn.setTag("move_to_private");
+        btn.setText("MOVE TO PRIVATE");
+        btn.setTextColor(0xFF33FF33);
+        btn.setTypeface(android.graphics.Typeface.MONOSPACE);
+        btn.setTextSize(11);
+        btn.setPadding(dpToPx(10), dpToPx(8), dpToPx(10), dpToPx(8));
+        btn.setClickable(true);
+        btn.setFocusable(true);
+        btn.setOnClickListener(v -> moveSelectedToPrivate());
+        selectionBar.addView(btn);
+    }
 
     private void onAlbumSelected(AlbumRecord album) {
         albumsController.openAlbum(album);
@@ -1270,11 +1710,14 @@ public class GalleryActivity extends AppCompatActivity {
 
         boolean albumsOpen = albumsController != null
                 && (albumsController.isShowingAlbums() || albumsController.isAlbumOpen());
-        boolean showBack = currentFilter == FilterMode.BIN
-                || albumsOpen || whatsappOnly;
+        boolean isPrivate = currentFilter == FilterMode.PRIVATE;
+        boolean showBack = !isPrivate && (currentFilter == FilterMode.BIN || albumsOpen || whatsappOnly);
+
         btnBack.setVisibility(showBack ? View.VISIBLE : View.GONE);
 
-        if (currentFilter == FilterMode.BIN) {
+        if (isPrivate) {
+            title.setText("Private");
+        } else if (currentFilter == FilterMode.BIN) {
             title.setText("Bin");
         } else if (albumsController != null && albumsController.isAlbumOpen()) {
             AlbumRecord open = albumsController.getOpenAlbum();
@@ -1286,31 +1729,80 @@ public class GalleryActivity extends AppCompatActivity {
         }
     }
 
-        private void updateBarsVisibility() {
+    private void updateBarsVisibility() {
         boolean isBin = currentFilter == FilterMode.BIN;
-        boolean isSelection = selectionMode && !isBin;
+        boolean isPrivate = currentFilter == FilterMode.PRIVATE;
+        boolean isSelection = selectionMode && !isBin && !isPrivate;
+
+        // Default: hide everything, then turn on the right one.
+        if (bottomBar != null) bottomBar.setVisibility(View.GONE);
+        if (selectionBar != null) selectionBar.setVisibility(View.GONE);
+        if (binBottomBar != null) binBottomBar.setVisibility(View.GONE);
+        if (privateTabsBar != null) privateTabsBar.setVisibility(View.GONE);
+        if (selectionTopBar != null) selectionTopBar.setVisibility(View.GONE);
+        if (btnPrivateLogout != null) btnPrivateLogout.setVisibility(View.GONE);
 
         if (isBin) {
-            bottomBar.setVisibility(View.GONE);
-            selectionBar.setVisibility(View.GONE);
-            binBottomBar.setVisibility(selectedItems.isEmpty() ? View.GONE : View.VISIBLE);
-            if (selectionTopBar != null) selectionTopBar.setVisibility(View.GONE);
+            showBinBottomBar();
+            if (selectionTopBar != null) {
+                selectionTopBar.setVisibility(
+                        selectedItems.isEmpty() ? View.GONE : View.VISIBLE);
+            }
+        } else if (isPrivate) {
+            // Private: three tabs at the bottom, logout at the top.
+            if (privateTabsBar != null) privateTabsBar.setVisibility(View.VISIBLE);
+            if (btnPrivateLogout != null) btnPrivateLogout.setVisibility(View.VISIBLE);
+            if (selectionMode && !selectedItems.isEmpty()) {
+                if (selectionBar != null) selectionBar.setVisibility(View.VISIBLE);
+            }
         } else if (isSelection) {
-            bottomBar.setVisibility(View.GONE);
-            selectionBar.setVisibility(View.VISIBLE);
-            binBottomBar.setVisibility(View.GONE);
+            if (selectionBar != null) selectionBar.setVisibility(View.VISIBLE);
             if (selectionTopBar != null) selectionTopBar.setVisibility(View.VISIBLE);
-            if (selectionCount != null) selectionCount.setText(selectedItems.size() + " selected");
+            if (selectionCount != null)
+                selectionCount.setText(selectedItems.size() + " selected");
         } else {
-            bottomBar.setVisibility(View.VISIBLE);
-            selectionBar.setVisibility(View.GONE);
-            binBottomBar.setVisibility(View.GONE);
-            if (selectionTopBar != null) selectionTopBar.setVisibility(View.GONE);
+            showNormalBottomBar();
         }
-            refreshBinMenuVisibility();
-
+        refreshBinMenuVisibility();
     }
 
+    private void showNormalBottomBar() {
+        if (bottomBar == null) return;
+        bottomBar.setVisibility(View.VISIBLE);
+        View btnHome = findViewById(R.id.btnHome);
+        View btnAlbums = findViewById(R.id.btnAlbums);
+        View btnSort = findViewById(R.id.btnSort);
+        if (btnHome != null) btnHome.setVisibility(View.VISIBLE);
+        if (btnAlbums != null) btnAlbums.setVisibility(View.VISIBLE);
+        if (btnSort != null) btnSort.setVisibility(View.VISIBLE);
+    }
+
+    private void showBinBottomBar() {
+        if (bottomBar != null) bottomBar.setVisibility(View.GONE);
+        if (binBottomBar != null) {
+            boolean hasSelection = !selectedItems.isEmpty();
+            binBottomBar.setVisibility(hasSelection ? View.VISIBLE : View.GONE);
+        }
+    }
+
+    private void installChangePwInTopBar() {
+        if (selectionTopBar == null) return;
+        ViewGroup group = (ViewGroup) selectionTopBar;
+        if (group.findViewWithTag("change_pw_topbar") != null) return;
+
+        privateChangePwInTopBar = new TextView(this);
+        privateChangePwInTopBar.setTag("change_pw_topbar");
+        privateChangePwInTopBar.setText("CHANGE PW");
+        privateChangePwInTopBar.setTextColor(0xFF33FF33);
+        privateChangePwInTopBar.setTypeface(android.graphics.Typeface.MONOSPACE);
+        privateChangePwInTopBar.setTextSize(11);
+        privateChangePwInTopBar.setPadding(dpToPx(10), dpToPx(8), dpToPx(10), dpToPx(8));
+        privateChangePwInTopBar.setClickable(true);
+        privateChangePwInTopBar.setFocusable(true);
+        privateChangePwInTopBar.setOnClickListener(v -> changePrivatePassword());
+        privateChangePwInTopBar.setVisibility(View.GONE);
+        group.addView(privateChangePwInTopBar);
+    }
     private void showEmptyState() {
         View emptyView = findViewById(R.id.emptyStateContainer);
         if (emptyView == null) return;
@@ -1496,25 +1988,210 @@ public class GalleryActivity extends AppCompatActivity {
     private void updateSelectionUI() {
         if (!isActivityAlive()) return;
         boolean isBin = currentFilter == FilterMode.BIN;
+        boolean isPrivate = currentFilter == FilterMode.PRIVATE;
+
+        // CHANGE PW chip — only in private mode, only when nothing selected.
+        if (privateChangePwInTopBar != null) {
+            privateChangePwInTopBar.setVisibility(
+                    isPrivate && selectedItems.isEmpty() ? View.VISIBLE : View.GONE);
+        }
 
         if (selectedItems.isEmpty()) {
             selectionMode = false;
-            if (bottomBar != null) bottomBar.setVisibility(isBin ? View.GONE : View.VISIBLE);
-            if (selectionBar != null) selectionBar.setVisibility(View.GONE);
-            if (binBottomBar != null) binBottomBar.setVisibility(View.GONE);
             if (selectionTopBar != null) selectionTopBar.setVisibility(View.GONE);
         } else {
             selectionMode = true;
-            if (bottomBar != null) bottomBar.setVisibility(View.GONE);
-            if (selectionBar != null) selectionBar.setVisibility(isBin ? View.GONE : View.VISIBLE);
-            if (binBottomBar != null) binBottomBar.setVisibility(isBin ? View.VISIBLE : View.GONE);
             if (selectionTopBar != null) selectionTopBar.setVisibility(View.VISIBLE);
             if (selectionCount != null) selectionCount.setText(selectedItems.size() + " selected");
-            if (!isBin) {
-                TextView btnBin = findViewById(R.id.btnBinSelected);
-                if (btnBin != null) btnBin.setText("Bin (" + selectedItems.size() + ")");
-            }
         }
+
+        // Rebuild the action chips row depending on mode.
+        rebuildSelectionActions(isBin, isPrivate);
+
+        updateBarsVisibility();
+    }
+
+    private void rebuildSelectionActions(boolean isBin, boolean isPrivate) {
+        if (selectionBar == null) return;
+        selectionBar.removeAllViews();
+
+        if (isBin) {
+            // Restore / Delete live in binBottomBar, nothing here.
+            return;
+        }
+
+        if (isPrivate) {
+            // Are any selected items actually inside the private vault?
+            boolean anyPrivate = false;
+            String privateRoot = privateVault != null
+                    ? privateVault.getPrivateDir().getAbsolutePath() : null;
+            if (privateRoot != null) {
+                for (String p : selectedItems) {
+                    if (p != null && p.startsWith(privateRoot + "/")) {
+                        anyPrivate = true;
+                        break;
+                    }
+                }
+            }
+
+            if (anyPrivate) {
+                // Selected at least one private file → offer "MOVE OUT".
+                TextView out = makeSelectionAction("MOVE OUT", 0xFFFFAA00,
+                        () -> moveSelectedOutOfPrivate());
+                TextView cancelSel = makeSelectionAction("CANCEL", 0xFFFFFFFF,
+                        () -> clearSelection());
+
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                        0, ViewGroup.LayoutParams.MATCH_PARENT, 1f);
+                selectionBar.addView(out, lp);
+                selectionBar.addView(cancelSel, new LinearLayout.LayoutParams(lp));
+            } else {
+                // Selected public files (Images/Videos tabs) → offer "MOVE TO PRIVATE".
+                TextView move = makeSelectionAction("MOVE TO PRIVATE", 0xFF33FF33,
+                        () -> moveSelectedToPrivate());
+                TextView cancelSel = makeSelectionAction("CANCEL", 0xFFFFFFFF,
+                        () -> clearSelection());
+
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                        0, ViewGroup.LayoutParams.MATCH_PARENT, 1f);
+                selectionBar.addView(move, lp);
+                selectionBar.addView(cancelSel, new LinearLayout.LayoutParams(lp));
+            }
+            return;
+        }
+
+        // Normal mode
+        TextView bin = makeSelectionAction("BIN", 0xFFFF4444,
+                () -> moveSelectedToTrash());
+        TextView share = makeSelectionAction("SHARE", 0xFFFFFFFF,
+                () -> shareSelectedItems());
+        TextView info = makeSelectionAction("INFO", 0xFFFFFFFF,
+                () -> showSelectedItemInfo());
+        TextView fav = makeSelectionAction("FAVORITE", 0xFFFFFFFF,
+                () -> addSelectedToFavorites());
+        TextView priv = makeSelectionAction("MOVE TO PRIVATE", 0xFF33FF33,
+                () -> moveSelectedToPrivate());
+
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.MATCH_PARENT, 1f);
+        selectionBar.addView(bin, lp);
+        selectionBar.addView(share, new LinearLayout.LayoutParams(lp));
+        selectionBar.addView(info, new LinearLayout.LayoutParams(lp));
+        selectionBar.addView(fav, new LinearLayout.LayoutParams(lp));
+        selectionBar.addView(priv, new LinearLayout.LayoutParams(lp));
+    }
+
+    private TextView makeSelectionAction(String label, int color, Runnable onClick) {
+        TextView tv = new TextView(this);
+        tv.setText(label);
+        tv.setTextColor(color);
+        tv.setTypeface(android.graphics.Typeface.MONOSPACE);
+        tv.setTextSize(12);
+        tv.setGravity(Gravity.CENTER);
+        tv.setClickable(true);
+        tv.setFocusable(true);
+        tv.setOnClickListener(v -> onClick.run());
+        return tv;
+    }
+
+    private void moveSelectedOutOfPrivate() {
+        if (selectedItems.isEmpty() || privateVault == null) return;
+
+        final List<String> paths = new ArrayList<>(selectedItems);
+        final Toast progress = Toast.makeText(this, "Moving out of Private…",
+                Toast.LENGTH_SHORT);
+        progress.show();
+
+        executor.execute(() -> {
+            int moved = 0, failed = 0;
+            List<String> writtenPublicPaths = new ArrayList<>();
+
+            File picturesDir = new File(
+                    android.os.Environment.getExternalStoragePublicDirectory(
+                            android.os.Environment.DIRECTORY_PICTURES), "AuraGallery");
+            File moviesDir = new File(
+                    android.os.Environment.getExternalStoragePublicDirectory(
+                            android.os.Environment.DIRECTORY_MOVIES), "AuraGallery");
+            if (!picturesDir.exists()) picturesDir.mkdirs();
+            if (!moviesDir.exists()) moviesDir.mkdirs();
+
+            for (String path : paths) {
+                File src = new File(path);
+                if (!src.exists()) { failed++; continue; }
+
+                String lower = src.getName().toLowerCase(Locale.ROOT);
+                boolean isVideo = lower.endsWith(".mp4") || lower.endsWith(".mkv")
+                        || lower.endsWith(".webm") || lower.endsWith(".avi")
+                        || lower.endsWith(".mov") || lower.endsWith(".3gp")
+                        || lower.endsWith(".m4v") || lower.endsWith(".flv")
+                        || lower.endsWith(".wmv");
+                File dir = isVideo ? moviesDir : picturesDir;
+
+                // Strip the "p_<epoch>_" (and optional "_<n>") prefix from the
+                // filename so the user gets a clean name back in the public folder.
+                String clean = stripPrivatePrefix(src.getName());
+                File dst = new File(dir, clean);
+                if (dst.exists()) {
+                    String base = clean, ext = "";
+                    int dot = clean.lastIndexOf(".");
+                    if (dot > 0) { base = clean.substring(0, dot); ext = clean.substring(dot); }
+                    int suffix = 1;
+                    while (dst.exists()) {
+                        dst = new File(dir, base + "_" + suffix + ext);
+                        suffix++;
+                    }
+                }
+
+                boolean ok = false;
+                try (java.io.InputStream in = new java.io.FileInputStream(src);
+                     java.io.OutputStream out = new java.io.FileOutputStream(dst)) {
+                    byte[] buf = new byte[64 * 1024];
+                    int n;
+                    while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                    out.flush();
+                    ok = dst.length() > 0;
+                } catch (Exception ignored) {}
+
+                if (ok) {
+                    try { dst.setLastModified(System.currentTimeMillis()); } catch (Exception ignored) {}
+                    writtenPublicPaths.add(dst.getAbsolutePath());
+                    if (src.delete()) moved++;
+                    else moved++;
+                } else {
+                    dst.delete();
+                    failed++;
+                }
+            }
+
+            if (!writtenPublicPaths.isEmpty()) {
+                MediaScannerConnection.scanFile(this,
+                        writtenPublicPaths.toArray(new String[0]), null, null);
+            }
+
+            final int m = moved, f = failed;
+            runOnUiThread(() -> {
+                progress.cancel();
+                if (!isActivityAlive()) return;
+                mtimeCache.clear();
+                clearSelection();
+                refreshCurrentList();
+                scheduleMediaRefresh(0L);
+                Toast.makeText(this,
+                        "Moved " + m + " out of Private"
+                                + (f > 0 ? " (" + f + " failed)" : ""),
+                        Toast.LENGTH_SHORT).show();
+            });
+        });
+    }
+
+    /** Removes "p_<epoch>_" and the optional "_<n>" collision suffix. */
+    private String stripPrivatePrefix(String name) {
+        if (name == null || !name.startsWith("p_")) return name;
+        int firstUnderscore = name.indexOf('_');
+        if (firstUnderscore < 0) return name;
+        int secondUnderscore = name.indexOf('_', firstUnderscore + 1);
+        if (secondUnderscore < 0) return name;
+        return name.substring(secondUnderscore + 1);
     }
 
     private void clearSelection() {
@@ -1911,9 +2588,10 @@ public class GalleryActivity extends AppCompatActivity {
                     }
                 }
                 trashedIndexDirty = false;
+                mtimeCache.clear();
                 clearSelection();
                 refreshCurrentList();
-                scheduleMediaRefresh(MEDIA_REFRESH_DEBOUNCE_MS);  // <-- ADD THIS
+                scheduleMediaRefresh(MEDIA_REFRESH_DEBOUNCE_MS);
 
             });
         });
@@ -1973,6 +2651,7 @@ public class GalleryActivity extends AppCompatActivity {
                     }
                 }
                 trashedIndexDirty = false;
+                mtimeCache.clear();
                 clearSelection();
                 refreshCurrentList();
                 scheduleMediaRefresh(MEDIA_REFRESH_DEBOUNCE_MS);
@@ -2017,6 +2696,7 @@ public class GalleryActivity extends AppCompatActivity {
                                 removeBinPath(path);
                             }
                             trashedIndexDirty = false;
+                            mtimeCache.clear();
                             clearSelection();
                             refreshCurrentList();
                             Toast.makeText(this, "Deleted " + dd
@@ -2568,7 +3248,6 @@ public class GalleryActivity extends AppCompatActivity {
         if (videoControlContainer != null)
             videoControlContainer.setVisibility(View.GONE);
         fullscreenOverlay.setVisibility(View.GONE);
-        bottomBar.setVisibility(View.VISIBLE);
         if (loadingSpinner != null) {
             int cnt = screenAdapter != null ? screenAdapter.getItemCount() : 0;
             boolean stillLoading = cnt == 0 && !mediaEverLoaded;
@@ -2576,7 +3255,9 @@ public class GalleryActivity extends AppCompatActivity {
         }
         View topNav = findViewById(R.id.topNavBar);
         if (topNav != null) topNav.setVisibility(View.VISIBLE);
+
         updateTopNavBar();
+        updateBarsVisibility();
 
         if (savedGridScrollPosition >= 0 && recyclerView != null) {
             GridLayoutManager glm = (GridLayoutManager) recyclerView.getLayoutManager();
@@ -3392,6 +4073,18 @@ public class GalleryActivity extends AppCompatActivity {
         return canonical;
     }
 
+    private long fileMtimeCached(String path) {
+        if (path == null) return 0L;
+        Long cached = mtimeCache.get(path);
+        if (cached != null) return cached;
+        long v;
+        try { v = new File(path).lastModified(); }
+        catch (Exception e) { v = 0L; }
+        mtimeCache.put(path, v);
+        return v;
+    }
+
+
     private void scheduleMediaRefresh(long delayMs) {
         if (!isActivityAlive()) return;
         if (pendingMediaRefresh != null) mediaRefreshHandler.removeCallbacks(pendingMediaRefresh);
@@ -3414,14 +4107,16 @@ public class GalleryActivity extends AppCompatActivity {
             if (brightnessDimOverlay != null) brightnessDimOverlay.setVisibility(View.GONE);
             return;
         }
-        if (selectionMode) {
-            clearSelection();
+        if (currentFilter == FilterMode.PRIVATE) {
+            if (selectionMode && !selectedItems.isEmpty()) {
+                clearSelection();
+                return;
+            }
+            exitPrivateMode();
             return;
         }
-        if (currentFilter == FilterMode.BIN) {
-            exitBin();
-            return;
-        }
+        if (selectionMode) { clearSelection(); return; }
+        if (currentFilter == FilterMode.BIN) { exitBin(); return; }
         if (albumsController != null && albumsController.onBack()) {
             updateTopNavBar();
             updateBarsVisibility();
@@ -3440,6 +4135,7 @@ public class GalleryActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        privateUnlocked = false;
         super.onDestroy();
         if (videoView != null) videoView.stopPlayback();
         if (currentFullscreenVideo != null) {

@@ -26,7 +26,7 @@ public final class GalleryMediaItem {
 
 
 
-    public final long lastModifiedMillis;
+    public long lastModifiedMillis;
 
     public GalleryMediaItem(long id,
                             String path,
