@@ -113,6 +113,12 @@ public class AuraBrowserActivity extends AppCompatActivity {
     private int blockedPopupsThisSession = 0;
     private ActionMode currentSelectionActionMode;
 
+    private View customView = null;
+    private WebChromeClient.CustomViewCallback customViewCallback = null;
+    private FrameLayout fullscreenContainer = null;
+
+    private WebChromeClient fullscreenOwnerChrome = null;
+
     private Dialog tabSheetDialog = null;
     private LinearLayout tabSheetList = null;
 
@@ -2659,6 +2665,9 @@ public class AuraBrowserActivity extends AppCompatActivity {
         final WebChromeClient baseChrome = wv.getWebChromeClient();
         wv.setWebChromeClient(new WebChromeClient() {
 
+            {
+                fullscreenOwnerChrome = this;
+            }
             @Override
             public boolean onCreateWindow(WebView view, boolean isDialog,
                                           boolean isUserGesture, android.os.Message resultMsg) {
@@ -2676,7 +2685,104 @@ public class AuraBrowserActivity extends AppCompatActivity {
 
             @Override
             public void onShowCustomView(View view, CustomViewCallback callback) {
-                if (callback != null) callback.onCustomViewHidden();
+                if (customView != null) {
+                    // Exit fullscreen first.
+                    Tab t = currentTab();
+                    if (t != null && t.webView != null) {
+                        try {
+                            t.webView.evaluateJavascript(
+                                    "(function(){if(document.fullscreenElement)"
+                                            + "{document.exitFullscreen();}"
+                                            + "var v=document.querySelector('video');"
+                                            + "if(v&&v.webkitDisplayingFullscreen)"
+                                            + "{v.webkitExitFullscreen();}})();",
+                                    null);
+                        } catch (Exception ignored) {}
+                    }
+
+                    // Route the exit through the WebChromeClient that owns the callback.
+                    WebChromeClient owner = fullscreenOwnerChrome;
+                    if (owner != null) {
+                        try { owner.onHideCustomView(); } catch (Exception ignored) {}
+                    } else {
+                        // Fallback: tear down our fullscreen container directly.
+                        if (fullscreenContainer != null) {
+                            fullscreenContainer.removeAllViews();
+                            FrameLayout root = findViewById(android.R.id.content);
+                            if (root != null) root.removeView(fullscreenContainer);
+                            fullscreenContainer = null;
+                        }
+                        customView = null;
+                        topBar.setVisibility(View.VISIBLE);
+                        footerBar.setVisibility(View.VISIBLE);
+                        WebChromeClient.CustomViewCallback cb = customViewCallback;
+                        customViewCallback = null;
+                        if (cb != null) {
+                            try { cb.onCustomViewHidden(); } catch (Exception ignored) {}
+                        }
+                    }
+                    return;
+                }
+
+                customView = view;
+                customViewCallback = callback;
+
+                // Hide the browser chrome so the video fills the screen.
+                topBar.setVisibility(View.GONE);
+                footerBar.setVisibility(View.GONE);
+                progressBar.setVisibility(View.GONE);
+
+                // Enter immersive fullscreen (hides status/nav bars too).
+                View decor = getWindow().getDecorView();
+                decor.setSystemUiVisibility(
+                        View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                                | View.SYSTEM_UI_FLAG_FULLSCREEN
+                                | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+
+                // Attach the video view on top of the whole window.
+                FrameLayout root = findViewById(android.R.id.content);
+                fullscreenContainer = new FrameLayout(AuraBrowserActivity.this);
+                fullscreenContainer.setBackgroundColor(0xFF000000);
+                fullscreenContainer.setLayoutParams(new FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.MATCH_PARENT));
+                fullscreenContainer.addView(view, new FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.MATCH_PARENT));
+                root.addView(fullscreenContainer);
+            }
+
+            @Override
+            public void onHideCustomView() {
+                if (customView == null) return;
+
+                // Remove the fullscreen view.
+                if (fullscreenContainer != null) {
+                    fullscreenContainer.removeAllViews();
+                    FrameLayout root = findViewById(android.R.id.content);
+                    if (root != null) root.removeView(fullscreenContainer);
+                    fullscreenContainer = null;
+                }
+
+                customView = null;
+
+                // Restore browser chrome.
+                topBar.setVisibility(View.VISIBLE);
+                footerBar.setVisibility(View.VISIBLE);
+
+                // Exit immersive fullscreen.
+                View decor = getWindow().getDecorView();
+                decor.setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+
+                // Tell WebView we're done.
+                WebChromeClient.CustomViewCallback cb = customViewCallback;
+                customViewCallback = null;
+                if (cb != null) {
+                    try { cb.onCustomViewHidden(); } catch (Exception ignored) {}
+                }
             }
 
             @Override
@@ -3065,6 +3171,45 @@ public class AuraBrowserActivity extends AppCompatActivity {
 
     @Override
     public void onBackPressed() {
+        if (customView != null) {
+            // Exit fullscreen first.
+            Tab t = currentTab();
+            if (t != null && t.webView != null) {
+                try {
+                    t.webView.evaluateJavascript(
+                            "(function(){if(document.fullscreenElement)"
+                                    + "{document.exitFullscreen();}"
+                                    + "var v=document.querySelector('video');"
+                                    + "if(v&&v.webkitDisplayingFullscreen)"
+                                    + "{v.webkitExitFullscreen();}})();",
+                            null);
+                } catch (Exception ignored) {}
+            }
+
+            // Route the exit through the WebChromeClient that owns the callback.
+            WebChromeClient owner = fullscreenOwnerChrome;
+            if (owner != null) {
+                try { owner.onHideCustomView(); } catch (Exception ignored) {}
+            } else {
+                // Fallback: tear down our fullscreen container directly.
+                if (fullscreenContainer != null) {
+                    fullscreenContainer.removeAllViews();
+                    FrameLayout root = findViewById(android.R.id.content);
+                    if (root != null) root.removeView(fullscreenContainer);
+                    fullscreenContainer = null;
+                }
+                customView = null;
+                topBar.setVisibility(View.VISIBLE);
+                footerBar.setVisibility(View.VISIBLE);
+                WebChromeClient.CustomViewCallback cb = customViewCallback;
+                customViewCallback = null;
+                if (cb != null) {
+                    try { cb.onCustomViewHidden(); } catch (Exception ignored) {}
+                }
+            }
+            return;
+        }
+
         if (urlBarState != STATE_DISPLAY) { exitToDisplay(true); return; }
 
         Tab t = currentTab();
@@ -3120,6 +3265,27 @@ public class AuraBrowserActivity extends AppCompatActivity {
     }
     @Override
     protected void onDestroy() {
+        if (customView != null) {
+            WebChromeClient owner = fullscreenOwnerChrome;
+            if (owner != null) {
+                try { owner.onHideCustomView(); } catch (Exception ignored) {}
+            } else {
+                if (fullscreenContainer != null) {
+                    try { fullscreenContainer.removeAllViews(); } catch (Exception ignored) {}
+                    FrameLayout root = findViewById(android.R.id.content);
+                    if (root != null) {
+                        try { root.removeView(fullscreenContainer); } catch (Exception ignored) {}
+                    }
+                    fullscreenContainer = null;
+                }
+                customView = null;
+                WebChromeClient.CustomViewCallback cb = customViewCallback;
+                customViewCallback = null;
+                if (cb != null) {
+                    try { cb.onCustomViewHidden(); } catch (Exception ignored) {}
+                }
+            }
+        }
         if (downloadPanelDialog != null) {
             try { downloadPanelDialog.dismiss(); } catch (Exception ignored) {}
             downloadPanelDialog = null;
