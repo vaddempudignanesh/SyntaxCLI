@@ -602,7 +602,7 @@ public class BasicKeyboardView extends View {
                     // Once the finger has clearly moved sideways, switch to cursor-drag mode.
                     // After that we keep tracking on every MOVE until ACTION_UP / CANCEL.
                     if (!spaceCursorActive) {
-                        if (Math.abs(dx) > dp(24) && Math.abs(dy) < dp(40)) {
+                        if (Math.abs(dx) > dp(4) && Math.abs(dy) < dp(40)) {
                             cancelPendingLongPress();
                             spaceCursorActive = true;
                             longPressHandled = true;
@@ -615,23 +615,19 @@ public class BasicKeyboardView extends View {
                             spaceLastMoveMs = event.getEventTime();
                         }
                     } else {
-                        // Finger is in cursor-drag mode. Emit nudges proportional to how far
-                        // it travelled since the last MOVE, with a floor of 1 per MOVE so
-                        // even a slow drag keeps stepping one char at a time.
-                        long dt = Math.max(1L, event.getEventTime() - spaceLastMoveMs);
+                        // Finger is in cursor-drag mode. Move the cursor by exactly the number
+                        // of characters the finger has travelled since the last MOVE — no
+                        // velocity, no intensity, no multiplier. A 1px move = 1 char move.
                         float deltaPx = event.getX() - spaceLastX;
-                        float stepPx = dp(12);            // how many pixels = one character nudge
-                        // velocity (px/s) → base multiplier; capped so a violent flick
-                        // doesn't jump 200 chars in one frame
-                        float velocity = Math.abs(deltaPx) * 1000f / dt;
-                        float multiplier = 1f + Math.min(velocity / 800f, 3f);
+                        float stepPx  = dp(1);            // 1 dp of finger travel = 1 char
+                        if (stepPx < 1f) stepPx = 1f;
 
-                        int nudgeCount = Math.max(1,
-                                Math.round((Math.abs(deltaPx) / stepPx) * multiplier));
-                        // hard ceiling so a single MOVE can't send 1000 events
-                        nudgeCount = Math.min(nudgeCount, 8);
+                        int nudgeCount = Math.round(Math.abs(deltaPx) / stepPx);
+                        // Cap so a single MOVE can’t jump more than what the finger actually moved.
+                        int maxPerMove = 10;
+                        if (nudgeCount > maxPerMove) nudgeCount = maxPerMove;
 
-                        if (Math.abs(deltaPx) >= dp(2) && listener != null) {
+                        if (nudgeCount > 0 && listener != null) {
                             int code = deltaPx > 0 ? BasicKey.CODE_RIGHT : BasicKey.CODE_LEFT;
                             for (int i = 0; i < nudgeCount; i++) {
                                 listener.onKey(code, null);

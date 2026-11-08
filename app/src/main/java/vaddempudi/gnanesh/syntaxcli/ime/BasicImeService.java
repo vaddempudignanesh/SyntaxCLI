@@ -474,12 +474,10 @@ public class BasicImeService extends InputMethodService
                 }
                 return;
             case BasicKey.CODE_LEFT:
-                ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT));
-                ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_LEFT));
+                moveCursor(ic, -1);
                 return;
             case BasicKey.CODE_RIGHT:
-                ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT));
-                ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_RIGHT));
+                moveCursor(ic, +1);
                 return;
         }
 
@@ -520,6 +518,55 @@ public class BasicImeService extends InputMethodService
                 handleKey(code, text);
             }
         };
+    }
+
+
+    private void moveCursor(InputConnection ic, int direction) {
+        if (ic == null) return;
+
+        // Prefer the true extents (works on every host).
+        CharSequence before = ic.getTextBeforeCursor(1024, 0);
+        CharSequence after  = ic.getTextAfterCursor(1024, 0);
+
+        int beforeLen = before == null ? 0 : before.length();
+        int afterLen  = after  == null ? 0 : after.length();
+
+        // Total length at the cursor. selStart = beforeLen, selEnd = selEndAbs.
+        // We only need selStart because there's no selection during typing.
+        int selStart = beforeLen;
+        int selEnd   = beforeLen;   // assume collapsed
+
+        int target;
+        if (direction < 0) {
+            // Move left by one codepoint (not one UTF-16 char).
+            target = selStart - 1;
+            if (before != null && beforeLen > 0) {
+                // If the last char is a low surrogate, step back one more.
+                char c = before.charAt(beforeLen - 1);
+                if (Character.isLowSurrogate(c) && beforeLen >= 2) {
+                    target = selStart - 2;
+                }
+            }
+        } else {
+            // Move right by one codepoint.
+            target = selStart + 1;
+            if (after != null && afterLen > 0) {
+                char c = after.charAt(0);
+                if (Character.isHighSurrogate(c) && afterLen >= 2) {
+                    target = selStart + 2;
+                }
+            }
+        }
+
+        if (target < 0) target = 0;
+        int total = beforeLen + afterLen;
+        if (target > total) target = total;
+
+        // setSelection moves the cursor without dispatching a key event,
+        // so the host app cannot interpret it as "close the keyboard".
+        ic.setSelection(Math.min(selStart, selEnd), Math.max(selStart, selEnd));
+        // Now do the actual move.
+        ic.setSelection(target, target);
     }
 
     private void pasteClip(ClipEntry e) {
