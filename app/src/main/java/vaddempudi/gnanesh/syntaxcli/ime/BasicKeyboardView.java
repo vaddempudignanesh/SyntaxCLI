@@ -27,6 +27,12 @@ public class BasicKeyboardView extends View {
     private boolean urlMode = false;
     private boolean emailMode = false;
     private float cDownX = 0f;
+
+    private float   spaceDownX = 0f;
+    private float   spaceDownY = 0f;
+    private boolean spaceSwipeArmed = false;
+    private boolean spaceSwipeFired = false;
+
     private float cDownY = 0f;
     private boolean cSwipeArmed = false;
     private boolean cSwipeFired = false;
@@ -47,6 +53,11 @@ public class BasicKeyboardView extends View {
     public static final int GESTURE_EDITOR_TRIGGER    = -1002;
     public static final int GESTURE_DOUBLE_TRIGGER    = -1003;
 
+    private float   spaceLastX = 0f;
+    private float   spaceLastY = 0f;
+    private long    spaceLastMoveMs = 0L;
+    private boolean spaceCursorActive = false;
+    private int     spaceCursorMoved = 0;
     private boolean longPressHandled = false;
 
     private final float density;
@@ -532,6 +543,17 @@ public class BasicKeyboardView extends View {
                     invalidate();
 
                     cSwipeArmed = isCKey(hk);
+                    spaceSwipeArmed = isSpaceKey(hk);
+                    spaceSwipeFired = false;
+                    spaceCursorActive = false;
+                    spaceCursorMoved = 0;
+                    if (spaceSwipeArmed) {
+                        spaceDownX = event.getX();
+                        spaceDownY = event.getY();
+                        spaceLastX = spaceDownX;
+                        spaceLastY = spaceDownY;
+                        spaceLastMoveMs = event.getEventTime();
+                    }
                     cSwipeFired = false;
                     if (cSwipeArmed) {
                         cDownX = event.getX();
@@ -572,6 +594,58 @@ public class BasicKeyboardView extends View {
                         return true;
                     }
                 }
+
+                if (spaceSwipeArmed) {
+                    float dx = event.getX() - spaceDownX;
+                    float dy = event.getY() - spaceDownY;
+
+                    // Once the finger has clearly moved sideways, switch to cursor-drag mode.
+                    // After that we keep tracking on every MOVE until ACTION_UP / CANCEL.
+                    if (!spaceCursorActive) {
+                        if (Math.abs(dx) > dp(24) && Math.abs(dy) < dp(40)) {
+                            cancelPendingLongPress();
+                            spaceCursorActive = true;
+                            longPressHandled = true;
+                            pressed = null;
+                            invalidate();
+                            stopRepeat();
+                            if (bubbleOverlay != null) bubbleOverlay.hide();
+                            spaceLastX = event.getX();
+                            spaceLastY = event.getY();
+                            spaceLastMoveMs = event.getEventTime();
+                        }
+                    } else {
+                        // Finger is in cursor-drag mode. Emit nudges proportional to how far
+                        // it travelled since the last MOVE, with a floor of 1 per MOVE so
+                        // even a slow drag keeps stepping one char at a time.
+                        long dt = Math.max(1L, event.getEventTime() - spaceLastMoveMs);
+                        float deltaPx = event.getX() - spaceLastX;
+                        float stepPx = dp(12);            // how many pixels = one character nudge
+                        // velocity (px/s) → base multiplier; capped so a violent flick
+                        // doesn't jump 200 chars in one frame
+                        float velocity = Math.abs(deltaPx) * 1000f / dt;
+                        float multiplier = 1f + Math.min(velocity / 800f, 3f);
+
+                        int nudgeCount = Math.max(1,
+                                Math.round((Math.abs(deltaPx) / stepPx) * multiplier));
+                        // hard ceiling so a single MOVE can't send 1000 events
+                        nudgeCount = Math.min(nudgeCount, 8);
+
+                        if (Math.abs(deltaPx) >= dp(2) && listener != null) {
+                            int code = deltaPx > 0 ? BasicKey.CODE_RIGHT : BasicKey.CODE_LEFT;
+                            for (int i = 0; i < nudgeCount; i++) {
+                                listener.onKey(code, null);
+                            }
+                            spaceCursorMoved += nudgeCount;
+                        }
+
+                        spaceLastX = event.getX();
+                        spaceLastY = event.getY();
+                        spaceLastMoveMs = event.getEventTime();
+                        spaceSwipeFired = true;   // mark as "handled" so ACTION_UP won't dispatch the space
+                    }
+                }
+
                 HitKey hk = findKey(event.getX(), event.getY());
                 if (hk != pressed) {
                     cancelPendingLongPress();
@@ -586,18 +660,21 @@ public class BasicKeyboardView extends View {
             }
             case MotionEvent.ACTION_UP: {
                 cancelPendingLongPress();
+                boolean wasSpaceSwipe = spaceSwipeFired;
+                spaceSwipeArmed = false;
+                spaceSwipeFired = false;
+                spaceCursorActive = false;
+                spaceCursorMoved = 0;
                 boolean wasSwipe = cSwipeFired;
                 cSwipeArmed = false;
                 cSwipeFired = false;
-
                 HitKey hk = pressed;
                 setPressedKey(null);
                 invalidate();
                 stopRepeat();
                 if (bubbleOverlay != null) bubbleOverlay.hide();
 
-                if (wasSwipe) return true;
-
+                if (wasSwipe || wasSpaceSwipe) return true;
                 if (hk != null && listener != null) {
                     if (hk.key.code == BasicKey.CODE_SPACE) {
                         long now = System.currentTimeMillis();
@@ -618,6 +695,10 @@ public class BasicKeyboardView extends View {
             }
             case MotionEvent.ACTION_CANCEL: {
                 cancelPendingLongPress();
+                spaceSwipeArmed = false;
+                spaceSwipeFired = false;
+                spaceCursorActive = false;
+                spaceCursorMoved = 0;
                 cSwipeArmed = false;
                 cSwipeFired = false;
                 setPressedKey(null);
@@ -804,6 +885,10 @@ public class BasicKeyboardView extends View {
         // ★ Use BOTH flags so caps-lock uppercases the very first character
         String text = key.commitText(shifted || shiftLocked);
         listener.onKey(key.code, text);
+    }
+
+    private boolean isSpaceKey(HitKey hk) {
+        return hk != null && hk.key != null && hk.key.code == BasicKey.CODE_SPACE;
     }
 
     private static final class HitKey {

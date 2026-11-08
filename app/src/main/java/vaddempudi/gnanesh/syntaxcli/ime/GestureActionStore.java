@@ -23,7 +23,7 @@ public final class GestureActionStore {
     private static final String KEY   = "actions";
     private static final String DIR   = "t-ui";
     private static final String FILE  = "gesture_actions.txt";
-
+    private volatile long lastSeenStamp = 0L;
     private static volatile GestureActionStore INSTANCE;
     private static final Object LOCK = new Object();
 
@@ -106,8 +106,16 @@ public final class GestureActionStore {
             }
             return;
         }
-        // Neither source had anything.
+        lastSeenStamp = Math.max(prefsStamp, fileStamp);
     }
+
+    private void refreshIfChanged() {
+        long current = prefs.getLong("stamp", 0L);
+        if (current != lastSeenStamp) {
+            load();
+        }
+    }
+
 
     private List<KeyAction> loadFromFile() {
         List<KeyAction> out = new ArrayList<>();
@@ -196,10 +204,12 @@ public final class GestureActionStore {
     }
 
     public List<KeyAction> all() {
+        refreshIfChanged();
         return Collections.unmodifiableList(actions);
     }
 
     public KeyAction byKeyChar(String keyChar) {
+        refreshIfChanged();
         if (keyChar == null) return null;
         for (KeyAction a : actions) {
             if (keyChar.equalsIgnoreCase(a.keyChar)) return a;
@@ -208,6 +218,7 @@ public final class GestureActionStore {
     }
 
     public KeyAction byId(String id) {
+        refreshIfChanged();
         if (id == null) return null;
         for (KeyAction a : actions) {
             if (id.equals(a.id)) return a;

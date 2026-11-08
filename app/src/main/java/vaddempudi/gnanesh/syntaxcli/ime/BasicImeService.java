@@ -466,6 +466,12 @@ public class BasicImeService extends InputMethodService
                 if (keyboardView != null && keyboardView.isShifted() && !keyboardView.isShiftLocked()) {
                     keyboardView.clearManualShift();
                 }
+                if (keyboardView != null
+                        && (keyboardView.isSymbols()
+                        || keyboardView.isSymbols2()
+                        || keyboardView.isSymbols3())) {
+                    setPage(0);
+                }
                 return;
             case BasicKey.CODE_LEFT:
                 ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT));
