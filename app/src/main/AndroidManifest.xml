@@ -174,7 +174,7 @@
             android:name=".musicplayer.MusicButtonReceiver"
             android:exported="true"
             android:enabled="true">
-            <intent-filter android:priority="1000">
+            <intent-filter>
                 <action android:name="android.intent.action.MEDIA_BUTTON" />
             </intent-filter>
         </receiver>
@@ -211,7 +211,6 @@
 
         <service
             android:name=".musicplayer.MusicPlaybackService"
-            android:process=":music"
             android:foregroundServiceType="mediaPlayback"
             android:exported="false"
             android:stopWithTask="false" />
@@ -219,7 +218,6 @@
         <service
             android:name=".managers.music.MusicService"
             android:enabled="true"
-            android:process=":music"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
 
@@ -251,9 +249,8 @@
             android:exported="false"
             android:label="@string/music_player_label"
             android:theme="@style/MusicTheme"
-            android:launchMode="standard"
+            android:launchMode="singleTask"
             android:taskAffinity="ohi.andre.consolelauncher.music"
-            android:documentLaunchMode="intoExisting"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:windowSoftInputMode="adjustResize" />
 

@@ -6,12 +6,13 @@ import android.content.Intent;
 import android.os.Bundle;
 import android.view.KeyEvent;
 
-import androidx.localbroadcastmanager.content.LocalBroadcastManager;
-
 public class MusicButtonReceiver extends BroadcastReceiver {
 
     private static long lastTapTime = 0L;
     private static int tapCount = 0;
+    private android.os.Handler tapHandler;
+    private Runnable pendingTapRunnable;
+
     private static final long DOUBLE_TAP_WINDOW_MS = 400L;
 
     @Override
@@ -21,6 +22,8 @@ public class MusicButtonReceiver extends BroadcastReceiver {
 
         KeyEvent keyEvent = getKeyEvent(intent);
         if (keyEvent == null) return;
+
+        // Only handle ACTION_DOWN; ignore duplicates
         if (keyEvent.getAction() != KeyEvent.ACTION_DOWN) return;
 
         int code = keyEvent.getKeyCode();
@@ -47,7 +50,15 @@ public class MusicButtonReceiver extends BroadcastReceiver {
         }
     }
 
+
     private void handleMultiTap(final Context context, final int keyCode) {
+        if (tapHandler == null) {
+            tapHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+        }
+        if (pendingTapRunnable != null) {
+            tapHandler.removeCallbacks(pendingTapRunnable);
+        }
+
         long now = System.currentTimeMillis();
         if (now - lastTapTime > DOUBLE_TAP_WINDOW_MS) {
             tapCount = 0;
@@ -56,8 +67,8 @@ public class MusicButtonReceiver extends BroadcastReceiver {
         tapCount++;
         final int currentTap = tapCount;
 
-        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
-            if (currentTap != tapCount) return;
+        pendingTapRunnable = () -> {
+            pendingTapRunnable = null;
             if (currentTap == 1) {
                 if (keyCode == KeyEvent.KEYCODE_MEDIA_PLAY) {
                     sendCmd(context, MusicPlayerActivity.CMD_PLAY);
@@ -72,17 +83,12 @@ public class MusicButtonReceiver extends BroadcastReceiver {
                 sendCmd(context, MusicPlayerActivity.CMD_PREV);
             }
             tapCount = 0;
-        }, DOUBLE_TAP_WINDOW_MS);
+            lastTapTime = 0L;
+        };
+        tapHandler.postDelayed(pendingTapRunnable, DOUBLE_TAP_WINDOW_MS);
     }
 
     private void sendCmd(Context context, String cmd) {
-        try {
-            Intent i = new Intent(MusicPlayerActivity.ACTION_CTRL);
-            i.putExtra(MusicPlayerActivity.EXTRA_CMD, cmd);
-            LocalBroadcastManager.getInstance(context.getApplicationContext())
-                    .sendBroadcast(i);
-        } catch (Exception ignored) { }
-
         try {
             Intent svc = new Intent(context.getApplicationContext(),
                     MusicPlaybackService.class);

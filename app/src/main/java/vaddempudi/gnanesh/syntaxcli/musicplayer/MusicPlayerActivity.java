@@ -44,7 +44,6 @@ import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
-import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -118,6 +117,9 @@ public class MusicPlayerActivity extends AppCompatActivity {
     private static String lastPlayedTitle = "";
     private static boolean isPausedStatic = false;
 
+    private String lastCmd = null;
+    private long lastCmdTime = 0L;
+
     public static volatile boolean alive = false;
     public static volatile boolean everOpened = false;
 
@@ -157,7 +159,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
     private static final String KEY_LAST_PLAYED_ID    = "last_played_id";
     private static final String KEY_LAST_PLAYED_TITLE = "last_played_title";
 
-
     private RecyclerView recycler;
     private TrackAdapter adapter;
     private LinearLayout topBar;
@@ -178,6 +179,7 @@ public class MusicPlayerActivity extends AppCompatActivity {
     private SeekBar      seekBar;
 
     public static volatile boolean userStoppedPlayback = false;
+
 
     private ImageView btnLoop;
 
@@ -213,9 +215,19 @@ public class MusicPlayerActivity extends AppCompatActivity {
         @Override public void onReceive(Context context, Intent intent) {
             if (intent == null) return;
             String cmd = intent.getStringExtra(EXTRA_CMD);
-            handleControlCommand(cmd);
+            if (cmd != null) dedupDispatch(cmd);
         }
     };
+
+    private void dedupDispatch(String cmd) {
+        long now = System.currentTimeMillis();
+        if (cmd.equals(lastCmd) && now - lastCmdTime < 250L) {
+            return;
+        }
+        lastCmd = cmd;
+        lastCmdTime = now;
+        handleControlCommand(cmd);
+    }
 
     public static void requestSeek(long posMs) {
         MediaPlayer p = staticPlayer;
@@ -235,12 +247,14 @@ public class MusicPlayerActivity extends AppCompatActivity {
         viewState = (lastView == VIEW_PLAYLIST && filterActive)
                 ? VIEW_PLAYLIST : VIEW_LIBRARY;
 
-        LocalBroadcastManager.getInstance(this)
-                .registerReceiver(ctrlReceiver, new IntentFilter(ACTION_CTRL));
-
-        alive = true;
+        IntentFilter ctrlFilter = new IntentFilter(ACTION_CTRL);
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(ctrlReceiver, ctrlFilter, Context.RECEIVER_EXPORTED);
+        } else {
+            registerReceiver(ctrlReceiver, ctrlFilter);
+        }
         everOpened = true;
-
+        sInstance = this;
         boolean startHidden = getIntent() != null
                 && getIntent().getBooleanExtra("start_hidden", false);
         if (startHidden) pendingStartLast = true;
@@ -259,7 +273,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
         } else {
             requestAudioPermission();
         }
-
     }
 
     @Override
@@ -273,16 +286,19 @@ public class MusicPlayerActivity extends AppCompatActivity {
         super.onDestroy();
         ui.removeCallbacksAndMessages(null);
         io.shutdownNow();
+        if (sInstance == this) sInstance = null;
         alive = false;
-        try {
-            LocalBroadcastManager.getInstance(this).unregisterReceiver(ctrlReceiver);
-        } catch (Exception ignored) { }
+        try { unregisterReceiver(ctrlReceiver); } catch (Exception ignored) { }
+
+        // If the user really left (back / swipe / system kill), tear it down.
+        // If it's just a config change or moveTaskToBack, keep playing.
         if (isFinishing()) {
             releasePlayer();
             try {
                 stopService(new Intent(this, MusicPlaybackService.class));
             } catch (Exception ignored) { }
-        }    }
+        }
+    }
 
     @Override
     public void onBackPressed() {
@@ -301,14 +317,12 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 saveLastViewState();
                 return;
             default:
-                if (launchedForIncomingFile) {
-                    finish();
-                    return;
-                }
-                super.onBackPressed();
+                // Do not finish — move the task to the background so the
+                // MediaPlayer in this activity keeps playing and receives
+                // notification/headset commands.
+                moveTaskToBack(true);
         }
     }
-
     private void buildUi() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -840,25 +854,17 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 refreshList();
                 updateToolbar();
 
-                // If an explicit command came with the intent (notification tap, media button,
-// etc.), run ONLY that command. Otherwise, if start_hidden was set, resume
-// the last played track. Never both — that double-fires and cancels itself.
                 if (pendingCmdFromLaunch != null) {
                     String c = pendingCmdFromLaunch;
                     pendingCmdFromLaunch = null;
-                    pendingStartLast = false;               // ← cancel the auto-start
+                    pendingStartLast = false;
                     if (CMD_PLAY.equals(c) || CMD_TOGGLE.equals(c)) {
-                        // If nothing is loaded yet, start the last played track first,
-                        // then apply the command (which will be a no-op toggle since it
-                        // was just started).
                         if (player == null) {
                             playFromList(resolvePlaybackList(), lastPlayedId);
                         } else {
                             handleControlCommand(c);
                         }
                     } else {
-                        // CMD_PAUSE, CMD_NEXT, CMD_PREV, CMD_START_LAST, CMD_OPEN_PLAYLIST …
-                        // If nothing is loaded, start playback then apply the command.
                         if (player == null) {
                             playFromList(resolvePlaybackList(), lastPlayedId);
                         }
@@ -1064,7 +1070,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
         } catch (Exception ignored) { }
     }
 
-
     private void togglePlayPause() {
         if (player == null) return;
         try {
@@ -1073,7 +1078,7 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 isPaused = true;
                 isPausedStatic = true;
                 userStoppedPlayback = true;
-                MusicPlaybackService.userStoppedPlayback = true;
+                MusicPlaybackService.userStoppedPlayback = true;   // <-- tell the service
                 btnPlayPause.setImageResource(R.drawable.ic_play_circle);
                 btnPlayPause.setColorFilter(NOW_PLAY);
                 ui.removeCallbacks(progressTick);
@@ -1082,7 +1087,7 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 isPaused = false;
                 isPausedStatic = false;
                 userStoppedPlayback = false;
-                MusicPlaybackService.userStoppedPlayback = false;
+                MusicPlaybackService.userStoppedPlayback = false;  // <-- tell the service
                 btnPlayPause.setImageResource(R.drawable.ic_pause);
                 btnPlayPause.setColorFilter(GREEN);
                 ui.post(progressTick);
@@ -1092,16 +1097,13 @@ public class MusicPlayerActivity extends AppCompatActivity {
     }
 
     private void pushPlaybackStateToService() {
+        boolean p = (player != null && player.isPlaying());
+        long pos = (player != null) ? player.getCurrentPosition() : lastKnownPositionMs;
+        long dur = (player != null) ? player.getDuration() : lastKnownDurationMs;
         try {
-            Intent i = new Intent(MusicPlaybackService.ACTION_UPDATE_NOTIFICATION);
-            i.putExtra(MusicPlaybackService.EXTRA_POS_MS,
-                    player != null ? player.getCurrentPosition() : 0);
-            i.putExtra(MusicPlaybackService.EXTRA_DUR_MS,
-                    player != null ? player.getDuration() : 0);
-            LocalBroadcastManager.getInstance(this).sendBroadcast(i);
+            MusicPlaybackService.updateState(p, lastPlayedTitle, pos, dur);
         } catch (Exception ignored) { }
     }
-
     private List<Track> buildSourceListForCommand() {
         List<Track> base = new ArrayList<>();
         if (filterActive && !activePlaylistIds.isEmpty()) {
@@ -1235,11 +1237,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 isPausedStatic = false;
                 userStoppedPlayback = false;
                 MusicPlaybackService.userStoppedPlayback = false;
-                try {
-                    Intent reqFocus = new Intent(MusicPlaybackService.ACTION_UPDATE_NOTIFICATION);
-                    reqFocus.putExtra("request_focus", true);
-                    LocalBroadcastManager.getInstance(this).sendBroadcast(reqFocus);
-                } catch (Exception ignored) { }
                 if (btnPlayPause != null) {
                     btnPlayPause.setImageResource(R.drawable.ic_pause);
                     btnPlayPause.setColorFilter(GREEN);
@@ -1301,7 +1298,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
         isPausedStatic = true;
         isPaused = true;
         userStoppedPlayback = true;
-        MusicPlaybackService.userStoppedPlayback = true;
         if (btnPlayPause != null) {
             btnPlayPause.setImageResource(R.drawable.ic_play_circle);
             btnPlayPause.setColorFilter(GREEN);
@@ -1317,13 +1313,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
         loopMode = (loopMode + 1) % 3;
         saveLoopMode();
         updateLoopButton();
-        String label;
-        switch (loopMode) {
-            case LOOP_ONE:  break;
-            case LOOP_ALL:    break;
-            case LOOP_ONCE:     break;
-            default:                break;
-        }
     }
 
     private void updateLoopButton() {
@@ -1362,7 +1351,11 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 if (list.get(i).id == lastPlayedId) { cur = i; break; }
             }
         }
-        if (cur < 0) cur = 0;
+        // If the last-played track isn't in the list (e.g. list changed),
+        // fall back to index 0 so we still advance.
+        if (cur < 0) {
+            cur = 0;
+        }
         int next = (cur + 1) % list.size();
         playTrackByObject(list.get(next), list);
     }
@@ -1375,17 +1368,24 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 if (list.get(i).id == lastPlayedId) { cur = i; break; }
             }
         }
-        if (cur < 0) cur = 0;
+        if (cur < 0) {
+            cur = 0;
+        }
         int prev = (cur - 1 + list.size()) % list.size();
         playTrackByObject(list.get(prev), list);
     }
 
+
     private void playNext() {
-        playNextFromList(resolvePlaybackList());
+        List<Track> list = currentPlaybackList;
+        if (list == null || list.isEmpty()) list = resolvePlaybackList();
+        playNextFromList(list);
     }
 
     private void playPrevious() {
-        playPrevFromList(resolvePlaybackList());
+        List<Track> list = currentPlaybackList;
+        if (list == null || list.isEmpty()) list = resolvePlaybackList();
+        playPrevFromList(list);
     }
 
     private void releasePlayer() {
@@ -1401,7 +1401,9 @@ public class MusicPlayerActivity extends AppCompatActivity {
 
     private void handleControlCommand(String cmd) {
         if (cmd == null) return;
-
+        if (currentPlaybackList == null) {
+            currentPlaybackList = resolvePlaybackList();
+        }
         if (allTracks.isEmpty() && (CMD_PLAY.equals(cmd) || CMD_TOGGLE.equals(cmd))) {
             pendingCmdFromLaunch = cmd;
             pendingStartLast = false;
@@ -1426,12 +1428,12 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 break;
             case CMD_PAUSE:
                 if (player != null && player.isPlaying()) {
-                    togglePlayPause();
+                    togglePlayPause();   // already sets userStoppedPlayback = true
                 } else {
-                    // No player but state was "playing" — flip to paused and
-                    // update the notification so it doesn't lie.
                     isPausedStatic = true;
                     isPaused = true;
+                    userStoppedPlayback = true;
+                    MusicPlaybackService.userStoppedPlayback = true;
                     pushPlaybackStateToService();
                 }
                 break;
@@ -1452,12 +1454,10 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 break;
             case CMD_NEXT:
                 userStoppedPlayback = false;
-                MusicPlaybackService.userStoppedPlayback = false;
                 playNextFromList(resolvePlaybackList());
                 break;
             case CMD_PREV:
                 userStoppedPlayback = false;
-                MusicPlaybackService.userStoppedPlayback = false;
                 playPrevFromList(resolvePlaybackList());
                 break;
             case CMD_OPEN_PLAYLIST:
@@ -1468,7 +1468,6 @@ public class MusicPlayerActivity extends AppCompatActivity {
                 break;
             case CMD_START_LAST:
                 userStoppedPlayback = false;
-                MusicPlaybackService.userStoppedPlayback = false;
                 playFromList(resolvePlaybackList(), lastPlayedId);
                 break;
         }
@@ -1720,10 +1719,9 @@ public class MusicPlayerActivity extends AppCompatActivity {
         String cmd = intent != null ? intent.getStringExtra(EXTRA_CMD) : null;
         if (cmd != null) {
             intent.removeExtra(EXTRA_CMD);
-            handleControlCommand(cmd);
+            dedupDispatch(cmd);
         }
     }
-
     private void handleIncomingIntent(Intent intent) {
         if (intent == null) return;
         String action = intent.getAction();
@@ -1827,6 +1825,15 @@ public class MusicPlayerActivity extends AppCompatActivity {
         allTracks.add(0, t);
         adapter.notifyDataSetChanged();
         playTrack(0);
+    }
+
+    private static volatile MusicPlayerActivity sInstance = null;
+
+    /** Direct, in-process hook used by MusicPlaybackService.sendCmd(). */
+    public static void onServiceCommand(final String cmd) {
+        final MusicPlayerActivity a = sInstance;
+        if (a == null || cmd == null) return;
+        a.runOnUiThread(() -> a.handleControlCommand(cmd));
     }
 
     private AlertDialog.Builder blackDialog() {
