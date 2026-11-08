@@ -119,8 +119,16 @@ public class MusicPlaybackService extends Service {
 
     @Override
     public void onTaskRemoved(Intent rootIntent) {
+        // Keep the service and notification alive as long as music is playing.
+        // When *any* task (browser, gallery, …) is removed from recents, we must
+        // NOT tear down playback that the user is still listening to.
+        if (playing) {
+            super.onTaskRemoved(rootIntent);
+            return;
+        }
+
+        // Nothing is playing → clean up.
         resumeOnFocusGain = false;
-        try { sendCmd(MusicPlayerActivity.CMD_PAUSE); } catch (Exception ignored) { }
         try { if (mediaSession != null) mediaSession.setActive(false); }
         catch (Exception ignored) { }
         abandonAudioFocus();

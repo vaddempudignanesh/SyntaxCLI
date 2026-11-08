@@ -1397,6 +1397,11 @@ public class MusicPlayerActivity extends AppCompatActivity {
             try { player.release(); } catch (Exception ignored) { }
             player = null;
         }
+        // Tell the service that playback has really stopped.
+        try {
+            MusicPlaybackService.updateState(false, lastPlayedTitle,
+                    lastKnownPositionMs, lastKnownDurationMs);
+        } catch (Exception ignored) { }
     }
 
     private void handleControlCommand(String cmd) {

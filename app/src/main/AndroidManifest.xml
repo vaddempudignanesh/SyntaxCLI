@@ -207,6 +207,7 @@
         <service
             android:name=".browser.AuraDownloadService"
             android:foregroundServiceType="dataSync"
+            android:process=":browser"
             android:exported="false" />
 
         <service
@@ -369,6 +370,7 @@
             android:launchMode="singleTop"
             android:taskAffinity="ohi.andre.consolelauncher.browser"
             android:documentLaunchMode="intoExisting"
+            android:process=":browser"
             android:configChanges="orientation|screenSize|keyboardHidden|keyboard|navigation|uiMode|density|smallestScreenSize|screenLayout"
             android:windowSoftInputMode="adjustResize">
 
