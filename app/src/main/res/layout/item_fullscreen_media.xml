@@ -1,37 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="#000000"
-    android:clipChildren="false"
-    android:clipToPadding="false">
+    android:clipChildren="true"
+    android:clipToPadding="true">
 
     <vaddempudi.gnanesh.syntaxcli.gallery.ZoomableImageView
         android:id="@+id/fullscreen_image"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:scaleType="matrix"
-        android:visibility="gone"
-        android:clickable="true"
-        android:focusable="true"
-        android:focusableInTouchMode="true" />
+        android:visibility="gone" />
 
-    <!-- Wrapper so the video can be centered while smaller than the page -->
-    <FrameLayout
-        android:id="@+id/video_container"
+    <SurfaceView
+        android:id="@+id/fullscreen_video"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:clipChildren="false"
-        android:clipToPadding="false">
-
-        <vaddempudi.gnanesh.syntaxcli.gallery.CustomVideoView
-            android:id="@+id/fullscreen_video"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:visibility="gone" />
-    </FrameLayout>
+        android:visibility="gone" />
 
     <ProgressBar
         android:id="@+id/fullscreen_progress"

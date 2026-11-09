@@ -1,5 +1,6 @@
 package vaddempudi.gnanesh.syntaxcli.gallery;
 
+
 import android.Manifest;
 import android.app.AlertDialog;
 import android.content.Context;
@@ -10,7 +11,6 @@ import android.content.res.Configuration;
 import android.database.Cursor;
 import android.graphics.Color;
 import android.media.AudioManager;
-import android.media.MediaPlayer;
 import android.media.MediaScannerConnection;
 import android.net.Uri;
 import android.os.Build;
@@ -18,6 +18,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.MediaStore;
+import android.util.Log;
 import android.view.GestureDetector;
 import android.view.Gravity;
 import android.view.LayoutInflater;
@@ -63,6 +64,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 import vaddempudi.gnanesh.syntaxcli.R;
+import android.view.SurfaceView;
 
 public class GalleryActivity extends AppCompatActivity {
 
@@ -84,7 +86,9 @@ public class GalleryActivity extends AppCompatActivity {
     private FilterMode lastRenderedFilter = null;
     private int lastRenderedCount = -1;
     private AlbumsController albumsController;
-    private enum FilterMode { ALL, IMAGES, VIDEOS, FAVORITES, BIN, PRIVATE }
+
+    private enum FilterMode {ALL, IMAGES, VIDEOS, FAVORITES, BIN, PRIVATE}
+
     private PrivateVault privateVault;
     private boolean privateUnlocked = false;
     private SharedPreferences prefs;
@@ -135,7 +139,6 @@ public class GalleryActivity extends AppCompatActivity {
     private TextView videoTime;
     private LinearLayout videoCenterControls, videoBottomControls;
     private RelativeLayout videoPlayerContainer;
-    private VideoView videoView;
 
     private boolean suppressChromeUntilNextTap = false;
 
@@ -177,11 +180,13 @@ public class GalleryActivity extends AppCompatActivity {
     private FullscreenAdapter fullscreenAdapter;
     private final List<String> fullscreenMediaPaths = new ArrayList<>();
     private int fullscreenCurrentPosition = 0;
-    private CustomVideoView currentFullscreenVideo = null;
+    private HardwareVideoController currentFullscreenVideo = null;
     private int currentFullscreenVideoPosition = -1;
     private boolean currentFullscreenPageIsVideo = false;
     private int overlayPendingSeekMs = -1;
     private int savedVideoPositionMs = -1;
+
+    private final java.util.Set<String> userPausedPaths = new java.util.HashSet<>();
     private String savedVideoPath = null;
     private boolean savedVideoWasPlaying = false;
     private boolean isOverlayVideoPlaying = false;
@@ -198,12 +203,10 @@ public class GalleryActivity extends AppCompatActivity {
     private boolean chromeDoubleTapArmed = false;
     private float lastPerceivedBrightness = -1f;
     private float lastPerceivedVolume = 1f;
-    private android.media.audiofx.LoudnessEnhancer loudnessEnhancer;
     private TextView privateAddButton;
     private TextView privateChangePwButton;
 
     private final HashMap<String, Long> mtimeCache = new HashMap<>();
-    private int loudnessSessionId = -1;
     private int maxStreamVolume = 15;
     private View brightnessDimOverlay;
     private float playbackSpeedBeforeLongPress = 1.0f;
@@ -211,14 +214,16 @@ public class GalleryActivity extends AppCompatActivity {
     private View decorView;
 
     private AlertDialog moveProgressDialog;
-    private TextView   moveProgressText;
+    private TextView moveProgressText;
     private ProgressBar moveProgressBar;
-    private long       lastProgressUiPostMs = 0L;
+    private long lastProgressUiPostMs = 0L;
 
     private TextView privateTabImages, privateTabVideos, privateTabPFiles;
     private LinearLayout privateTabsBar;
     private TextView btnPrivateLogout;
-    private enum PrivateTab { IMAGES, VIDEOS, PFILES }
+
+    private enum PrivateTab {IMAGES, VIDEOS, PFILES}
+
     private PrivateTab privateTab = PrivateTab.IMAGES;
     private boolean launchedFromExternalIntent = false;
     private String pendingInitialPath;
@@ -230,7 +235,10 @@ public class GalleryActivity extends AppCompatActivity {
                     result -> {
                         boolean granted = true;
                         for (Map.Entry<String, Boolean> e : result.entrySet()) {
-                            if (!e.getValue()) { granted = false; break; }
+                            if (!e.getValue()) {
+                                granted = false;
+                                break;
+                            }
                         }
                         if (granted) {
                             repository.loadCachedFirstPage();
@@ -241,7 +249,9 @@ public class GalleryActivity extends AppCompatActivity {
                         }
                     });
 
-    private boolean isActivityAlive() { return !isFinishing() && !isDestroyed(); }
+    private boolean isActivityAlive() {
+        return !isFinishing() && !isDestroyed();
+    }
 
 
     @Override
@@ -305,7 +315,7 @@ public class GalleryActivity extends AppCompatActivity {
     private void updatePrivateTabHighlights() {
         if (privateTabImages == null) return;
         int active = 0xFF33FF33;
-        int idle   = 0xFFFFFFFF;
+        int idle = 0xFFFFFFFF;
         privateTabImages.setTextColor(privateTab == PrivateTab.IMAGES ? active : idle);
         privateTabVideos.setTextColor(privateTab == PrivateTab.VIDEOS ? active : idle);
         privateTabPFiles.setTextColor(privateTab == PrivateTab.PFILES ? active : idle);
@@ -331,7 +341,6 @@ public class GalleryActivity extends AppCompatActivity {
         updateBarsVisibility();
         updateTopNavBar();
     }
-
 
 
     private void bindPrivateViews() {
@@ -366,7 +375,10 @@ public class GalleryActivity extends AppCompatActivity {
                     updateMoveProgress(done, grandTotal, name);
 
             for (File source : files) {
-                if (source == null || !source.exists()) { failed++; continue; }
+                if (source == null || !source.exists()) {
+                    failed++;
+                    continue;
+                }
                 long srcLen = source.length();
                 if (privateVault.moveIntoPrivate(source, cb, bytesBefore, grandTotal) != null) {
                     bytesBefore += srcLen;
@@ -396,14 +408,11 @@ public class GalleryActivity extends AppCompatActivity {
     }
 
 
-
     private void bindViews() {
         recyclerView = findViewById(R.id.galleryRecycler);
         albumRecycler = findViewById(R.id.albumRecycler);
         titleView = findViewById(R.id.titleGallery);
         sortOptions = findViewById(R.id.sortOptions);
-        videoPlayerContainer = findViewById(R.id.videoPlayerContainer);
-        videoView = findViewById(R.id.videoView);
         btnPlayPause = findViewById(R.id.btnPlayPause);
         btnCloseVideo = findViewById(R.id.btnCloseVideo);
         videoTime = findViewById(R.id.videoTime);
@@ -454,15 +463,20 @@ public class GalleryActivity extends AppCompatActivity {
 
     private void buildAdapter() {
         screenAdapter = new GalleryAdapter(this, new GalleryAdapter.OnItemClickListener() {
-            @Override public void onImageClick(String path) {
+            @Override
+            public void onImageClick(String path) {
                 if (!selectionMode && isActivityAlive() && currentFilter != FilterMode.BIN)
                     openFullscreenViewer(path);
             }
-            @Override public void onVideoClick(String path) {
+
+            @Override
+            public void onVideoClick(String path) {
                 if (!selectionMode && isActivityAlive() && currentFilter != FilterMode.BIN)
                     openFullscreenViewer(path);
             }
-            @Override public void onFavoriteToggle(GalleryMediaItem item) {
+
+            @Override
+            public void onFavoriteToggle(GalleryMediaItem item) {
                 if (currentFilter == FilterMode.PRIVATE) {
                     return;
                 }
@@ -475,7 +489,9 @@ public class GalleryActivity extends AppCompatActivity {
                 }
                 toggleFavoriteForPath(item.path);
             }
-            @Override public void onDelete(GalleryMediaItem item) {
+
+            @Override
+            public void onDelete(GalleryMediaItem item) {
                 if (currentFilter == FilterMode.PRIVATE) {
                     return;
                 }
@@ -499,16 +515,24 @@ public class GalleryActivity extends AppCompatActivity {
                 }
                 moveToTrash(item);
             }
-            @Override public void onItemClick(String path) {
+
+            @Override
+            public void onItemClick(String path) {
                 if (isActivityAlive()) toggleSelection(path);
             }
-            @Override public void onItemLongPress(String path) {
+
+            @Override
+            public void onItemLongPress(String path) {
                 if (isActivityAlive()) startLongPressDrag(path);
             }
-            @Override public boolean isSelectionMode() {
+
+            @Override
+            public boolean isSelectionMode() {
                 return selectionMode && isActivityAlive();
             }
-            @Override public void onRestore(GalleryMediaItem item) {
+
+            @Override
+            public void onRestore(GalleryMediaItem item) {
                 if (currentFilter == FilterMode.PRIVATE) {
                     return;
                 }
@@ -519,15 +543,15 @@ public class GalleryActivity extends AppCompatActivity {
         recyclerView.setLayoutManager(new GridLayoutManager(this, GRID_COLUMNS));
         recyclerView.setAdapter(screenAdapter);
         recyclerView.setHasFixedSize(true);
-        recyclerView.setItemViewCacheSize(40);
+        recyclerView.setItemViewCacheSize(8);
         recyclerView.setItemAnimator(null);
         setupDragToSelect();
-
 
 
         if (loadingSpinner != null) loadingSpinner.setVisibility(View.GONE);
         recyclerView.setVisibility(View.VISIBLE);
     }
+
     private void setupAlbums() {
         AlbumLoader loader = new AlbumLoader(this);
 
@@ -539,16 +563,25 @@ public class GalleryActivity extends AppCompatActivity {
 
         albumsController = new AlbumsController(
                 new AlbumsController.Host() {
-                    @Override public View findView(int id) { return findViewById(id); }
-                    @Override public void onAlbumOpened(AlbumRecord album) {
+                    @Override
+                    public View findView(int id) {
+                        return findViewById(id);
+                    }
+
+                    @Override
+                    public void onAlbumOpened(AlbumRecord album) {
                         updateTopNavBar();
                         updateBarsVisibility();
                     }
-                    @Override public void onAlbumClosed() {
+
+                    @Override
+                    public void onAlbumClosed() {
                         updateTopNavBar();
                         updateBarsVisibility();
                     }
-                    @Override public void onAlbumMediaClicked(String path) {
+
+                    @Override
+                    public void onAlbumMediaClicked(String path) {
                         if (!isActivityAlive() || path == null) return;
                         List<GalleryMediaItem> albumItems = albumsController != null
                                 ? albumsController.getOpenAlbumItems()
@@ -557,22 +590,26 @@ public class GalleryActivity extends AppCompatActivity {
                     }
 
                     // ★ 3 new methods — reuse existing selection machinery.
-                    @Override public void onAlbumMediaLongPress(String path) {
+                    @Override
+                    public void onAlbumMediaLongPress(String path) {
                         if (!isActivityAlive()) return;
                         attachDragSelectToAlbumRecycler();
                         startLongPressDrag(path);
                     }
-                    @Override public void onAlbumMediaToggled(String path) {
+
+                    @Override
+                    public void onAlbumMediaToggled(String path) {
                         if (isActivityAlive()) toggleSelection(path);
                     }
-                    @Override public boolean isAlbumSelectionMode() {
+
+                    @Override
+                    public boolean isAlbumSelectionMode() {
                         return selectionMode && isActivityAlive();
                     }
                 },
                 loader, albumAdapter);
 
     }
-
 
 
     private boolean albumIsActive() {
@@ -601,6 +638,7 @@ public class GalleryActivity extends AppCompatActivity {
                 }
                 return false;
             }
+
             @Override
             public void onTouchEvent(@NonNull RecyclerView rv, @NonNull MotionEvent e) {
                 if (!dragSelectActive) return;
@@ -616,6 +654,7 @@ public class GalleryActivity extends AppCompatActivity {
             }
         });
     }
+
     private boolean isInAlbum(GalleryMediaItem it, String albumPath) {
         if (it == null || it.path == null || albumPath == null) return false;
 
@@ -630,8 +669,6 @@ public class GalleryActivity extends AppCompatActivity {
         }
         return false;
     }
-
-
 
 
     private void openFullscreenViewerWithItems(String path, List<GalleryMediaItem> items) {
@@ -668,7 +705,11 @@ public class GalleryActivity extends AppCompatActivity {
         isOverlayVideoPlaying = false;
         overlayControlsVisible = false;
         overlayPendingSeekMs = -1;
+        userPausedPaths.clear();
 
+        if (fullscreenAdapter != null) {
+            fullscreenAdapter.setActivePosition(currentIndex);
+        }
         fullscreenAdapter.notifyDataSetChanged();
         fullscreenViewPager.setCurrentItem(currentIndex, false);
 
@@ -696,10 +737,13 @@ public class GalleryActivity extends AppCompatActivity {
         videoHandler.removeCallbacks(overlayHideControlsRunnable);
         bottomBar.setVisibility(View.GONE);
 
-        String initialPath = fullscreenMediaPaths.get(currentIndex);
-        if (isVideoPath(initialPath)) {
-            int finalIndex = currentIndex;
-            fullscreenViewPager.post(() -> findAndStartVideoForPosition(finalIndex));
+        if (isVideoPath(fullscreenMediaPaths.get(currentIndex))) {
+            final int finalIndex = currentIndex;
+            fullscreenViewPager.post(() ->
+                    fullscreenViewPager.post(() -> {
+                        if (fullscreenCurrentPosition == finalIndex)
+                            findAndStartVideoForPosition(finalIndex);
+                    }));
         }
     }
 
@@ -752,6 +796,7 @@ public class GalleryActivity extends AppCompatActivity {
                     updateBarsVisibility();
                     updateTopNavBar();
                 }
+
                 @Override
                 public void onMediaChanged(List<GalleryMediaItem> items, boolean endReached) {
                     if (!isActivityAlive()) return;
@@ -804,7 +849,6 @@ public class GalleryActivity extends AppCompatActivity {
                         if (pendingInitialPath != null) tryOpenPendingInitialPath();
                     });
                 }
-
 
 
                 @Override
@@ -927,14 +971,19 @@ public class GalleryActivity extends AppCompatActivity {
         TextView sortFavorites = findViewById(R.id.sortFavorites);
         TextView sortBin = findViewById(R.id.sortBin);
 
-        if (sortImages != null) sortImages.setOnClickListener(v -> applyQuickFilter(FilterMode.IMAGES, "Images"));
-        if (sortVideos != null) sortVideos.setOnClickListener(v -> applyQuickFilter(FilterMode.VIDEOS, "Videos"));
-        if (sortFavorites != null) sortFavorites.setOnClickListener(v -> applyQuickFilter(FilterMode.FAVORITES, "Favorites"));
-        if (sortBin != null) sortBin.setOnClickListener(v -> applyQuickFilter(FilterMode.BIN, "Bin"));
+        if (sortImages != null)
+            sortImages.setOnClickListener(v -> applyQuickFilter(FilterMode.IMAGES, "Images"));
+        if (sortVideos != null)
+            sortVideos.setOnClickListener(v -> applyQuickFilter(FilterMode.VIDEOS, "Videos"));
+        if (sortFavorites != null)
+            sortFavorites.setOnClickListener(v -> applyQuickFilter(FilterMode.FAVORITES, "Favorites"));
+        if (sortBin != null)
+            sortBin.setOnClickListener(v -> applyQuickFilter(FilterMode.BIN, "Bin"));
 
         refreshBinMenuVisibility();
         installPrivateMenuEntry();
     }
+
     private void installPrivateMenuEntry() {
         if (sortOptions == null) return;
         if (sortOptions.findViewWithTag("private_entry") != null) return;
@@ -968,11 +1017,14 @@ public class GalleryActivity extends AppCompatActivity {
         if (privateVault == null) privateVault = new PrivateVault(this);
 
         PrivateLockDialog.show(this, privateVault, new PrivateLockDialog.OnResult() {
-            @Override public void onUnlocked() {
+            @Override
+            public void onUnlocked() {
                 privateUnlocked = true;
                 enterPrivateTab();
             }
-            @Override public void onCancelled() {
+
+            @Override
+            public void onCancelled() {
                 // User backed out — stay on whatever they were on.
             }
         });
@@ -1008,6 +1060,7 @@ public class GalleryActivity extends AppCompatActivity {
         boolean hasBin = !loadBinPaths().isEmpty();
         sortBin.setVisibility(hasBin ? View.VISIBLE : View.GONE);
     }
+
     private void applyQuickFilter(FilterMode mode, String title) {
         albumsController.leaveAlbums();
 
@@ -1049,7 +1102,8 @@ public class GalleryActivity extends AppCompatActivity {
             TextView btnRestore = findViewById(R.id.btnRestore);
             TextView btnDeletePermanent = findViewById(R.id.btnDeletePermanent);
             if (btnRestore != null) btnRestore.setOnClickListener(v -> restoreSelectedItems());
-            if (btnDeletePermanent != null) btnDeletePermanent.setOnClickListener(v -> deletePermanentlySelectedItems());
+            if (btnDeletePermanent != null)
+                btnDeletePermanent.setOnClickListener(v -> deletePermanentlySelectedItems());
         }
         ImageButton btnCloseSelection = findViewById(R.id.btnCloseSelection);
         if (btnCloseSelection != null) btnCloseSelection.setOnClickListener(v -> clearSelection());
@@ -1060,9 +1114,12 @@ public class GalleryActivity extends AppCompatActivity {
         TextView btnFavoriteSelected = findViewById(R.id.btnFavoriteSelected);
 
         if (btnBinSelected != null) btnBinSelected.setOnClickListener(v -> moveSelectedToTrash());
-        if (btnShareSelected != null) btnShareSelected.setOnClickListener(v -> shareSelectedItems());
-        if (btnInfoSelected != null) btnInfoSelected.setOnClickListener(v -> showSelectedItemInfo());
-        if (btnFavoriteSelected != null) btnFavoriteSelected.setOnClickListener(v -> addSelectedToFavorites());
+        if (btnShareSelected != null)
+            btnShareSelected.setOnClickListener(v -> shareSelectedItems());
+        if (btnInfoSelected != null)
+            btnInfoSelected.setOnClickListener(v -> showSelectedItemInfo());
+        if (btnFavoriteSelected != null)
+            btnFavoriteSelected.setOnClickListener(v -> addSelectedToFavorites());
         installPrivateMoveAction();   // ← ADD THIS LINE
     }
 
@@ -1075,11 +1132,14 @@ public class GalleryActivity extends AppCompatActivity {
         if (privateVault == null) privateVault = new PrivateVault(this);
         if (!privateVault.hasPassword()) {
             PrivateLockDialog.show(this, privateVault, new PrivateLockDialog.OnResult() {
-                @Override public void onUnlocked() {
+                @Override
+                public void onUnlocked() {
                     privateUnlocked = true;
                     moveSelectedToPrivate();
                 }
-                @Override public void onCancelled() {
+
+                @Override
+                public void onCancelled() {
                     Toast.makeText(GalleryActivity.this,
                             "Password required to move files to Private",
                             Toast.LENGTH_SHORT).show();
@@ -1111,7 +1171,10 @@ public class GalleryActivity extends AppCompatActivity {
 
             for (String path : paths) {
                 File src = new File(path);
-                if (!src.exists()) { failed++; continue; }
+                if (!src.exists()) {
+                    failed++;
+                    continue;
+                }
 
                 long srcLen = src.length();
                 File resultFile = privateVault.moveIntoPrivate(src, cb,
@@ -1121,8 +1184,12 @@ public class GalleryActivity extends AppCompatActivity {
                     moved++;
                     movedFrom.add(path);
                     if (src.exists()) {
-                        try { resultFile.delete(); } catch (Throwable ignored) {}
-                        moved--; failed++;
+                        try {
+                            resultFile.delete();
+                        } catch (Throwable ignored) {
+                        }
+                        moved--;
+                        failed++;
                         movedFrom.remove(movedFrom.size() - 1);
                     }
                 } else {
@@ -1209,10 +1276,13 @@ public class GalleryActivity extends AppCompatActivity {
         });
 
         recyclerView.addOnScrollListener(new RecyclerView.OnScrollListener() {
-            @Override public void onScrolled(@NonNull RecyclerView rv, int dx, int dy) {
+            @Override
+            public void onScrolled(@NonNull RecyclerView rv, int dx, int dy) {
                 if (!fastScrollDragging) updateFastScrollBar();
             }
-            @Override public void onScrollStateChanged(@NonNull RecyclerView rv, int newState) {
+
+            @Override
+            public void onScrollStateChanged(@NonNull RecyclerView rv, int newState) {
                 updateFastScrollBar();
             }
         });
@@ -1293,7 +1363,10 @@ public class GalleryActivity extends AppCompatActivity {
         boolean granted = true;
         for (String p : toRequest) {
             if (ContextCompat.checkSelfPermission(this, p)
-                    != PackageManager.PERMISSION_GRANTED) { granted = false; break; }
+                    != PackageManager.PERMISSION_GRANTED) {
+                granted = false;
+                break;
+            }
         }
 
         if (granted) {
@@ -1315,6 +1388,7 @@ public class GalleryActivity extends AppCompatActivity {
         };
         videoHandler.postDelayed(pendingChromeTapRunnable, SINGLE_TAP_DELAY_MS);
     }
+
     private Set<String> loadBinPaths() {
         if (prefs == null) return new HashSet<>();
         String raw = prefs.getString(PREF_BIN_PATHS, "");
@@ -1433,7 +1507,9 @@ public class GalleryActivity extends AppCompatActivity {
                     }
                 }
             } catch (Exception ignored) {
-            } finally { if (c != null) c.close(); }
+            } finally {
+                if (c != null) c.close();
+            }
 
             try {
                 String name = queryDisplayName(uri);
@@ -1449,7 +1525,9 @@ public class GalleryActivity extends AppCompatActivity {
                     while ((n = in.read(buf)) > 0) fos.write(buf, 0, n);
                 }
                 return out.getAbsolutePath();
-            } catch (Exception e) { return null; }
+            } catch (Exception e) {
+                return null;
+            }
         }
         return null;
     }
@@ -1464,7 +1542,9 @@ public class GalleryActivity extends AppCompatActivity {
                 if (idx >= 0) return c.getString(idx);
             }
         } catch (Exception ignored) {
-        } finally { if (c != null) c.close(); }
+        } finally {
+            if (c != null) c.close();
+        }
         return null;
     }
 
@@ -1485,7 +1565,10 @@ public class GalleryActivity extends AppCompatActivity {
         List<GalleryMediaItem> current = screenAdapter.getItems();
         boolean present = false;
         for (GalleryMediaItem m : current) {
-            if (m.path != null && m.path.equals(path)) { present = true; break; }
+            if (m.path != null && m.path.equals(path)) {
+                present = true;
+                break;
+            }
         }
 
         if (!present) {
@@ -1541,11 +1624,13 @@ public class GalleryActivity extends AppCompatActivity {
                             MediaStore.Files.getContentUri("external"),
                             MediaStore.MediaColumns.DATA + "=?",
                             new String[]{p});
-                } catch (Exception ignored) {}
+                } catch (Exception ignored) {
+                }
             }
             MediaScannerConnection.scanFile(
                     this, oldPaths.toArray(new String[0]), null, null);
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        }
     }
 
 
@@ -1587,92 +1672,102 @@ public class GalleryActivity extends AppCompatActivity {
             return;
         }
 
-            if (currentFilter == FilterMode.PRIVATE) {
-                if (!privateUnlocked || privateVault == null) {
-                    screenAdapter.submitList(new ArrayList<>());
-                    if (loadingSpinner != null) loadingSpinner.setVisibility(View.GONE);
-                    recyclerView.setVisibility(View.VISIBLE);
-                    showEmptyState();
-                    updateTopNavBar();
-                    return;
-                }
-                if (privateTab != PrivateTab.PFILES
-                        && cachedMedia.isEmpty()
-                        && repository != null) {
-                    if (loadingSpinner != null) loadingSpinner.setVisibility(View.VISIBLE);
-                    View ev = findViewById(R.id.emptyStateContainer);
-                    if (ev != null) ev.setVisibility(View.GONE);
-                    recyclerView.setVisibility(View.GONE);
-                    repository.loadCachedFirstPage();
-                    repository.refreshFirstPage();
-                    return;
-                }
-
-                List<GalleryMediaItem> privateItems = privateVault.listPrivateItems();
-                List<GalleryMediaItem> out = new ArrayList<>();
-
-                if (privateTab == PrivateTab.PFILES) {
-                    for (GalleryMediaItem it : privateItems) {
-                        if (it == null || it.path == null) continue;
-                        if (it.isTrashed) continue;
-                        if (it.path.contains(".trashed.")) continue;
-                        out.add(it);
-                    }
-                } else {
-                    Set<String> privatePaths = new HashSet<>();
-                    for (GalleryMediaItem it : privateItems) {
-                        if (it.path == null) continue;
-                        privatePaths.add(it.path);
-                        try { privatePaths.add(new File(it.path).getCanonicalPath()); }
-                        catch (Exception ignored) {}
-                    }
-
-                    String privateRoot;
-                    try { privateRoot = privateVault.getPrivateDir().getCanonicalPath() + "/"; }
-                    catch (Exception e) { privateRoot = privateVault.getPrivateDir().getAbsolutePath() + "/"; }
-                    final String privateRootFinal = privateRoot;
-
-                    for (GalleryMediaItem it : cachedMedia) {
-                        if (it.path == null) continue;
-                        if (it.isTrashed) continue;
-                        if (fileMtimeCached(it.path) == 0L) continue;
-
-                        String canon;
-                        try { canon = new File(it.path).getCanonicalPath(); }
-                        catch (Exception e) { canon = it.path; }
-
-                        if (canon.startsWith(privateRootFinal)) continue;
-                        if (privatePaths.contains(it.path) || privatePaths.contains(canon)) continue;
-
-                        if (privateTab == PrivateTab.IMAGES && it.type != GalleryMediaItem.TYPE_IMAGE) continue;
-                        if (privateTab == PrivateTab.VIDEOS && it.type != GalleryMediaItem.TYPE_VIDEO) continue;
-                        out.add(it);
-                    }
-                }
-
-                for (GalleryMediaItem it : out) {
-                    if (it == null || it.path == null) continue;
-                    long fileMs = fileMtimeCached(it.path);
-                    if (fileMs > it.lastModifiedMillis) {
-                        it.lastModifiedMillis = fileMs;
-                    }
-                }
-                Collections.sort(out, (a, b) -> {
-                    int c = Long.compare(b.lastModifiedMillis, a.lastModifiedMillis);
-                    if (c != 0) return c;
-                    String pa = a.path == null ? "" : a.path;
-                    String pb = b.path == null ? "" : b.path;
-                    return pb.compareTo(pa);
-                });
-
-                screenAdapter.submitList(new ArrayList<>(out));
+        if (currentFilter == FilterMode.PRIVATE) {
+            if (!privateUnlocked || privateVault == null) {
+                screenAdapter.submitList(new ArrayList<>());
                 if (loadingSpinner != null) loadingSpinner.setVisibility(View.GONE);
                 recyclerView.setVisibility(View.VISIBLE);
-                updateSelectionUI();
                 showEmptyState();
                 updateTopNavBar();
                 return;
-            
+            }
+            if (privateTab != PrivateTab.PFILES
+                    && cachedMedia.isEmpty()
+                    && repository != null) {
+                if (loadingSpinner != null) loadingSpinner.setVisibility(View.VISIBLE);
+                View ev = findViewById(R.id.emptyStateContainer);
+                if (ev != null) ev.setVisibility(View.GONE);
+                recyclerView.setVisibility(View.GONE);
+                repository.loadCachedFirstPage();
+                repository.refreshFirstPage();
+                return;
+            }
+
+            List<GalleryMediaItem> privateItems = privateVault.listPrivateItems();
+            List<GalleryMediaItem> out = new ArrayList<>();
+
+            if (privateTab == PrivateTab.PFILES) {
+                for (GalleryMediaItem it : privateItems) {
+                    if (it == null || it.path == null) continue;
+                    if (it.isTrashed) continue;
+                    if (it.path.contains(".trashed.")) continue;
+                    out.add(it);
+                }
+            } else {
+                Set<String> privatePaths = new HashSet<>();
+                for (GalleryMediaItem it : privateItems) {
+                    if (it.path == null) continue;
+                    privatePaths.add(it.path);
+                    try {
+                        privatePaths.add(new File(it.path).getCanonicalPath());
+                    } catch (Exception ignored) {
+                    }
+                }
+
+                String privateRoot;
+                try {
+                    privateRoot = privateVault.getPrivateDir().getCanonicalPath() + "/";
+                } catch (Exception e) {
+                    privateRoot = privateVault.getPrivateDir().getAbsolutePath() + "/";
+                }
+                final String privateRootFinal = privateRoot;
+
+                for (GalleryMediaItem it : cachedMedia) {
+                    if (it.path == null) continue;
+                    if (it.isTrashed) continue;
+                    if (fileMtimeCached(it.path) == 0L) continue;
+
+                    String canon;
+                    try {
+                        canon = new File(it.path).getCanonicalPath();
+                    } catch (Exception e) {
+                        canon = it.path;
+                    }
+
+                    if (canon.startsWith(privateRootFinal)) continue;
+                    if (privatePaths.contains(it.path) || privatePaths.contains(canon)) continue;
+
+                    if (privateTab == PrivateTab.IMAGES && it.type != GalleryMediaItem.TYPE_IMAGE)
+                        continue;
+                    if (privateTab == PrivateTab.VIDEOS && it.type != GalleryMediaItem.TYPE_VIDEO)
+                        continue;
+                    out.add(it);
+                }
+            }
+
+            for (GalleryMediaItem it : out) {
+                if (it == null || it.path == null) continue;
+                long fileMs = fileMtimeCached(it.path);
+                if (fileMs > it.lastModifiedMillis) {
+                    it.lastModifiedMillis = fileMs;
+                }
+            }
+            Collections.sort(out, (a, b) -> {
+                int c = Long.compare(b.lastModifiedMillis, a.lastModifiedMillis);
+                if (c != 0) return c;
+                String pa = a.path == null ? "" : a.path;
+                String pb = b.path == null ? "" : b.path;
+                return pb.compareTo(pa);
+            });
+
+            screenAdapter.submitList(new ArrayList<>(out));
+            if (loadingSpinner != null) loadingSpinner.setVisibility(View.GONE);
+            recyclerView.setVisibility(View.VISIBLE);
+            updateSelectionUI();
+            showEmptyState();
+            updateTopNavBar();
+            return;
+
         }
         for (GalleryMediaItem it : cachedMedia) {
             if (it == null || it.path == null) continue;
@@ -1715,13 +1810,21 @@ public class GalleryActivity extends AppCompatActivity {
             item.isTrashed = trashed;
 
             switch (currentFilter) {
-                case ALL:       if (!trashed) filtered.add(item); break;
-                case IMAGES:    if (!trashed && item.type == GalleryMediaItem.TYPE_IMAGE) filtered.add(item); break;
-                case VIDEOS:    if (!trashed && item.type == GalleryMediaItem.TYPE_VIDEO) filtered.add(item); break;
-                case FAVORITES: if (!trashed && favs != null && favs.contains(item.path)) {
-                    item.isFavorite = true;
-                    filtered.add(item);
-                } break;
+                case ALL:
+                    if (!trashed) filtered.add(item);
+                    break;
+                case IMAGES:
+                    if (!trashed && item.type == GalleryMediaItem.TYPE_IMAGE) filtered.add(item);
+                    break;
+                case VIDEOS:
+                    if (!trashed && item.type == GalleryMediaItem.TYPE_VIDEO) filtered.add(item);
+                    break;
+                case FAVORITES:
+                    if (!trashed && favs != null && favs.contains(item.path)) {
+                        item.isFavorite = true;
+                        filtered.add(item);
+                    }
+                    break;
             }
         }
 
@@ -1899,7 +2002,8 @@ public class GalleryActivity extends AppCompatActivity {
         if (path == null) return false;
         Set<String> favs = loadFavoritePaths();
         boolean nowFav = !favs.contains(path);
-        if (nowFav) favs.add(path); else favs.remove(path);
+        if (nowFav) favs.add(path);
+        else favs.remove(path);
         saveFavoritePaths(favs);
 
         // Update BOTH cachedMedia and the adapter's current list with
@@ -1995,7 +2099,10 @@ public class GalleryActivity extends AppCompatActivity {
         if (path == null) return;
         boolean fav = false;
         for (GalleryMediaItem it : cachedMedia) {
-            if (it.path.equals(path)) { fav = it.isFavorite; break; }
+            if (it.path.equals(path)) {
+                fav = it.isFavorite;
+                break;
+            }
         }
         if (!fav && loadFavoritePaths().contains(path)) fav = true;
         applyStarIcon(fsBtnFavoriteIcon, fav);
@@ -2090,7 +2197,10 @@ public class GalleryActivity extends AppCompatActivity {
 
     private void dismissMoveProgress() {
         if (moveProgressDialog != null) {
-            try { moveProgressDialog.dismiss(); } catch (Exception ignored) {}
+            try {
+                moveProgressDialog.dismiss();
+            } catch (Exception ignored) {
+            }
             moveProgressDialog = null;
         }
         moveProgressText = null;
@@ -2240,10 +2350,13 @@ public class GalleryActivity extends AppCompatActivity {
 
             for (String path : paths) {
                 File src = new File(path);
-                if (!src.exists()) { failed++; continue; }
+                if (!src.exists()) {
+                    failed++;
+                    continue;
+                }
 
                 final long srcMtime = src.lastModified();
-                final long srcLen   = src.length();
+                final long srcLen = src.length();
                 final String fileName = src.getName();
                 final String clean = stripPrivatePrefix(fileName);
 
@@ -2254,12 +2367,18 @@ public class GalleryActivity extends AppCompatActivity {
                     File origFile = new File(originalPath);
                     File origDir = origFile.getParentFile();
                     if (origDir != null && !origDir.exists()) {
-                        try { origDir.mkdirs(); } catch (Throwable ignored) {}
+                        try {
+                            origDir.mkdirs();
+                        } catch (Throwable ignored) {
+                        }
                     }
                     if (origDir != null && origDir.isDirectory()) {
                         String base = clean, ext = "";
                         int dot = clean.lastIndexOf('.');
-                        if (dot > 0) { base = clean.substring(0, dot); ext = clean.substring(dot); }
+                        if (dot > 0) {
+                            base = clean.substring(0, dot);
+                            ext = clean.substring(dot);
+                        }
                         File candidate = new File(origDir, clean);
                         int suffix = 1;
                         while (candidate.exists()) {
@@ -2274,7 +2393,10 @@ public class GalleryActivity extends AppCompatActivity {
                     dst = fallbackOutTarget(clean);
                 }
 
-                if (dst == null) { failed++; continue; }
+                if (dst == null) {
+                    failed++;
+                    continue;
+                }
 
                 // ★ Stream with progress.
                 boolean ok = false;
@@ -2297,11 +2419,15 @@ public class GalleryActivity extends AppCompatActivity {
                     }
                     out.flush();
                     ok = dst.length() > 0;
-                } catch (Exception ignored) {}
+                } catch (Exception ignored) {
+                }
 
                 if (ok) {
                     if (srcMtime > 0L) {
-                        try { dst.setLastModified(srcMtime); } catch (Exception ignored) {}
+                        try {
+                            dst.setLastModified(srcMtime);
+                        } catch (Exception ignored) {
+                        }
                     }
 
                     boolean srcDeleted = src.delete();
@@ -2311,7 +2437,10 @@ public class GalleryActivity extends AppCompatActivity {
                         privateVault.forgetOriginal(fileName);
                         moved++;
                     } else {
-                        try { dst.delete(); } catch (Exception ignored) {}
+                        try {
+                            dst.delete();
+                        } catch (Exception ignored) {
+                        }
                         failed++;
                     }
                 } else {
@@ -2326,8 +2455,11 @@ public class GalleryActivity extends AppCompatActivity {
                 MediaScannerConnection.scanFile(this,
                         writtenPublicPaths.toArray(new String[0]), null,
                         (p, uri) -> scanLatch.countDown());
-                try { scanLatch.await(3, java.util.concurrent.TimeUnit.SECONDS); }
-                catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
+                try {
+                    scanLatch.await(3, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (InterruptedException ignored) {
+                    Thread.currentThread().interrupt();
+                }
             }
 
             final int m = moved, f = failed;
@@ -2356,7 +2488,10 @@ public class GalleryActivity extends AppCompatActivity {
 
         String base = cleanName, ext = "";
         int dot = cleanName.lastIndexOf('.');
-        if (dot > 0) { base = cleanName.substring(0, dot); ext = cleanName.substring(dot); }
+        if (dot > 0) {
+            base = cleanName.substring(0, dot);
+            ext = cleanName.substring(dot);
+        }
 
         File dst = new File(dir, cleanName);
         int suffix = 1;
@@ -2392,7 +2527,6 @@ public class GalleryActivity extends AppCompatActivity {
         updateFastScrollBar();
         updateBarsVisibility();
     }
-
 
 
     private void startLongPressDrag(String path) {
@@ -2441,7 +2575,8 @@ public class GalleryActivity extends AppCompatActivity {
         updateSelectionUI();
 
     }
-        private void setupDragToSelect() {
+
+    private void setupDragToSelect() {
         if (recyclerView == null) return;
         recyclerView.addOnItemTouchListener(new RecyclerView.SimpleOnItemTouchListener() {
             @Override
@@ -2458,6 +2593,7 @@ public class GalleryActivity extends AppCompatActivity {
                 }
                 return false;
             }
+
             @Override
             public void onTouchEvent(@NonNull RecyclerView rv, @NonNull MotionEvent e) {
                 if (!dragSelectActive) return;
@@ -2523,7 +2659,10 @@ public class GalleryActivity extends AppCompatActivity {
     }
 
     private void updateAutoScroll(RecyclerView rv, float x, float y) {
-        if (rv == null) { stopAutoScroll(); return; }
+        if (rv == null) {
+            stopAutoScroll();
+            return;
+        }
         int edge = dpToPx(AUTO_SCROLL_EDGE_DP);
         int h = rv.getHeight(), w = rv.getWidth();
 
@@ -2533,8 +2672,12 @@ public class GalleryActivity extends AppCompatActivity {
         if (x < edge) dx = -(int) (8 + (1f - x / (float) edge) * 42);
         else if (x > w - edge) dx = (int) (8 + (1f - (w - x) / (float) edge) * 42);
 
-        if (dx == 0 && dy == 0) { stopAutoScroll(); return; }
-        autoScrollDx = dx; autoScrollDy = dy;
+        if (dx == 0 && dy == 0) {
+            stopAutoScroll();
+            return;
+        }
+        autoScrollDx = dx;
+        autoScrollDy = dy;
         if (!autoScrollActive) {
             autoScrollActive = true;
             rv.postDelayed(autoScrollRunnable, AUTO_SCROLL_TICK_MS);
@@ -2549,7 +2692,8 @@ public class GalleryActivity extends AppCompatActivity {
     }
 
     private final Runnable autoScrollRunnable = new Runnable() {
-        @Override public void run() {
+        @Override
+        public void run() {
             if (!autoScrollActive || recyclerView == null) return;
             recyclerView.scrollBy(autoScrollDx, autoScrollDy);
             recyclerView.postDelayed(this, AUTO_SCROLL_TICK_MS);
@@ -2693,6 +2837,7 @@ public class GalleryActivity extends AppCompatActivity {
         scheduleMediaRefresh(MEDIA_REFRESH_DEBOUNCE_MS);
         return true;
     }
+
     private File uniqueTrashTarget(File src) {
         String parent = src.getParent();
         String clean = cleanFileName(src.getName());
@@ -2701,7 +2846,10 @@ public class GalleryActivity extends AppCompatActivity {
 
         String base = clean, ext = "";
         int dot = clean.lastIndexOf(".");
-        if (dot > 0) { base = clean.substring(0, dot); ext = clean.substring(dot); }
+        if (dot > 0) {
+            base = clean.substring(0, dot);
+            ext = clean.substring(dot);
+        }
         int count = 1;
         while (target.exists()) {
             target = new File(parent, ".trashed." + base + "_" + count + ext);
@@ -2718,7 +2866,10 @@ public class GalleryActivity extends AppCompatActivity {
 
         String base = clean, ext = "";
         int dot = clean.lastIndexOf(".");
-        if (dot > 0) { base = clean.substring(0, dot); ext = clean.substring(dot); }
+        if (dot > 0) {
+            base = clean.substring(0, dot);
+            ext = clean.substring(dot);
+        }
         int count = 1;
         while (target.exists()) {
             target = new File(parent, base + "_" + count + ext);
@@ -2729,13 +2880,17 @@ public class GalleryActivity extends AppCompatActivity {
 
     private boolean renameFileRobust(File src, File dst) {
         if (src == null || dst == null || !src.exists()) return false;
-        try { if (src.renameTo(dst)) return true; } catch (Exception ignored) {}
+        try {
+            if (src.renameTo(dst)) return true;
+        } catch (Exception ignored) {
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             try {
                 java.nio.file.Files.move(src.toPath(), dst.toPath(),
                         java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                 return true;
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) {
+            }
         }
         return false;
     }
@@ -2794,8 +2949,14 @@ public class GalleryActivity extends AppCompatActivity {
             List<String> newTrashPaths = new ArrayList<>();
             for (String path : paths) {
                 File f = new File(path);
-                if (!f.exists()) { failed++; continue; }
-                if (f.getName().startsWith(".trashed.")) { moved++; continue; }
+                if (!f.exists()) {
+                    failed++;
+                    continue;
+                }
+                if (f.getName().startsWith(".trashed.")) {
+                    moved++;
+                    continue;
+                }
                 File target = uniqueTrashTarget(f);
                 if (renameFileRobust(f, target)) {
                     moved++;
@@ -2859,7 +3020,10 @@ public class GalleryActivity extends AppCompatActivity {
             List<String> restoredPaths = new ArrayList<>();
             for (String path : paths) {
                 File f = new File(path);
-                if (!f.exists()) { failed++; continue; }
+                if (!f.exists()) {
+                    failed++;
+                    continue;
+                }
                 File target = uniqueRestoreTarget(f);
                 if (renameFileRobust(f, target)) {
                     restored++;
@@ -2928,7 +3092,8 @@ public class GalleryActivity extends AppCompatActivity {
                         for (String path : paths) {
                             File f = new File(path);
                             boolean ok = !f.exists() || f.delete();
-                            if (ok) deleted++; else failed++;
+                            if (ok) deleted++;
+                            else failed++;
                         }
                         final int dd = deleted, ff = failed;
                         runOnUiThread(() -> {
@@ -3001,14 +3166,23 @@ public class GalleryActivity extends AppCompatActivity {
     private String getMimeType(String path) {
         String ext = path.substring(path.lastIndexOf(".") + 1).toLowerCase(Locale.US);
         switch (ext) {
-            case "jpg": case "jpeg": return "image/jpeg";
-            case "png": return "image/png";
-            case "gif": return "image/gif";
-            case "mp4": return "video/mp4";
-            case "avi": return "video/avi";
-            case "mkv": return "video/x-matroska";
-            case "mp3": return "audio/mpeg";
-            default: return "*/*";
+            case "jpg":
+            case "jpeg":
+                return "image/jpeg";
+            case "png":
+                return "image/png";
+            case "gif":
+                return "image/gif";
+            case "mp4":
+                return "video/mp4";
+            case "avi":
+                return "video/avi";
+            case "mkv":
+                return "video/x-matroska";
+            case "mp3":
+                return "audio/mpeg";
+            default:
+                return "*/*";
         }
     }
 
@@ -3084,16 +3258,12 @@ public class GalleryActivity extends AppCompatActivity {
 
     private void buildFullscreenAdapter() {
         fullscreenAdapter = new FullscreenAdapter(fullscreenMediaPaths, this);
-        fullscreenAdapter.setTapCallback(() -> {
-            scheduleSingleTapOrCancel();
-        });
+        fullscreenAdapter.setTapCallback(this::scheduleSingleTapOrCancel);
         fullscreenAdapter.setVideoTouchForwarder(event -> {
-            if (overlayVideoGestureDetector != null) {
+            if (overlayVideoGestureDetector != null)
                 overlayVideoGestureDetector.onTouchEvent(event);
-            }
-            if (volumeBrightnessHandler != null) {
+            if (volumeBrightnessHandler != null)
                 volumeBrightnessHandler.onTouch(fullscreenOverlay, event);
-            }
             if (event.getActionMasked() == MotionEvent.ACTION_UP
                     || event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
                 resetPlaybackSpeed();
@@ -3114,15 +3284,12 @@ public class GalleryActivity extends AppCompatActivity {
                         cancelPendingChromeTap();
                         if (!currentFullscreenPageIsVideo || currentFullscreenVideo == null) return false;
                         suppressChromeUntilNextTap = true;
-                        try {
-                            float tapX = e.getX();
-                            float w = fullscreenOverlay.getWidth();
-                            if (w <= 0) return false;
-                            if (tapX < w / 3f) skipByMs(-SKIP_BACKWARD_MS);
-                            else if (tapX > w * 2f / 3f) skipByMs(SKIP_FORWARD_MS);
-                            else toggleOverlayPlayPause();
-                        } finally {
-                        }
+                        float tapX = e.getX();
+                        float w = fullscreenOverlay.getWidth();
+                        if (w <= 0) return false;
+                        if (tapX < w / 3f) skipByMs(-SKIP_BACKWARD_MS);
+                        else if (tapX > w * 2f / 3f) skipByMs(SKIP_FORWARD_MS);
+                        else toggleOverlayPlayPause();
                         return true;
                     }
 
@@ -3135,29 +3302,22 @@ public class GalleryActivity extends AppCompatActivity {
                         cancelPendingChromeTap();
                         if (!currentFullscreenPageIsVideo || currentFullscreenVideo == null) return;
                         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
-                        try { if (!currentFullscreenVideo.isPlaying()) return; }
-                        catch (Exception ex) { return; }
                         try {
-                            android.media.PlaybackParams params =
-                                    currentFullscreenVideo.getPlaybackParams();
-                            if (params != null) {
-                                playbackSpeedBeforeLongPress = params.getSpeed();
-                            } else params = new android.media.PlaybackParams();
-                            params.setSpeed(LONG_PRESS_SPEED);
-                            currentFullscreenVideo.setPlaybackParams(params);
-                        } catch (Exception ignored) {}
+                            if (!currentFullscreenVideo.isPlaying()) return;
+                        } catch (Exception ex) { return; }
+                        playbackSpeedBeforeLongPress = currentFullscreenVideo.getPlaybackSpeed();
+                        currentFullscreenVideo.setPlaybackSpeed(LONG_PRESS_SPEED);
                     }
                 });
 
         fullscreenAdapter.setPageTypeCallback(new FullscreenAdapter.PageTypeCallback() {
-            @Override public void onImageVisible(int position) {
+            @Override
+            public void onImageVisible(int position) {
                 if (position != fullscreenCurrentPosition) return;
                 currentFullscreenPageIsVideo = false;
                 isOverlayVideoPlaying = false;
                 if (currentFullscreenVideo != null) {
-                    try { currentFullscreenVideo.pause(); } catch (Exception ignored) {}
-                    currentFullscreenVideo = null;
-                    currentFullscreenVideoPosition = -1;
+                    try { currentFullscreenVideo.pauseForLifecycle(); } catch (Exception ignored) {}
                 }
                 videoHandler.removeCallbacks(overlayProgressRunnable);
                 if (videoControlContainer != null)
@@ -3165,82 +3325,91 @@ public class GalleryActivity extends AppCompatActivity {
                 overlayControlsVisible = false;
             }
 
-            @Override public void onVideoVisible(CustomVideoView videoView, int position) {
+            @Override
+            public void onVideoVisible(HardwareVideoController ctrl, int position) {
                 if (position != fullscreenCurrentPosition) return;
-                currentFullscreenPageIsVideo = true;
-                currentFullscreenVideo = videoView;
+                if (position != fullscreenAdapter.getActivePosition()) return;
+
+                currentFullscreenVideo = ctrl;
                 currentFullscreenVideoPosition = position;
-                overlayPendingSeekMs = -1;
-
-
-                String path = (position >= 0 && position < fullscreenMediaPaths.size())
-                        ? fullscreenMediaPaths.get(position) : null;
-
-                int restoreMs = -1;
-                boolean restorePlaying = true;
-                if (path != null && path.equals(savedVideoPath) && savedVideoPositionMs >= 0) {
-                    restoreMs = savedVideoPositionMs;
-                    restorePlaying = savedVideoWasPlaying;
-                }
-                try { if (restoreMs > 0) videoView.seekTo(restoreMs); } catch (Exception ignored) {}
-                try {
-                    if (restorePlaying) videoView.start();
-                    else videoView.pause();
-                } catch (Exception ignored) {}
+                currentFullscreenPageIsVideo = true;
+                ctrl.setCompletionListener(() -> loopWithRetry(ctrl, 0));
 
                 syncOverlayPlayPauseIcon();
                 updateOverlayTitle();
-
-                if (currentFullscreenVideo != null
-                        && currentFullscreenVideo.getSafeDuration() > 0) {
+                if (ctrl.getSafeDuration() > 0) {
                     updateOverlaySeekBar();
                     startOverlayProgressUpdate();
                 } else {
                     retryProgressStart(15);
-                }
-                if (!userIsSwiping && !overlayControlsVisible && !suppressChromeUntilNextTap) {
-                    showAllControlsWithTimeout();
                 }
             }
         });
 
         fullscreenViewPager.setAdapter(fullscreenAdapter);
         fullscreenViewPager.setOffscreenPageLimit(1);
-
         fullscreenViewPager.registerOnPageChangeCallback(new ViewPager2.OnPageChangeCallback() {
-            @Override public void onPageScrollStateChanged(int state) {
+            @Override
+            public void onPageScrollStateChanged(int state) {
                 userIsSwiping = (state != ViewPager2.SCROLL_STATE_IDLE);
             }
-            @Override public void onPageSelected(int position) {
+
+            @Override
+            public void onPageSelected(int position) {
                 cancelPendingChromeTap();
-                if (currentFullscreenVideo != null
-                        && currentFullscreenVideoPosition != position) {
-                    try { currentFullscreenVideo.pause(); } catch (Exception ignored) {}
-                    currentFullscreenVideo = null;
-                    currentFullscreenVideoPosition = -1;
-                }
                 videoHandler.removeCallbacks(overlayProgressRunnable);
                 overlayPendingSeekMs = -1;
+                lastSeekTargetMs = -1;
                 fullscreenCurrentPosition = position;
 
                 String path = (position >= 0 && position < fullscreenMediaPaths.size())
                         ? fullscreenMediaPaths.get(position) : null;
                 boolean targetIsVideo = isVideoPath(path);
-                if (targetIsVideo) {
-                    currentFullscreenPageIsVideo = true;
-                } else {
-                    currentFullscreenPageIsVideo = false;
-                    isOverlayVideoPlaying = false;
+
+                // Note: no controller release loop here. The single shared controller
+                // swaps its surface and media item in activateControllerAt /
+                // showPath without ever being released or re-created.
+
+                if (fullscreenAdapter != null) {
+                    fullscreenAdapter.setActivePosition(position);
+                }
+
+                currentFullscreenVideo = null;
+                currentFullscreenVideoPosition = -1;
+                isOverlayVideoPlaying = false;
+                currentFullscreenPageIsVideo = targetIsVideo;
+
+                if (!targetIsVideo) {
                     if (videoControlContainer != null)
                         videoControlContainer.setVisibility(View.GONE);
                     overlayControlsVisible = false;
                 }
+
                 updateFullscreenInfo(position);
-                if (targetIsVideo) findAndStartVideoForPosition(position);
+                resetVideoUi();
+
+                if (targetIsVideo) {
+                    fullscreenViewPager.post(() -> {
+                        if (fullscreenCurrentPosition != position) return;
+                        findAndStartVideoForPosition(position);
+                        fullscreenViewPager.postDelayed(() -> {
+                            if (fullscreenCurrentPosition == position) {
+                                syncOverlayPlayPauseIcon();
+                            }
+                        }, 300L);
+                    });
+                }
             }
         });
     }
-
+    private void resetVideoUi() {
+        if (btnCenterPlayPause != null) {
+            btnCenterPlayPause.setImageResource(android.R.drawable.ic_media_play);
+        }
+        if (videoTimeCurrent != null) videoTimeCurrent.setText("00:00");
+        if (videoTimeTotal != null) videoTimeTotal.setText("00:00");
+        if (videoSeekBar != null) videoSeekBar.setProgress(0);
+    }
     private void wireFullscreenControls() {
         if (fsBtnBin != null) fsBtnBin.setOnClickListener(v -> {
             deleteCurrentFromViewer();
@@ -3315,8 +3484,9 @@ public class GalleryActivity extends AppCompatActivity {
             videoSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
                 @Override public void onProgressChanged(SeekBar sb, int progress, boolean fromUser) {
                     if (!fromUser || currentFullscreenVideo == null) return;
-                    int dur = currentFullscreenVideo.getSafeDuration();
-                    if (dur <= 0) return;
+                    long durL = currentFullscreenVideo.getSafeDuration();
+                    if (durL <= 0) return;
+                    int dur = (int) durL;
                     int targetMs = (int) ((progress / 1000.0) * dur);
                     overlayPendingSeekMs = targetMs;
                     boolean seeked = currentFullscreenVideo.seekToSafe(targetMs);
@@ -3325,10 +3495,14 @@ public class GalleryActivity extends AppCompatActivity {
                     long clearDelay = seeked ? 350L : 60L;
                     videoHandler.postDelayed(() -> overlayPendingSeekMs = -1, clearDelay);
                 }
-                @Override public void onStartTrackingTouch(SeekBar sb) {
+
+                @Override
+                public void onStartTrackingTouch(SeekBar sb) {
                     videoHandler.removeCallbacks(overlayHideControlsRunnable);
                 }
-                @Override public void onStopTrackingTouch(SeekBar sb) {
+
+                @Override
+                public void onStopTrackingTouch(SeekBar sb) {
                     showAllControlsWithTimeout();
                 }
             });
@@ -3347,7 +3521,10 @@ public class GalleryActivity extends AppCompatActivity {
 
         boolean present = false;
         for (GalleryMediaItem item : current) {
-            if (item.path != null && item.path.equals(path)) { present = true; break; }
+            if (item.path != null && item.path.equals(path)) {
+                present = true;
+                break;
+            }
         }
 
         if (!present) {
@@ -3399,7 +3576,13 @@ public class GalleryActivity extends AppCompatActivity {
         isOverlayVideoPlaying = false;
         overlayControlsVisible = false;
         overlayPendingSeekMs = -1;
+        userPausedPaths.clear();
 
+// ★ Critical: set active position BEFORE notifyDataSetChanged so the
+//   ViewHolder for currentIndex is bound with videoSurface == VISIBLE.
+        if (fullscreenAdapter != null) {
+            fullscreenAdapter.setActivePosition(currentIndex);
+        }
         fullscreenAdapter.notifyDataSetChanged();
         fullscreenViewPager.setCurrentItem(currentIndex, false);
 
@@ -3427,13 +3610,16 @@ public class GalleryActivity extends AppCompatActivity {
         videoHandler.removeCallbacks(overlayHideControlsRunnable);
         bottomBar.setVisibility(View.GONE);
 
-        String initialPath = fullscreenMediaPaths.get(currentIndex);
-        if (isVideoPath(initialPath)) {
-            int finalIndex = currentIndex;
-            fullscreenViewPager.post(() -> findAndStartVideoForPosition(finalIndex));
+        if (isVideoPath(fullscreenMediaPaths.get(currentIndex))) {
+            final int finalIndex = currentIndex;
+            // Post twice: once for layout, once for surface attachment.
+            fullscreenViewPager.post(() ->
+                    fullscreenViewPager.post(() -> {
+                        if (fullscreenCurrentPosition == finalIndex)
+                            findAndStartVideoForPosition(finalIndex);
+                    }));
         }
     }
-
 
 
     private void deleteCurrentFromViewer() {
@@ -3444,7 +3630,10 @@ public class GalleryActivity extends AppCompatActivity {
         if (path == null) return;
         GalleryMediaItem target = null;
         for (GalleryMediaItem it : cachedMedia) {
-            if (it.path != null && it.path.equals(path)) { target = it; break; }
+            if (it.path != null && it.path.equals(path)) {
+                target = it;
+                break;
+            }
         }
 
         if (target != null) {
@@ -3516,11 +3705,10 @@ public class GalleryActivity extends AppCompatActivity {
             videoHandler.removeCallbacks(savedPosSync);
             savedPosSync = null;
         }
-        if (currentFullscreenVideo != null) {
-            fullscreenViewPager.setUserInputEnabled(true);
-            try { currentFullscreenVideo.stopPlayback(); } catch (Exception ignored) {}
-            currentFullscreenVideo = null;
+        if (fullscreenAdapter != null) {
+            fullscreenAdapter.reset();   // releases the single ExoPlayer + MediaCodec
         }
+        currentFullscreenVideo = null;
         currentFullscreenVideoPosition = -1;
         currentFullscreenPageIsVideo = false;
         isOverlayVideoPlaying = false;
@@ -3530,22 +3718,10 @@ public class GalleryActivity extends AppCompatActivity {
         savedVideoPositionMs = -1;
         savedVideoPath = null;
         savedVideoWasPlaying = false;
+        userPausedPaths.clear();
         hideMediaHudImmediately();
         videoHandler.removeCallbacks(overlayProgressRunnable);
         videoHandler.removeCallbacks(overlayHideControlsRunnable);
-
-        try {
-            RecyclerView rv = (RecyclerView) fullscreenViewPager.getChildAt(0);
-            if (rv != null) {
-                for (int i = 0; i < rv.getChildCount(); i++) {
-                    View child = rv.getChildAt(i);
-                    if (child != null) {
-                        CustomVideoView vv = child.findViewById(R.id.fullscreen_video);
-                        if (vv != null) vv.stopPlayback();
-                    }
-                }
-            }
-        } catch (Exception ignored) {}
 
         if (videoControlContainer != null)
             videoControlContainer.setVisibility(View.GONE);
@@ -3570,7 +3746,6 @@ public class GalleryActivity extends AppCompatActivity {
         }
         savedGridScrollPosition = -1;
     }
-
     private void updateFullscreenInfo(int position) {
         if (position < 0 || position >= fullscreenMediaPaths.size()) return;
         String path = fullscreenMediaPaths.get(position);
@@ -3616,151 +3791,71 @@ public class GalleryActivity extends AppCompatActivity {
         try {
             RecyclerView rv = (RecyclerView) fullscreenViewPager.getChildAt(0);
             if (rv == null) {
-                fullscreenViewPager.post(() -> {
+                fullscreenViewPager.postDelayed(() -> {
                     if (fullscreenCurrentPosition == targetPosition)
                         findAndStartVideoForPosition(targetPosition);
-                });
+                }, 16L);
                 return;
             }
             for (int i = 0; i < rv.getChildCount(); i++) {
                 View child = rv.getChildAt(i);
                 RecyclerView.ViewHolder vh = rv.getChildViewHolder(child);
-                if (vh != null && vh.getBindingAdapterPosition() == targetPosition) {
-                    CustomVideoView vv = child.findViewById(R.id.fullscreen_video);
-                    if (vv != null && vv.getVisibility() == View.VISIBLE) {
-                        boolean landscape = getResources().getConfiguration().orientation
-                                == Configuration.ORIENTATION_LANDSCAPE;
-                        vv.setFit(landscape ? CustomVideoView.Fit.LARGER
-                                : CustomVideoView.Fit.SMALLER);
-                        vv.setOnCompletionListener(mp -> loopWithRetry(mp, 0));
+                if (vh == null || vh.getBindingAdapterPosition() != targetPosition) continue;
 
-                        if (currentFullscreenVideo == vv
-                                && currentFullscreenVideoPosition == targetPosition) {
-                            restoreSavedPlaybackState(vv, targetPosition);
-                            syncOverlayPlayPauseIcon();
-                            if (!overlayControlsVisible && !suppressChromeUntilNextTap) {
-                                showAllControlsWithTimeout();
-                            }
-                            return;
-                        }
+                SurfaceView surface = child.findViewById(R.id.fullscreen_video);
+                if (surface == null) continue;
+                if (surface.getVisibility() != View.VISIBLE) surface.setVisibility(View.VISIBLE);
 
-                        currentFullscreenVideo = vv;
-                        currentFullscreenVideoPosition = targetPosition;
-                        currentFullscreenPageIsVideo = true;
-                        overlayPendingSeekMs = -1;
-                        vv.setOnPreparedListener(mp -> {
-                            attachLoudnessEnhancer(mp.getAudioSessionId());
-                            final int pbPos = fullscreenCurrentPosition;
-                            try {
-                                RecyclerView pbRv = (RecyclerView) fullscreenViewPager.getChildAt(0);
-                                if (pbRv != null) {
-                                    final int pbCount = pbRv.getChildCount();
-                                    for (int pbIdx = 0; pbIdx < pbCount; pbIdx++) {
-                                        View pbChild = pbRv.getChildAt(pbIdx);
-                                        RecyclerView.ViewHolder pbVh = pbRv.getChildViewHolder(pbChild);
-                                        if (pbVh != null && pbVh.getBindingAdapterPosition() == pbPos) {
-                                            View pbView = pbChild.findViewById(R.id.fullscreen_progress);
-                                            if (pbView != null) pbView.setVisibility(View.GONE);
-                                            break;
-                                        }
-                                    }
-                                }
-                            } catch (Exception ignored) {}
-                        });
-                        vv.setOnTapListener(this::onFullscreenTap);
-                        vv.setOnTouchListener((v, event) -> {
-                            if (overlayVideoGestureDetector != null)
-                                overlayVideoGestureDetector.onTouchEvent(event);
-                            if (volumeBrightnessHandler != null)
-                                volumeBrightnessHandler.onTouch(v, event);
-                            if (event.getActionMasked() == MotionEvent.ACTION_UP
-                                    || event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
-                                resetPlaybackSpeed();
-                            }
-                            return true;
-                        });
+                HardwareVideoController ctrl = fullscreenAdapter.activateControllerAt(targetPosition, surface);
+                if (ctrl == null) continue;
 
-                        restoreSavedPlaybackState(vv, targetPosition);
-                        syncOverlayPlayPauseIcon();
-                        updateOverlayTitle();
+                currentFullscreenVideo = ctrl;
+                currentFullscreenVideoPosition = targetPosition;
+                currentFullscreenPageIsVideo = true;
+                overlayPendingSeekMs = -1;
 
-                        if (currentFullscreenVideo != null
-                                && currentFullscreenVideo.getSafeDuration() > 0) {
-                            updateOverlaySeekBar();
-                            startOverlayProgressUpdate();
-                        } else {
-                            retryProgressStart(15);
-                        }
-                        showAllControlsWithTimeout();
-                        return;
+                surface.setOnTouchListener((v, event) -> {
+                    if (overlayVideoGestureDetector != null)
+                        overlayVideoGestureDetector.onTouchEvent(event);
+                    if (volumeBrightnessHandler != null)
+                        volumeBrightnessHandler.onTouch(v, event);
+                    if (event.getActionMasked() == MotionEvent.ACTION_UP
+                            || event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+                        resetPlaybackSpeed();
                     }
+                    return true;
+                });
+
+                syncOverlayPlayPauseIcon();
+                updateOverlayTitle();
+                if (ctrl.getSafeDuration() > 0) {
+                    updateOverlaySeekBar();
+                    startOverlayProgressUpdate();
+                } else {
+                    retryProgressStart(15);
                 }
+                showAllControlsWithTimeout();
+                return;
             }
-            fullscreenViewPager.post(() -> {
+            fullscreenViewPager.postDelayed(() -> {
                 if (fullscreenCurrentPosition == targetPosition)
                     findAndStartVideoForPosition(targetPosition);
-            });
-        } catch (Exception ignored) {}
+            }, 16L);
+        } catch (Exception ignored) { }
     }
 
-
-    private void attachLoudnessEnhancer(int audioSessionId) {
-        if (audioSessionId == AudioManager.ERROR || audioSessionId <= 0) return;
-
-        // If the same session is already attached, just re-apply the gain.
-        if (loudnessEnhancer != null && loudnessSessionId == audioSessionId) {
-            applyLoudnessGain(lastPerceivedVolume);
-            return;
-        }
-        releaseLoudnessEnhancer();
-
-        try {
-            loudnessEnhancer = new android.media.audiofx.LoudnessEnhancer(audioSessionId);
-            loudnessSessionId = audioSessionId;
-            applyLoudnessGain(lastPerceivedVolume);
-        } catch (Throwable t) {
-            loudnessEnhancer = null;
-            loudnessSessionId = -1;
-        }
-    }
-
-    private void releaseLoudnessEnhancer() {
-        if (loudnessEnhancer != null) {
-            try { loudnessEnhancer.setEnabled(false); } catch (Throwable ignored) {}
-            try { loudnessEnhancer.release(); }        catch (Throwable ignored) {}
-            loudnessEnhancer = null;
-        }
-        loudnessSessionId = -1;
-    }
-
-    private void applyLoudnessGain(float perceivedVolume) {
-        if (loudnessEnhancer == null) return;
-
-        float p = Math.max(0f, Math.min(2f, perceivedVolume));
-        if (p <= 1.0f) {
-            try { loudnessEnhancer.setTargetGain(0); } catch (Throwable ignored) {}
-            return;
-        }
-        // 1.0 → 0 mB, 2.0 → 1000 mB (10 dB ≈ 3.16× perceived)
-        int mB = Math.round((p - 1.0f) * 1000f);
-        if (mB < 0) mB = 0;
-        if (mB > 1000) mB = 1000;
-        try { loudnessEnhancer.setTargetGain(mB); } catch (Throwable ignored) {}
-        try { loudnessEnhancer.setEnabled(true); } catch (Throwable ignored) {}
-    }
-
-    private void loopWithRetry(MediaPlayer mp, int attempt) {
-        if (mp == null || currentFullscreenVideo == null) return;
-        boolean seeked = false, started = false;
-        try { mp.seekTo(0); seeked = true; } catch (Exception ignored) {}
+    private void loopWithRetry(HardwareVideoController ctrl, int attempt) {
+        if (ctrl == null || currentFullscreenVideo == null) return;
+        boolean seeked = ctrl.seekToSafe(0L);
         if (seeked) {
-            try { mp.start(); started = true; } catch (Exception ignored) {}
-        }
-        if (started) {
-            isOverlayVideoPlaying = true;
-            syncOverlayPlayPauseIcon();
-            startOverlayProgressUpdate();
-            return;
+            try {
+                ctrl.start();
+                isOverlayVideoPlaying = true;
+                syncOverlayPlayPauseIcon();
+                startOverlayProgressUpdate();
+                return;
+            } catch (Exception ignored) {
+            }
         }
         if (attempt >= 15) {
             isOverlayVideoPlaying = false;
@@ -3768,11 +3863,14 @@ public class GalleryActivity extends AppCompatActivity {
             return;
         }
         long delay = 100L * (attempt + 1);
-        videoHandler.postDelayed(() -> loopWithRetry(mp, attempt + 1), delay);
+        videoHandler.postDelayed(() -> loopWithRetry(ctrl, attempt + 1), delay);
     }
 
     private void retryProgressStart(int remaining) {
-        if (remaining <= 0) { startOverlayProgressUpdate(); return; }
+        if (remaining <= 0) {
+            startOverlayProgressUpdate();
+            return;
+        }
         videoHandler.postDelayed(() -> {
             if (currentFullscreenVideo == null) return;
             if (currentFullscreenVideo.getSafeDuration() > 0) {
@@ -3782,16 +3880,21 @@ public class GalleryActivity extends AppCompatActivity {
         }, 200L);
     }
 
-    private void restoreSavedPlaybackState(CustomVideoView vv, int position) {
+    private void restoreSavedPlaybackState(HardwareVideoController vv, int position) {
         String path = (position >= 0 && position < fullscreenMediaPaths.size())
                 ? fullscreenMediaPaths.get(position) : null;
+
+        // Only honor a pause if the user explicitly paused THIS SAME file this session.
         int restoreMs = -1;
         boolean restorePlaying = true;
-        if (path != null && path.equals(savedVideoPath) && savedVideoPositionMs >= 0) {
+        if (path != null
+                && userPausedPaths.contains(path)
+                && path.equals(savedVideoPath)
+                && savedVideoPositionMs >= 0) {
             restoreMs = savedVideoPositionMs;
-            restorePlaying = savedVideoWasPlaying;
+            restorePlaying = false;
         }
-        // ★ Reset the seek-accumulator whenever a new video is attached.
+
         lastSeekTargetMs = -1;
         if (restoreMs > 0) {
             vv.seekToSafe(restoreMs);
@@ -3799,14 +3902,27 @@ public class GalleryActivity extends AppCompatActivity {
             videoHandler.postDelayed(() -> overlayPendingSeekMs = -1, 400L);
         }
         try {
-            if (restorePlaying) { vv.start(); isOverlayVideoPlaying = true; }
-            else { vv.pause(); isOverlayVideoPlaying = false; }
-        } catch (Exception ignored) {}
+            if (restorePlaying) {
+                vv.start();
+                isOverlayVideoPlaying = true;
+            } else {
+                vv.pause();
+                isOverlayVideoPlaying = false;
+            }
+        } catch (Exception ignored) { }
     }
     private void syncOverlayPlayPauseIcon() {
         boolean playing = false;
         if (currentFullscreenVideo != null) {
-            try { playing = currentFullscreenVideo.isPlaying(); } catch (Exception ignored) {}
+            try {
+                // isPlaying() is true only after ExoPlayer transitions to
+                // STATE_READY *and* is rendering. If the player is still
+                // BUFFERING or the surface hasn't produced frames yet,
+                // isPlaying() returns false — which is what we want the
+                // icon to reflect.
+                playing = currentFullscreenVideo.isPlaying();
+            } catch (Exception ignored) {
+            }
         }
         isOverlayVideoPlaying = playing;
         if (btnCenterPlayPause != null) {
@@ -3818,13 +3934,11 @@ public class GalleryActivity extends AppCompatActivity {
 
     private void skipByMs(int deltaMs) {
         if (currentFullscreenVideo == null) return;
-        int dur = currentFullscreenVideo.getSafeDuration();
-        if (dur <= 0) return;
+        long durL = currentFullscreenVideo.getSafeDuration();
+        if (durL <= 0) return;
+        int dur = (int) durL;
+        int actual = (int) Math.max(0L, currentFullscreenVideo.getSafePosition());
 
-        // Base = the larger of (a) actual player position, (b) last commanded target.
-        // This prevents "stuck at 15 s" when the player hasn't caught up yet.
-        int actual = currentFullscreenVideo.getSafePosition();
-        if (actual < 0) actual = 0;
         int base = Math.max(actual, lastSeekTargetMs >= 0 ? lastSeekTargetMs : 0);
 
         int target = Math.max(0, Math.min(base + deltaMs, dur));
@@ -3854,7 +3968,8 @@ public class GalleryActivity extends AppCompatActivity {
     private int getEffectivePositionMs() {
         if (currentFullscreenVideo == null) return 0;
         if (overlayPendingSeekMs >= 0) return overlayPendingSeekMs;
-        int p = currentFullscreenVideo.getSafePosition();
+        long pL = currentFullscreenVideo.getSafePosition();
+        int p = (int) pL;
         return p >= 0 ? p : 0;
     }
 
@@ -3865,13 +3980,8 @@ public class GalleryActivity extends AppCompatActivity {
             playbackSpeedBeforeLongPress = 1.0f;
             return;
         }
-        try {
-            android.media.PlaybackParams params = currentFullscreenVideo.getPlaybackParams();
-            if (params == null) params = new android.media.PlaybackParams();
-            params.setSpeed(playbackSpeedBeforeLongPress > 0
-                    ? playbackSpeedBeforeLongPress : 1.0f);
-            currentFullscreenVideo.setPlaybackParams(params);
-        } catch (Exception ignored) {}
+        currentFullscreenVideo.setPlaybackSpeed(playbackSpeedBeforeLongPress > 0
+                ? playbackSpeedBeforeLongPress : 1.0f);
         playbackSpeedBeforeLongPress = 1.0f;
     }
 
@@ -3879,33 +3989,38 @@ public class GalleryActivity extends AppCompatActivity {
         if (currentFullscreenVideo == null) return;
         overlayPendingSeekMs = -1;
         lastSeekTargetMs = -1;
-        boolean playing = false;
-        try { playing = currentFullscreenVideo.isPlaying(); } catch (Exception ignored) {}
+        boolean playing;
+        try { playing = currentFullscreenVideo.isPlaying(); } catch (Exception e) { playing = false; }
+
+        String path = (currentFullscreenVideoPosition >= 0
+                && currentFullscreenVideoPosition < fullscreenMediaPaths.size())
+                ? fullscreenMediaPaths.get(currentFullscreenVideoPosition) : null;
 
         if (playing) {
             currentFullscreenVideo.pause();
             isOverlayVideoPlaying = false;
+            if (path != null) userPausedPaths.add(path);
             if (btnCenterPlayPause != null)
                 btnCenterPlayPause.setImageResource(android.R.drawable.ic_media_play);
             videoHandler.removeCallbacks(overlayProgressRunnable);
         } else {
             currentFullscreenVideo.start();
             isOverlayVideoPlaying = true;
+            if (path != null) userPausedPaths.remove(path);
             if (btnCenterPlayPause != null)
                 btnCenterPlayPause.setImageResource(android.R.drawable.ic_media_pause);
             startOverlayProgressUpdate();
         }
         savedVideoPositionMs = getEffectivePositionMs();
-        savedVideoPath = currentFullscreenVideoPosition >= 0
-                && currentFullscreenVideoPosition < fullscreenMediaPaths.size()
-                ? fullscreenMediaPaths.get(currentFullscreenVideoPosition) : null;
+        savedVideoPath = path;
         savedVideoWasPlaying = isOverlayVideoPlaying;
     }
 
     private void startOverlayProgressUpdate() {
         videoHandler.removeCallbacks(overlayProgressRunnable);
         overlayProgressRunnable = new Runnable() {
-            @Override public void run() {
+            @Override
+            public void run() {
                 if (currentFullscreenVideo == null) {
                     isOverlayVideoPlaying = false;
                     return;
@@ -3922,9 +4037,12 @@ public class GalleryActivity extends AppCompatActivity {
 
     private void updateOverlaySeekBar() {
         if (currentFullscreenVideo == null) return;
-        int cur = currentFullscreenVideo.getSafePosition();
-        int dur = currentFullscreenVideo.getSafeDuration();
-        if (dur <= 0) return;
+        long curL = currentFullscreenVideo.getSafePosition();
+        long durL = currentFullscreenVideo.getSafeDuration();
+        if (durL <= 0) return;
+        int dur = (int) durL;
+        int cur = (int) Math.max(0L, Math.min(curL, durL));
+
         if (cur < 0) cur = 0;
         if (cur > dur) cur = dur;
 
@@ -3959,9 +4077,9 @@ public class GalleryActivity extends AppCompatActivity {
         if (savedPosSync != null) videoHandler.removeCallbacks(savedPosSync);
         savedPosSync = () -> {
             if (currentFullscreenVideo == null) return;
-            int p = currentFullscreenVideo.getSafePosition();
-            if (p >= 0) {
-                savedVideoPositionMs = p;
+            long pL = currentFullscreenVideo.getSafePosition();
+            if (pL >= 0) {
+                savedVideoPositionMs = (int) pL;
                 savedVideoPath = currentFullscreenVideoPosition >= 0
                         && currentFullscreenVideoPosition < fullscreenMediaPaths.size()
                         ? fullscreenMediaPaths.get(currentFullscreenVideoPosition) : null;
@@ -3979,7 +4097,7 @@ public class GalleryActivity extends AppCompatActivity {
     private void applyPerceivedBrightness(float effectiveBrightness) {
         lastPerceivedBrightness = effectiveBrightness;
         if (effectiveBrightness < 0.01f) effectiveBrightness = 0.01f;
-        if (effectiveBrightness > 1.0f)  effectiveBrightness = 1.0f;
+        if (effectiveBrightness > 1.0f) effectiveBrightness = 1.0f;
         final float HARDWARE_FLOOR = 0.02f;
 
         WindowManager.LayoutParams lp = getWindow().getAttributes();
@@ -4018,7 +4136,10 @@ public class GalleryActivity extends AppCompatActivity {
         int index = -1;
         if (videoControlsOverlay != null) {
             for (int i = 0; i < parent.getChildCount(); i++) {
-                if (parent.getChildAt(i) == videoControlsOverlay) { index = i; break; }
+                if (parent.getChildAt(i) == videoControlsOverlay) {
+                    index = i;
+                    break;
+                }
             }
         }
         if (index >= 0) parent.addView(brightnessDimOverlay, index, lp);
@@ -4050,6 +4171,7 @@ public class GalleryActivity extends AppCompatActivity {
             videoHandler.postDelayed(overlayHideControlsRunnable, OVERLAY_CONTROLS_TIMEOUT);
         }
     }
+
     private void hideAllControls() {
         setFullscreenChromeVisible(false);
         if (videoControlContainer != null)
@@ -4093,8 +4215,6 @@ public class GalleryActivity extends AppCompatActivity {
                         WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
                 getWindow().setAttributes(getWindow().getAttributes());
             }
-            if (currentFullscreenVideo != null)
-                currentFullscreenVideo.setFit(CustomVideoView.Fit.LARGER);
         } else {
             exitImmersiveLandscape();
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -4102,8 +4222,7 @@ public class GalleryActivity extends AppCompatActivity {
                         WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
                 getWindow().setAttributes(getWindow().getAttributes());
             }
-            if (currentFullscreenVideo != null)
-                currentFullscreenVideo.setFit(CustomVideoView.Fit.SMALLER);
+
         }
         if (currentFullscreenVideo != null) {
             fullscreenViewPager.post(() -> {
@@ -4134,6 +4253,41 @@ public class GalleryActivity extends AppCompatActivity {
         return lower.endsWith(".mp4") || lower.endsWith(".mkv") || lower.endsWith(".webm")
                 || lower.endsWith(".avi") || lower.endsWith(".mov") || lower.endsWith(".3gp")
                 || lower.endsWith(".m4v") || lower.endsWith(".flv") || lower.endsWith(".wmv");
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        if (currentFullscreenVideo != null && currentFullscreenVideo.isPlaying()) {
+            currentFullscreenVideo.pauseForLifecycle();
+        }
+        videoHandler.removeCallbacks(overlayProgressRunnable);
+        videoHandler.removeCallbacks(overlayHideControlsRunnable);
+    }
+    @Override
+    public void onBackPressed() {
+        if (fullscreenOverlay != null && fullscreenOverlay.getVisibility() == View.VISIBLE) {
+            try {
+                closeFullscreenViewer();
+            } catch (Exception e) {
+                Log.e("gallery-tui", "closeFullscreenViewer threw during back", e);
+            }
+            if (brightnessDimOverlay != null) brightnessDimOverlay.setVisibility(View.GONE);
+            return;
+        }
+        super.onBackPressed();
+    }
+
+
+    @Override
+    protected void onDestroy() {
+        privateUnlocked = false;
+        if (fullscreenAdapter != null) {
+            try {
+                fullscreenAdapter.getController(0).release();   // full teardown
+            } catch (Exception ignored) {}
+        }
+        super.onDestroy();
     }
 
     private String formatTime(int ms) {
@@ -4170,6 +4324,43 @@ public class GalleryActivity extends AppCompatActivity {
         if (videoHandler != null) videoHandler.removeCallbacks(mediaHudHideRunnable);
     }
 
+    private String getCachedCanonical(String path) {
+        if (path == null) return null;
+        String cached = canonicalAlbumCache.get(path);
+        if (cached != null) return cached;
+        String canonical;
+        try { canonical = new File(path).getCanonicalPath(); }
+        catch (Exception e) { canonical = path; }
+        canonicalAlbumCache.put(path, canonical);
+        return canonical;
+    }
+
+    private long fileMtimeCached(String path) {
+        if (path == null) return 0L;
+        Long cached = mtimeCache.get(path);
+        if (cached != null) return cached;
+        long v;
+        try { v = new File(path).lastModified(); }
+        catch (Exception e) { v = 0L; }
+        mtimeCache.put(path, v);
+        return v;
+    }
+
+    private void scheduleMediaRefresh(long delayMs) {
+        if (!isActivityAlive()) return;
+        if (pendingMediaRefresh != null) mediaRefreshHandler.removeCallbacks(pendingMediaRefresh);
+        pendingMediaRefresh = () -> {
+            albumsCacheValid = false;
+            trashedIndexDirty = true;
+            if (albumsController != null) albumsController.invalidateAlbums();
+            if (repository != null) {
+                repository.refreshFirstPage();
+            }
+            pendingMediaRefresh = null;
+        };
+        mediaRefreshHandler.postDelayed(pendingMediaRefresh, delayMs);
+    }
+
     private void wireVolumeBrightness() {
         if (fullscreenOverlay == null) return;
         final AudioManager audioManager =
@@ -4179,7 +4370,6 @@ public class GalleryActivity extends AppCompatActivity {
 
         final float STEP_PX_VOLUME = 45f;
         final float STEP_PX_BRIGHTNESS = 45f;
-        final float BRIGHTNESS_STEP_VALUE = 1.0f / 20f;
         final int DEAD_ZONE_PX = 12;
 
         final float[] startY = {0f};
@@ -4223,19 +4413,10 @@ public class GalleryActivity extends AppCompatActivity {
                         try {
                             maxStreamVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
                             int sysVol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
-                            // Reconstruct perceived volume: if we're above system max in the
-                            // enhancer, sysVol == maxStreamVolume and gain > 0.
-                            int currentM = 0;
-                            if (loudnessEnhancer != null) {
-                                try { currentM = (int) loudnessEnhancer.getTargetGain(); }
-                                catch (Throwable ignored) {}
-                            }
                             float perceived = sysVol / (float) maxStreamVolume;
-                            if (sysVol >= maxStreamVolume && currentM > 0) {
-                                perceived = 1.0f + (currentM / 1000f);
-                            }
                             appliedVolume[0] = Math.round(perceived * maxStreamVolume);
-                        } catch (Exception ignored) {}
+                        } catch (Exception ignored) {
+                        }
                     } else {
                         if (lastPerceivedBrightness > 0f) {
                             appliedBrightness[0] = lastPerceivedBrightness;
@@ -4289,43 +4470,33 @@ public class GalleryActivity extends AppCompatActivity {
                         }
 
                         if (changed) {
-                            // Split perceived volume into (system, enhancer gain).
-                            int sysVol;
-                            float perceived = appliedVolume[0] / (float) maxVol;   // 0 .. 2
-                            if (perceived <= 1.0f) {
-                                sysVol = Math.round(perceived * maxVol);
-                                applyLoudnessGain(0f);
-                            } else {
-                                sysVol = maxVol;
-                                applyLoudnessGain(perceived);
-                            }
+                            // No LoudnessEnhancer anymore — just clamp to system max.
+                            int sysVol = Math.min(maxVol, Math.max(0, appliedVolume[0]));
                             try {
                                 audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, sysVol, 0);
-                            } catch (Exception ignored) {}
-
-                            lastPerceivedVolume = perceived;
-                            int percent = Math.round(perceived * 100f);
-                            showMediaHud(true, Math.max(0, Math.min(200, percent)));
+                            } catch (Exception ignored) {
+                            }
+                            int percent = (int) Math.round(100f * sysVol / (float) maxVol);
+                            showMediaHud(true, Math.max(0, Math.min(100, percent)));
                         }
                     } else {
-                        // Brightness: 20 discrete steps from 100% down to 1%.
-                        // Below the hardware floor (~2%) applyPerceivedBrightness() fades in
-                        // a black overlay, so the perceived dimming continues smoothly past
-                        // what the panel can physically do.
                         final float BRIGHTNESS_STEP = 1.0f / 20f;
                         int stepAdvances = 0;
                         while (accumulator[0] >= STEP_PX_BRIGHTNESS) {
-                            accumulator[0] -= STEP_PX_BRIGHTNESS; stepAdvances++;
+                            accumulator[0] -= STEP_PX_BRIGHTNESS;
+                            stepAdvances++;
                         }
                         while (accumulator[0] <= -STEP_PX_BRIGHTNESS) {
-                            accumulator[0] += STEP_PX_BRIGHTNESS; stepAdvances--;
+                            accumulator[0] += STEP_PX_BRIGHTNESS;
+                            stepAdvances--;
                         }
                         if (stepAdvances != 0) {
                             appliedBrightness[0] = Math.min(1f, Math.max(0.01f,
                                     appliedBrightness[0] + stepAdvances * BRIGHTNESS_STEP));
                             try {
                                 applyPerceivedBrightness(appliedBrightness[0]);
-                            } catch (Exception ignored) {}
+                            } catch (Exception ignored) {
+                            }
                             int percent = (int) Math.round(appliedBrightness[0] * 100);
                             showMediaHud(false, Math.max(1, Math.min(100, percent)));
                         }
@@ -4364,101 +4535,6 @@ public class GalleryActivity extends AppCompatActivity {
         fullscreenOverlay.setOnTouchListener(handler);
         this.volumeBrightnessHandler = handler;
     }
-    private String getCachedCanonical(String path) {
-        if (path == null) return null;
-        String cached = canonicalAlbumCache.get(path);
-        if (cached != null) return cached;
-        String canonical;
-        try { canonical = new File(path).getCanonicalPath(); }
-        catch (Exception e) { canonical = path; }
-        canonicalAlbumCache.put(path, canonical);
-        return canonical;
-    }
-
-    private long fileMtimeCached(String path) {
-        if (path == null) return 0L;
-        Long cached = mtimeCache.get(path);
-        if (cached != null) return cached;
-        long v;
-        try { v = new File(path).lastModified(); }
-        catch (Exception e) { v = 0L; }
-        mtimeCache.put(path, v);
-        return v;
-    }
 
 
-    private void scheduleMediaRefresh(long delayMs) {
-        if (!isActivityAlive()) return;
-        if (pendingMediaRefresh != null) mediaRefreshHandler.removeCallbacks(pendingMediaRefresh);
-        pendingMediaRefresh = () -> {
-            albumsCacheValid = false;
-            trashedIndexDirty = true;
-            if (albumsController != null) albumsController.invalidateAlbums();
-            if (repository != null) {
-                repository.refreshFirstPage();
-            }
-            pendingMediaRefresh = null;
-        };
-        mediaRefreshHandler.postDelayed(pendingMediaRefresh, delayMs);
-    }
-
-    @Override
-    public void onBackPressed() {
-        if (fullscreenOverlay != null && fullscreenOverlay.getVisibility() == View.VISIBLE) {
-            closeFullscreenViewer();
-            if (brightnessDimOverlay != null) brightnessDimOverlay.setVisibility(View.GONE);
-            return;
-        }
-        if (currentFilter == FilterMode.PRIVATE) {
-            if (selectionMode && !selectedItems.isEmpty()) {
-                clearSelection();
-                return;
-            }
-            exitPrivateMode();
-            return;
-        }
-        if (selectionMode) { clearSelection(); return; }
-        if (currentFilter == FilterMode.BIN) { exitBin(); return; }
-        if (albumsController != null && albumsController.onBack()) {
-            updateTopNavBar();
-            updateBarsVisibility();
-            return;
-        }
-        if (whatsappOnly) {
-            whatsappOnly = false;
-            whatsappPath = null;
-            albumsController.showAlbums();
-            updateTopNavBar();
-            updateBarsVisibility();
-            return;
-        }
-        super.onBackPressed();
-    }
-
-    @Override
-    protected void onDestroy() {
-        privateUnlocked = false;
-        super.onDestroy();
-        if (videoView != null) videoView.stopPlayback();
-        if (currentFullscreenVideo != null) {
-            try { currentFullscreenVideo.stopPlayback(); } catch (Exception ignored) {}
-            currentFullscreenVideo = null;
-        }
-        if (savedPosSync != null) {
-            videoHandler.removeCallbacks(savedPosSync);
-            savedPosSync = null;
-        }
-        cancelPendingChromeTap();
-        videoHandler.removeCallbacksAndMessages(null);
-        mediaRefreshHandler.removeCallbacksAndMessages(null);
-        hideMediaHudImmediately();
-        stopAutoScroll();
-        pendingMediaRefresh = null;
-        if (repository != null) {
-            repository.removeListener(repositoryListener);
-            repository.shutdown();
-            repository = null;
-        }
-        executor.shutdown();
-    }
 }

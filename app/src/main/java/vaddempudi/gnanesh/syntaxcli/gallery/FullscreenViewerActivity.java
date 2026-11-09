@@ -8,6 +8,7 @@ import android.os.Looper;
 import android.util.Log;
 import android.view.View;
 import android.view.WindowManager;
+import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
 import android.widget.SeekBar;
@@ -22,6 +23,7 @@ import android.graphics.Color;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 import vaddempudi.gnanesh.syntaxcli.R;
 import android.view.GestureDetector;
@@ -49,8 +51,9 @@ public class FullscreenViewerActivity extends AppCompatActivity {
 
     private boolean suppressChromeUntilNextTap = false;
 
+    /** The controller for the currently visible video page, or null. */
+    private HardwareVideoController currentVideoView = null;
 
-    private CustomVideoView currentVideoView = null;
     private View videoControlContainer;
     private ImageButton btnCenterPlayPause, btnSkipForward, btnSkipBackward;
     private ImageButton btnFavorite, btnInfo, btnDelete, btnRotate;
@@ -68,7 +71,6 @@ public class FullscreenViewerActivity extends AppCompatActivity {
 
     private boolean isVideoPlaying = false;
     private boolean isLandscape = false;
-    private boolean isVideoPrepared = false;
 
     private View decorView;
     private int currentSystemUiVisibility;
@@ -147,7 +149,6 @@ public class FullscreenViewerActivity extends AppCompatActivity {
             toggleControlsVisibility();
         });
 
-        // Create the callback with explicit logging of its own hash
         final FullscreenAdapter.PageTypeCallback callback = new FullscreenAdapter.PageTypeCallback() {
             @Override
             public void onImageVisible(int position) {
@@ -168,10 +169,10 @@ public class FullscreenViewerActivity extends AppCompatActivity {
             }
 
             @Override
-            public void onVideoVisible(CustomVideoView videoView, int position) {
+            public void onVideoVisible(HardwareVideoController ctrl, int position) {
                 Log.d(LOG_TAG, src() + " ★★ onVideoVisible ENTER pos=" + position
                         + " currentPosition=" + currentPosition
-                        + " videoView=" + Integer.toHexString(System.identityHashCode(videoView)));
+                        + " ctrl=" + Integer.toHexString(System.identityHashCode(ctrl)));
 
                 if (position != currentPosition) {
                     Log.d(LOG_TAG, src() + "   ignoring (not current)");
@@ -179,8 +180,7 @@ public class FullscreenViewerActivity extends AppCompatActivity {
                 }
 
                 currentPageIsVideo = true;
-                currentVideoView = videoView;
-                isVideoPrepared = true;
+                currentVideoView = ctrl;
 
                 if (videoControlContainer != null) {
                     videoControlContainer.setVisibility(View.VISIBLE);
@@ -188,18 +188,22 @@ public class FullscreenViewerActivity extends AppCompatActivity {
                 }
 
                 try {
-                    Log.d(LOG_TAG, src() + "   calling videoView.start()");
-                    videoView.start();
+                    Log.d(LOG_TAG, src() + "   calling ctrl.start()");
+                    ctrl.start();
                     isVideoPlaying = true;
-                    Log.d(LOG_TAG, src() + "   isPlaying=" + videoView.isPlaying()
-                            + " duration=" + videoView.getDuration());
-                    btnCenterPlayPause.setImageResource(android.R.drawable.ic_media_pause);
+                    Log.d(LOG_TAG, src() + "   isPlaying=" + ctrl.isPlaying()
+                            + " duration=" + ctrl.getDuration());
+                    if (btnCenterPlayPause != null) {
+                        btnCenterPlayPause.setImageResource(android.R.drawable.ic_media_pause);
+                    }
                     startProgressUpdate();
                     showVideoControlsWithTimeout();
                 } catch (Exception e) {
-                    Log.e(LOG_TAG, src() + " videoView.start() threw", e);
+                    Log.e(LOG_TAG, src() + " ctrl.start() threw", e);
                     isVideoPlaying = false;
-                    btnCenterPlayPause.setImageResource(android.R.drawable.ic_media_play);
+                    if (btnCenterPlayPause != null) {
+                        btnCenterPlayPause.setImageResource(android.R.drawable.ic_media_play);
+                    }
                 }
                 Log.d(LOG_TAG, src() + " ★★ onVideoVisible EXIT");
             }
@@ -210,7 +214,6 @@ public class FullscreenViewerActivity extends AppCompatActivity {
 
         adapter.setPageTypeCallback(callback);
 
-        // Verify the adapter actually holds the callback we just set
         Log.d(LOG_TAG, src() + " verification: adapter=" + Integer.toHexString(System.identityHashCode(adapter))
                 + " callback=" + Integer.toHexString(System.identityHashCode(callback)));
 
@@ -235,7 +238,6 @@ public class FullscreenViewerActivity extends AppCompatActivity {
 
                 currentPosition = position;
                 currentVideoView = null;
-                isVideoPrepared = false;
                 isVideoPlaying = false;
                 currentPageIsVideo = false;
 
@@ -284,16 +286,19 @@ public class FullscreenViewerActivity extends AppCompatActivity {
 
     private void skipByMs(int deltaMs) {
         if (currentVideoView == null) return;
-        int dur = currentVideoView.getDuration();
-        if (dur <= 0) return;
-        int cur = currentVideoView.getCurrentPosition();
+        long durL = currentVideoView.getSafeDuration();
+        if (durL <= 0) return;
+        int dur = (int) durL;
+        long curL = currentVideoView.getSafePosition();
+        int cur = (int) Math.max(0L, curL);
         int target = Math.max(0, Math.min(cur + deltaMs, dur));
-        currentVideoView.seekTo(target);
+        currentVideoView.seekToSafe(target);
         updateSeekBar();
         if (!suppressChromeUntilNextTap) {
             showVideoControlsWithTimeout();
         }
     }
+
     private Runnable pendingChromeTapRunnable = null;
 
     private void cancelPendingChromeTap() {
@@ -348,8 +353,6 @@ public class FullscreenViewerActivity extends AppCompatActivity {
         if (vp == null) return;
         vp.setVerticalScrollBarEnabled(false);
         vp.setHorizontalScrollBarEnabled(false);
-        // ViewPager2 lazily creates its internal RecyclerView.
-        // Post a callback so we hit it after layout has run.
         vp.post(() -> {
             try {
                 RecyclerView rv = (RecyclerView) vp.getChildAt(0);
@@ -357,8 +360,6 @@ public class FullscreenViewerActivity extends AppCompatActivity {
                     rv.setVerticalScrollBarEnabled(false);
                     rv.setHorizontalScrollBarEnabled(false);
                     rv.setOverScrollMode(View.OVER_SCROLL_NEVER);
-                    // Some Android versions still draw the fade edges.
-                    // Disable them on the RecyclerView's View too.
                     rv.setScrollbarFadingEnabled(false);
                     rv.setVerticalFadingEdgeEnabled(false);
                     rv.setHorizontalFadingEdgeEnabled(false);
@@ -381,10 +382,12 @@ public class FullscreenViewerActivity extends AppCompatActivity {
 
 
     private void resetVideoUi() {
-        btnCenterPlayPause.setImageResource(android.R.drawable.ic_media_play);
-        videoTimeCurrent.setText("00:00");
-        videoTimeTotal.setText("00:00");
-        videoSeekBar.setProgress(0);
+        if (btnCenterPlayPause != null) {
+            btnCenterPlayPause.setImageResource(android.R.drawable.ic_media_play);
+        }
+        if (videoTimeCurrent != null) videoTimeCurrent.setText("00:00");
+        if (videoTimeTotal != null) videoTimeTotal.setText("00:00");
+        if (videoSeekBar != null) videoSeekBar.setProgress(0);
     }
 
     private void setImmersiveFullscreen() {
@@ -432,45 +435,65 @@ public class FullscreenViewerActivity extends AppCompatActivity {
     }
 
     private void setupVideoControls() {
-        btnCenterPlayPause.setOnClickListener(v -> togglePlayPause());
+        if (btnCenterPlayPause != null) {
+            btnCenterPlayPause.setOnClickListener(v -> togglePlayPause());
+        }
 
-        btnSkipForward.setOnClickListener(v -> {
-            if (currentVideoView != null) {
-                int current = currentVideoView.getCurrentPosition();
-                int duration = currentVideoView.getDuration();
-                currentVideoView.seekTo(Math.min(current + SKIP_FORWARD_MS, duration));
-                updateSeekBar();
-                showVideoControlsWithTimeout();
-            }
-        });
-
-        btnSkipBackward.setOnClickListener(v -> {
-            if (currentVideoView != null) {
-                int current = currentVideoView.getCurrentPosition();
-                currentVideoView.seekTo(Math.max(current - SKIP_BACKWARD_MS, 0));
-                updateSeekBar();
-                showVideoControlsWithTimeout();
-            }
-        });
-
-        btnFavorite.setOnClickListener(v -> toggleFavorite(mediaPaths.get(currentPosition)));
-        btnInfo.setOnClickListener(v -> showFileInfoDialog(mediaPaths.get(currentPosition)));
-        btnDelete.setOnClickListener(v -> moveToTrash(mediaPaths.get(currentPosition)));
-        btnRotate.setOnClickListener(v -> toggleOrientation());
-
-        videoSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override
-            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                if (fromUser && currentVideoView != null) {
-                    int duration = currentVideoView.getDuration();
-                    int newPosition = (int) ((progress / 100.0) * duration);
-                    currentVideoView.seekTo(newPosition);
+        if (btnSkipForward != null) {
+            btnSkipForward.setOnClickListener(v -> {
+                if (currentVideoView != null) {
+                    long durL = currentVideoView.getSafeDuration();
+                    int dur = durL > 0 ? (int) durL : 0;
+                    long curL = currentVideoView.getSafePosition();
+                    int cur = (int) Math.max(0L, curL);
+                    currentVideoView.seekToSafe(Math.min(cur + SKIP_FORWARD_MS, dur));
+                    updateSeekBar();
                     showVideoControlsWithTimeout();
                 }
-            }
-            @Override public void onStartTrackingTouch(SeekBar seekBar) { showVideoControlsWithTimeout(); }
-            @Override public void onStopTrackingTouch(SeekBar seekBar) { showVideoControlsWithTimeout(); }
-        });
+            });
+        }
+
+        if (btnSkipBackward != null) {
+            btnSkipBackward.setOnClickListener(v -> {
+                if (currentVideoView != null) {
+                    long curL = currentVideoView.getSafePosition();
+                    int cur = (int) Math.max(0L, curL);
+                    currentVideoView.seekToSafe(Math.max(cur - SKIP_BACKWARD_MS, 0));
+                    updateSeekBar();
+                    showVideoControlsWithTimeout();
+                }
+            });
+        }
+
+        if (btnFavorite != null) {
+            btnFavorite.setOnClickListener(v -> toggleFavorite(mediaPaths.get(currentPosition)));
+        }
+        if (btnInfo != null) {
+            btnInfo.setOnClickListener(v -> showFileInfoDialog(mediaPaths.get(currentPosition)));
+        }
+        if (btnDelete != null) {
+            btnDelete.setOnClickListener(v -> moveToTrash(mediaPaths.get(currentPosition)));
+        }
+        if (btnRotate != null) {
+            btnRotate.setOnClickListener(v -> toggleOrientation());
+        }
+
+        if (videoSeekBar != null) {
+            videoSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+                @Override
+                public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                    if (fromUser && currentVideoView != null) {
+                        long durL = currentVideoView.getSafeDuration();
+                        int dur = durL > 0 ? (int) durL : 0;
+                        int newPosition = (int) ((progress / 100.0) * dur);
+                        currentVideoView.seekToSafe(newPosition);
+                        showVideoControlsWithTimeout();
+                    }
+                }
+                @Override public void onStartTrackingTouch(SeekBar seekBar) { showVideoControlsWithTimeout(); }
+                @Override public void onStopTrackingTouch(SeekBar seekBar) { showVideoControlsWithTimeout(); }
+            });
+        }
     }
 
     private void togglePlayPause() {
@@ -480,13 +503,17 @@ public class FullscreenViewerActivity extends AppCompatActivity {
 
         if (isVideoPlaying) {
             currentVideoView.pause();
-            btnCenterPlayPause.setImageResource(android.R.drawable.ic_media_play);
+            if (btnCenterPlayPause != null) {
+                btnCenterPlayPause.setImageResource(android.R.drawable.ic_media_play);
+            }
             isVideoPlaying = false;
             videoHandler.removeCallbacks(updateProgressRunnable);
             showVideoControlsWithTimeout();
         } else {
             currentVideoView.start();
-            btnCenterPlayPause.setImageResource(android.R.drawable.ic_media_pause);
+            if (btnCenterPlayPause != null) {
+                btnCenterPlayPause.setImageResource(android.R.drawable.ic_media_pause);
+            }
             isVideoPlaying = true;
             startProgressUpdate();
             showVideoControlsWithTimeout();
@@ -508,12 +535,16 @@ public class FullscreenViewerActivity extends AppCompatActivity {
     private void updateSeekBar() {
         if (currentVideoView == null) return;
         try {
-            int current = currentVideoView.getCurrentPosition();
-            int duration = currentVideoView.getDuration();
-            if (duration > 0) {
-                videoTimeCurrent.setText(formatTime(current));
-                videoTimeTotal.setText(formatTime(duration));
-                videoSeekBar.setProgress((int) ((current / (float) duration) * 100));
+            long curL = currentVideoView.getSafePosition();
+            long durL = currentVideoView.getSafeDuration();
+            if (durL > 0) {
+                int current = (int) Math.max(0L, curL);
+                int duration = (int) durL;
+                if (videoTimeCurrent != null) videoTimeCurrent.setText(formatTime(current));
+                if (videoTimeTotal != null) videoTimeTotal.setText(formatTime(duration));
+                if (videoSeekBar != null) {
+                    videoSeekBar.setProgress((int) ((current / (float) duration) * 100));
+                }
             }
         } catch (Exception ignored) {}
     }
@@ -525,11 +556,12 @@ public class FullscreenViewerActivity extends AppCompatActivity {
         int m = (totalSec % 3600) / 60;
         int s = totalSec % 60;
         if (h > 0) {
-            return String.format(java.util.Locale.US, "%d:%02d:%02d", h, m, s);
+            return String.format(Locale.US, "%d:%02d:%02d", h, m, s);
         }
-        return String.format(java.util.Locale.US, "%02d:%02d", m, s);
+        return String.format(Locale.US, "%02d:%02d", m, s);
     }
     private void toggleFavorite(String path) {
+        if (btnFavorite == null) return;
         btnFavorite.setColorFilter(Color.parseColor("#FFD700"));
         if (btnFavorite.getColorFilter() == null) {
             btnFavorite.setColorFilter(Color.parseColor("#FFD700"));
@@ -546,7 +578,7 @@ public class FullscreenViewerActivity extends AppCompatActivity {
         info.append("📄 File: ").append(file.getName()).append("\n");
         info.append("📏 Size: ").append(formatFileSize(file.length())).append("\n");
         info.append("📅 Modified: ").append(new java.text.SimpleDateFormat("dd/MM/yyyy HH:mm",
-                java.util.Locale.getDefault()).format(new java.util.Date(file.lastModified()))).append("\n");
+                Locale.getDefault()).format(new java.util.Date(file.lastModified()))).append("\n");
         info.append("🔤 Type: ").append(getFileType(path)).append("\n");
         info.append("📍 Path: ").append(file.getAbsolutePath());
 
@@ -558,7 +590,7 @@ public class FullscreenViewerActivity extends AppCompatActivity {
         View view = getLayoutInflater().inflate(R.layout.dialog_file_info, null);
         TextView infoTitle = view.findViewById(R.id.infoTitle);
         TextView infoContent = view.findViewById(R.id.infoContent);
-        android.widget.Button infoClose = view.findViewById(R.id.infoClose);
+        Button infoClose = view.findViewById(R.id.infoClose);
 
         if (infoTitle != null) infoTitle.setText(title);
         if (infoContent != null) infoContent.setText(info);
@@ -567,10 +599,12 @@ public class FullscreenViewerActivity extends AppCompatActivity {
         android.app.AlertDialog dialog = builder.create();
         if (infoClose != null) infoClose.setOnClickListener(v -> dialog.dismiss());
 
-        dialog.getWindow().setBackgroundDrawableResource(android.R.color.transparent);
-        dialog.getWindow().setLayout(
-                (int) (getResources().getDisplayMetrics().widthPixels * 0.85),
-                android.view.WindowManager.LayoutParams.WRAP_CONTENT);
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setBackgroundDrawableResource(android.R.color.transparent);
+            dialog.getWindow().setLayout(
+                    (int) (getResources().getDisplayMetrics().widthPixels * 0.85),
+                    WindowManager.LayoutParams.WRAP_CONTENT);
+        }
         dialog.show();
     }
 
@@ -607,7 +641,7 @@ public class FullscreenViewerActivity extends AppCompatActivity {
     }
 
     private String getFileType(String path) {
-        String ext = path.substring(path.lastIndexOf(".") + 1).toLowerCase();
+        String ext = path.substring(path.lastIndexOf(".") + 1).toLowerCase(Locale.US);
         if (ext.matches("jpg|jpeg|png|gif|bmp|webp|heic|heif")) return "Image";
         if (ext.matches("mp4|avi|mkv|mov|wmv|flv|3gp|webm|m4v")) return "Video";
         return "Unknown";
@@ -615,9 +649,9 @@ public class FullscreenViewerActivity extends AppCompatActivity {
 
     private String formatFileSize(long size) {
         if (size < 1024) return size + " B";
-        if (size < 1024 * 1024) return String.format("%.1f KB", size / 1024.0);
-        if (size < 1024 * 1024 * 1024) return String.format("%.1f MB", size / (1024.0 * 1024));
-        return String.format("%.1f GB", size / (1024.0 * 1024 * 1024));
+        if (size < 1024 * 1024) return String.format(Locale.US, "%.1f KB", size / 1024.0);
+        if (size < 1024L * 1024L * 1024L) return String.format(Locale.US, "%.1f MB", size / (1024.0 * 1024));
+        return String.format(Locale.US, "%.1f GB", size / (1024.0 * 1024 * 1024));
     }
 
     private void updateTitle() {
@@ -651,16 +685,6 @@ public class FullscreenViewerActivity extends AppCompatActivity {
         }
     }
 
-    @Override
-    protected void onPause() {
-        super.onPause();
-        log("onPause");
-        if (currentVideoView != null && currentVideoView.isPlaying()) {
-            currentVideoView.pause();
-        }
-        videoHandler.removeCallbacks(updateProgressRunnable);
-        videoHandler.removeCallbacks(hideControlsRunnable);
-    }
 
     @Override
     protected void onResume() {
@@ -693,7 +717,7 @@ public class FullscreenViewerActivity extends AppCompatActivity {
         return currentPosition;
     }
 
-    public void setCurrentVideoView(CustomVideoView videoView) {
+    public void setCurrentVideoView(HardwareVideoController videoView) {
         this.currentVideoView = videoView;
     }
 }
