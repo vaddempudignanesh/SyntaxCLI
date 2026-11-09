@@ -49,6 +49,7 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
 import androidx.core.content.FileProvider;
@@ -82,6 +83,8 @@ public class AuraBrowserActivity extends AppCompatActivity {
     public static final String DEFAULT_HOME    = "https://www.google.com";
 
     private Dialog downloadPanelDialog = null;
+    private static final int REQ_CAMERA_PERMISSION = 7101;
+    private boolean cameraPermissionRequested = false;
 
     private static final int REQ_FILE_CHOOSER          = 1001;
     private static final int REQ_CAMERA_CAPTURE        = 1002;
@@ -121,6 +124,9 @@ public class AuraBrowserActivity extends AppCompatActivity {
 
     private Dialog tabSheetDialog = null;
     private LinearLayout tabSheetList = null;
+
+    private WebChromeClient.FileChooserParams pendingChooserParams;
+    private Intent pendingChooserIntent;
 
     private static final List<Tab> RETAINED_TABS = new ArrayList<>();
     private static int retainedCurrentIndex = -1;
@@ -1063,8 +1069,39 @@ public class AuraBrowserActivity extends AppCompatActivity {
         filePathCallback = callback;
 
         try {
-            Intent chooserIntent;
+            // 1. Media permission prompt (READ_MEDIA_IMAGES/VIDEO on API 33+).
+            //    Without this the DocumentsUI picker shows an empty list.
+            if (android.os.Build.VERSION.SDK_INT >= 33
+                    && !hasMediaPermissions()) {
+                pendingChooserParams = params;
+                pendingChooserIntent = null;   // rebuild after grant
+                mediaPermissionLauncher.launch(new String[]{
+                        android.Manifest.permission.READ_MEDIA_IMAGES,
+                        android.Manifest.permission.READ_MEDIA_VIDEO
+                });
+                return true;
+            }
 
+            // 2. Camera permission prompt (CAMERA). Needed only if the site
+            //    accepts images. If the user denied it before, we skip and
+            //    show the chooser without a camera tile — no crash.
+            boolean wantsImage = paramsAcceptsImages(params);
+            if (wantsImage
+                    && !cameraPermissionRequested
+                    && androidx.core.content.ContextCompat.checkSelfPermission(
+                    this, android.Manifest.permission.CAMERA)
+                    != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                cameraPermissionRequested = true;
+                pendingChooserParams = params;
+                pendingChooserIntent = null;
+                requestPermissions(new String[]{
+                        android.Manifest.permission.CAMERA
+                }, REQ_CAMERA_PERMISSION);
+                return true;
+            }
+
+            // 3. Both permissions granted (or user denied camera previously).
+            Intent chooserIntent;
             if (params != null && params.isCaptureEnabled()) {
                 chooserIntent = buildCameraIntent();
                 if (chooserIntent == null) chooserIntent = buildPickerIntent(params);
@@ -1080,7 +1117,6 @@ public class AuraBrowserActivity extends AppCompatActivity {
 
             startActivityForResult(chooserIntent, REQ_FILE_CHOOSER);
             return true;
-
         } catch (Exception e) {
             Log.e("AuraBrowser", "File chooser failed", e);
             if (filePathCallback != null) {
@@ -1091,66 +1127,154 @@ public class AuraBrowserActivity extends AppCompatActivity {
         }
     }
 
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode,
+                                           @NonNull String[] permissions,
+                                           @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+
+        if (requestCode == REQ_CAMERA_PERMISSION) {
+            // Whatever the user chose, retry the chooser. If denied,
+            // buildCameraIntent() returns null and the chooser omits
+            // the Camera tile — no crash.
+            WebChromeClient.FileChooserParams params = pendingChooserParams;
+            pendingChooserParams = null;
+
+            if (params == null || filePathCallback == null) return;
+
+            Intent chooserIntent;
+            if (params.isCaptureEnabled()) {
+                chooserIntent = buildCameraIntent();
+                if (chooserIntent == null) chooserIntent = buildPickerIntent(params);
+            } else {
+                chooserIntent = buildPickerIntent(params);
+            }
+
+            if (chooserIntent == null) {
+                filePathCallback.onReceiveValue(null);
+                filePathCallback = null;
+                return;
+            }
+            startActivityForResult(chooserIntent, REQ_FILE_CHOOSER);
+        }
+    }
+    private boolean paramsAcceptsImages(WebChromeClient.FileChooserParams params) {
+        if (params == null) return true;
+        String[] types = params.getAcceptTypes();
+        if (types == null || types.length == 0) return true;
+        for (String t : types) {
+            if (t == null) continue;
+            String low = t.trim().toLowerCase(Locale.US);
+            if (low.equals("*/*")) return true;
+            if (low.startsWith("image/") || low.startsWith(".jpg")
+                    || low.startsWith(".jpeg") || low.startsWith(".png")
+                    || low.startsWith(".gif") || low.startsWith(".webp")
+                    || low.startsWith(".heic") || low.startsWith(".heif")) {
+                return true;
+            }
+        }
+        return false;
+    }
+    private boolean hasMediaPermissions() {
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            return androidx.core.content.ContextCompat.checkSelfPermission(
+                    this, android.Manifest.permission.READ_MEDIA_IMAGES)
+                    == android.content.pm.PackageManager.PERMISSION_GRANTED
+                    && androidx.core.content.ContextCompat.checkSelfPermission(
+                    this, android.Manifest.permission.READ_MEDIA_VIDEO)
+                    == android.content.pm.PackageManager.PERMISSION_GRANTED;
+        }
+        if (android.os.Build.VERSION.SDK_INT >= 23) {
+            return androidx.core.content.ContextCompat.checkSelfPermission(
+                    this, android.Manifest.permission.READ_EXTERNAL_STORAGE)
+                    == android.content.pm.PackageManager.PERMISSION_GRANTED;
+        }
+        return true;
+    }
+
     private Intent buildPickerIntent(WebChromeClient.FileChooserParams params) {
-        Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        Intent base = new Intent(
+                android.os.Build.VERSION.SDK_INT >= 26
+                        ? Intent.ACTION_OPEN_DOCUMENT
+                        : Intent.ACTION_GET_CONTENT);
+        base.addCategory(Intent.CATEGORY_OPENABLE);
 
         String[] acceptTypes = (params != null) ? params.getAcceptTypes() : null;
-        String mimeFilter = "*/*";
+        java.util.List<String> mimeTypes = new java.util.ArrayList<>();
         boolean hasAccept = false;
 
         if (acceptTypes != null && acceptTypes.length > 0) {
-            StringBuilder sb = new StringBuilder();
             for (String a : acceptTypes) {
                 if (a == null || a.trim().isEmpty()) continue;
                 String t = a.trim();
                 if (t.startsWith(".")) {
                     String ext = t.substring(1).toLowerCase(Locale.US);
-                    if (ext.equals("jpg") || ext.equals("jpeg") || ext.equals("png")
-                            || ext.equals("gif") || ext.equals("webp") || ext.equals("bmp")
-                            || ext.equals("heic") || ext.equals("heif")) {
-                        sb.append("image/*").append(",");
-                    } else if (ext.equals("mp4") || ext.equals("webm") || ext.equals("mkv")
-                            || ext.equals("mov") || ext.equals("avi")) {
-                        sb.append("video/*").append(",");
-                    } else if (ext.equals("mp3") || ext.equals("wav") || ext.equals("ogg")
-                            || ext.equals("m4a") || ext.equals("flac")) {
-                        sb.append("audio/*").append(",");
-                    } else if (ext.equals("pdf")) {
-                        sb.append("application/pdf").append(",");
-                    } else if (ext.equals("txt")) {
-                        sb.append("text/plain").append(",");
+                    String mime = android.webkit.MimeTypeMap.getSingleton()
+                            .getMimeTypeFromExtension(ext);
+                    if (mime != null) {
+                        mimeTypes.add(mime);
+                        hasAccept = true;
                     }
-                    hasAccept = true;
-                } else {
-                    sb.append(t).append(",");
+                } else if (t.contains("/")) {
+                    mimeTypes.add(t);
                     hasAccept = true;
                 }
             }
-            if (sb.length() > 0) mimeFilter = sb.substring(0, sb.length() - 1);
         }
 
-        if (hasAccept) intent.setType(mimeFilter);
-        else intent.setType("*/*");
-
-        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE,
-                params != null && params.getMode() == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE);
-
-        Intent cameraIntent = null;
-        if (mimeFilter.contains("image") || mimeFilter.equals("*/*")) {
-            cameraIntent = buildCameraIntent();
+        if (!hasAccept) {
+            mimeTypes.add("image/*");
+            mimeTypes.add("video/*");
         }
+
+        base.setType("*/*");
+        base.putExtra(Intent.EXTRA_MIME_TYPES,
+                mimeTypes.toArray(new String[0]));
+        base.putExtra(Intent.EXTRA_ALLOW_MULTIPLE,
+                params != null
+                        && params.getMode() == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE);
+
+        // Build camera intent ONLY if the site accepts images
+        boolean wantsImage = false;
+        for (String m : mimeTypes) {
+            if ("image/*".equals(m) || m.startsWith("image/")) {
+                wantsImage = true;
+                break;
+            }
+        }
+
+        Intent cameraIntent = wantsImage ? buildCameraIntent() : null;
+
+        Intent chooser = Intent.createChooser(base, "Select file");
+
+        // ★ Propagate the URI grant to the chooser itself. Some Android
+        //   versions strip the flags from EXTRA_INITIAL_INTENTS unless the
+        //   chooser also carries them.
+        chooser.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
 
         if (cameraIntent != null) {
-            Intent chooser = Intent.createChooser(intent, "Select file");
-            chooser.putExtra(Intent.EXTRA_INITIAL_INTENTS, new Intent[]{ cameraIntent });
-            return chooser;
+            chooser.putExtra(Intent.EXTRA_INITIAL_INTENTS,
+                    new Intent[]{ cameraIntent });
         }
-        return Intent.createChooser(intent, "Select file");
-    }
 
+        return chooser;
+    }
     private Intent buildCameraIntent() {
         try {
+            // ★ CRITICAL: on API 30+, ACTION_IMAGE_CAPTURE is a protected
+            //   intent — the caller must hold android.permission.CAMERA.
+            //   Firing it without the permission throws SecurityException,
+            //   which WebView treats as fatal and kills the process.
+            if (androidx.core.content.ContextCompat.checkSelfPermission(
+                    this, android.Manifest.permission.CAMERA)
+                    != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                Log.w("AuraBrowser",
+                        "CAMERA permission missing — omitting Camera source from chooser");
+                return null;
+            }
+
             File dir = new File(getCacheDir(), "aura_camera");
             if (!dir.exists()) dir.mkdirs();
 
@@ -1166,13 +1290,32 @@ public class AuraBrowserActivity extends AppCompatActivity {
             capture.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                     | Intent.FLAG_GRANT_READ_URI_PERMISSION);
 
-            if (capture.resolveActivity(getPackageManager()) == null) return null;
+            android.content.pm.PackageManager pm = getPackageManager();
+            java.util.List<android.content.pm.ResolveInfo> resolvers =
+                    pm.queryIntentActivities(capture,
+                            android.content.pm.PackageManager.MATCH_DEFAULT_ONLY);
+
+            if (resolvers == null || resolvers.isEmpty()) {
+                Log.w("AuraBrowser", "No camera app found for ACTION_IMAGE_CAPTURE");
+                return null;
+            }
+
+            for (android.content.pm.ResolveInfo ri : resolvers) {
+                if (ri.activityInfo == null) continue;
+                try {
+                    grantUriPermission(ri.activityInfo.packageName, cameraOutputUri,
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION
+                                    | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                } catch (Throwable ignored) {}
+            }
+
             return capture;
         } catch (Exception e) {
             Log.w("AuraBrowser", "Camera intent unavailable", e);
             return null;
         }
     }
+
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
@@ -1186,24 +1329,37 @@ public class AuraBrowserActivity extends AppCompatActivity {
 
             if (resultCode == Activity.RESULT_OK) {
                 if (data == null || (data.getData() == null && data.getClipData() == null)) {
-                    if (cameraOutputUri != null) {
+                    if (cameraOutputUri != null
+                            && cameraOutputFile != null
+                            && cameraOutputFile.exists()
+                            && cameraOutputFile.length() > 0) {
                         results = new Uri[]{ cameraOutputUri };
                     }
-                } else {
-                    if (data.getData() != null) {
-                        results = new Uri[]{ data.getData() };
-                    } else if (data.getClipData() != null) {
-                        int n = data.getClipData().getItemCount();
-                        results = new Uri[n];
-                        for (int i = 0; i < n; i++) {
-                            results[i] = data.getClipData().getItemAt(i).getUri();
-                        }
+                } else if (data.getData() != null) {
+                    results = new Uri[]{ data.getData() };
+                } else if (data.getClipData() != null) {
+                    int n = data.getClipData().getItemCount();
+                    results = new Uri[n];
+                    for (int i = 0; i < n; i++) {
+                        results[i] = data.getClipData().getItemAt(i).getUri();
                     }
                 }
             }
 
-            filePathCallback.onReceiveValue(results);
+            // ★ Guard the callback. Once it fires, WebView marks the file-
+            //   chooser state "resolved" — a second call causes the exact
+            //   "Duplicate showFileChooser result" crash we just saw.
+            final ValueCallback<Uri[]> cb = filePathCallback;
             filePathCallback = null;
+            try { cb.onReceiveValue(results); } catch (Throwable ignored) {}
+
+            if (cameraOutputUri != null) {
+                try {
+                    revokeUriPermission(cameraOutputUri,
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION
+                                    | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                } catch (Throwable ignored) {}
+            }
             cameraOutputUri = null;
             cameraOutputFile = null;
             return;
@@ -1303,12 +1459,7 @@ public class AuraBrowserActivity extends AppCompatActivity {
         rebuildTabSheetRows();
     }
 
-    /**
-     * Rebuilds the rows of the currently open tab sheet *in place*.
-     * Called both from showTabSheet() (first open) and from the tab-close
-     * handler (subsequent updates while the sheet stays open). Never
-     * allocates a new Dialog, never runs a window animation, so no flicker.
-     */
+    
     private void rebuildTabSheetRows() {
         if (tabSheetDialog == null || tabSheetList == null) return;
         if (!tabSheetDialog.isShowing()) return;
@@ -3222,6 +3373,28 @@ public class AuraBrowserActivity extends AppCompatActivity {
         }
     }
 
+
+    private final androidx.activity.result.ActivityResultLauncher<String[]>
+            mediaPermissionLauncher =
+            registerForActivityResult(
+                    new androidx.activity.result.contract.ActivityResultContracts
+                            .RequestMultiplePermissions(),
+                    result -> {
+                        // Whatever the user chose, proceed — the picker will
+                        // show whatever DocumentsUI can now see.
+                        if (pendingChooserIntent != null) {
+                            try {
+                                startActivityForResult(pendingChooserIntent,
+                                        REQ_FILE_CHOOSER);
+                            } catch (Exception e) {
+                                if (filePathCallback != null) {
+                                    filePathCallback.onReceiveValue(null);
+                                    filePathCallback = null;
+                                }
+                            }
+                            pendingChooserIntent = null;
+                        }
+                    });
 
     @Override
     protected void onResume() {

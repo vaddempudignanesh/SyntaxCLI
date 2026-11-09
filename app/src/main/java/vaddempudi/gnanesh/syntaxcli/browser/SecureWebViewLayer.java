@@ -199,6 +199,48 @@ public final class SecureWebViewLayer {
         });
     }
 
+    /**
+     * Schemes that are safe to hand off to the OS via Intent.ACTION_VIEW.
+     * These route to other apps on the device (WhatsApp, PhonePe, UPI apps,
+     * email, SMS, dialer, Play Store, Alipay, etc.).
+     *
+     * Deliberately NOT included: javascript:, file: (handled by WebView),
+     * content: (handled by WebView), chrome:, chrome-extension:.
+     */
+    private static final Set<String> EXTERNAL_SCHEMES = new HashSet<>(Arrays.asList(
+            // messaging
+            "whatsapp", "wa", "telegram", "tg", "signal", "viber",
+            "sms", "mms", "smsto", "mailto",
+            // telephony
+            "tel", "callto", "voicemail",
+            // payments (India + international)
+            "upi", "phonepe", "paytmmp", "tez", "gpay", "bhim",
+            "paypal", "venmo", "cashme", "revolut",
+            "alipays", "alipay", "weixin",
+            // maps & navigation
+            "geo", "maps", "google.navigation", "waze", "baidumap",
+            "iosamap", "qqmap",
+            // stores & installs
+            "market", "play", "itms-apps", "appstore",
+            // social / media
+            "instagram", "fb", "facebook", "fb-messenger", "twitter",
+            "snapchat", "youtube", "vnd.youtube", "spotify", "music",
+            // files & productivity
+            "gdrive", "googledrive", "dropbox", "onedrive",
+            "googlechrome", "firefox",
+            // misc
+            "sip", "skype", "zoommtg", "intent"
+    ));
+
+    /**
+     * Extra hardening: never allow these even if a site tries.
+     */
+    private static final Set<String> BLOCKED_SCHEMES = new HashSet<>(Arrays.asList(
+            "javascript", "vbscript", "file", "content",
+            "chrome", "chrome-extension", "chrome-native",
+            "jar", "view-source"
+    ));
+
     private static boolean handleNavigation(WebView view,
                                             Uri uri,
                                             boolean hasGesture,
@@ -212,47 +254,122 @@ public final class SecureWebViewLayer {
 
         String url = uri.toString();
 
-        if (!ALLOWED_SCHEMES.contains(scheme)) {
+        // 1. Never allow these under any circumstances.
+        if (BLOCKED_SCHEMES.contains(scheme)) {
             return true;
         }
 
-        if (AdBlocker.isAd(url)) {
-            return true;
+        // 2. Web + WebView-internal schemes: keep the existing per-scheme logic.
+        if ("http".equals(scheme) || "https".equals(scheme)) {
+            if (AdBlocker.isAd(url)) return true;
+
+            String host = uri.getHost();
+            if (host != null) host = host.toLowerCase(Locale.US);
+            if (host != null && isHardBlocked(host)) return true;
+
+            if (isMainFrame && host != null) {
+                // existing trust rules — unchanged
+                if (hostTracker.isSearchEngine() || isKnownSearchHost(host)) {
+                    hostTracker.rememberIfMainNavigation(host, true);
+                    return false;
+                }
+                String incomingBase = firstLabelOf(host);
+                String currentBase  = hostTracker.getFirstLabel();
+                if (incomingBase != null && incomingBase.equals(currentBase)
+                        && MULTI_TLD_SITES.contains(incomingBase)) {
+                    hostTracker.rememberIfMainNavigation(host, true);
+                    return false;
+                }
+                if (!hasGesture && !hostTracker.isSameOrRelatedHost(host)) {
+                    hostTracker.noteBlocked(host);
+                    return true;
+                }
+            }
+            if (host != null) hostTracker.rememberIfMainNavigation(host, isMainFrame);
+            return false;
         }
 
-        String host = uri.getHost();
-        if (host != null) host = host.toLowerCase(Locale.US);
-
-        if (host != null && isHardBlocked(host)) {
-            return true;
+        if ("file".equals(scheme) || "content".equals(scheme)
+                || "about".equals(scheme) || "data".equals(scheme)
+                || "blob".equals(scheme)) {
+            return false;
         }
 
-        if (isMainFrame && host != null) {
-
-            // 4a. Coming from a search engine OR landing on one → trust the hop.
-            if (hostTracker.isSearchEngine() || isKnownSearchHost(host)) {
-                hostTracker.rememberIfMainNavigation(host, true);
-                return false;
-            }
-
-            // 4b. Same multi-tld base name → same site, allow.
-            String incomingBase = firstLabelOf(host);
-            String currentBase  = hostTracker.getFirstLabel();
-            if (incomingBase != null && incomingBase.equals(currentBase)
-                    && MULTI_TLD_SITES.contains(incomingBase)) {
-                hostTracker.rememberIfMainNavigation(host, true);
-                return false;
-            }
-
-            // 4c. Real off-site hop with no gesture → block.
-            if (!hasGesture && !hostTracker.isSameOrRelatedHost(host)) {
-                hostTracker.noteBlocked(host);
-                return true;
-            }
+        // 3. intent:// URLs — parse and dispatch. Firefox/Chrome-style.
+        if ("intent".equals(scheme)) {
+            return dispatchIntentUrl(view.getContext(), url);
         }
 
-        if (host != null) hostTracker.rememberIfMainNavigation(host, isMainFrame);
-        return false;
+        // 4. Any other scheme in the whitelist → hand off to the OS.
+        if (EXTERNAL_SCHEMES.contains(scheme)) {
+            return dispatchExternalScheme(view.getContext(), uri);
+        }
+
+        // 5. Everything else is blocked, but log it so you can extend the
+        //    whitelist when you find a legitimate scheme you didn't think of.
+        android.util.Log.w("AuraSecure",
+                "Blocked unsupported scheme '" + scheme + "' for " + url);
+        return true;
+    }
+
+    /**
+     * Dispatches an Intent.ACTION_VIEW for a non-http scheme.
+     * Returns true always — the WebView must not try to load the URL itself.
+     */
+    private static boolean dispatchExternalScheme(android.content.Context ctx, Uri uri) {
+        try {
+            Intent i = new Intent(Intent.ACTION_VIEW, uri);
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            // Allow the target app to receive the referrer for play-store style
+            // attribution if the scheme supports it.
+            ctx.startActivity(i);
+        } catch (android.content.ActivityNotFoundException e) {
+            // No app installed to handle this scheme. Show a small toast so
+            // the user knows why nothing happened.
+            try {
+                android.widget.Toast.makeText(ctx,
+                        "No app can open " + uri.getScheme(),
+                        android.widget.Toast.LENGTH_SHORT).show();
+            } catch (Throwable ignored) {}
+        } catch (Throwable t) {
+            android.util.Log.w("AuraSecure", "Failed to open " + uri, t);
+        }
+        return true;
+    }
+
+    /**
+     * Parses a Firefox-style intent:// URL and dispatches it, honouring the
+     * S.browser_fallback_url parameter if no app is found.
+     * Format: intent://host/path#Intent;scheme=x;package=y;end
+     */
+    private static boolean dispatchIntentUrl(android.content.Context ctx, String url) {
+        try {
+            Intent i = Intent.parseUri(url, Intent.URI_INTENT_SCHEME);
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            try {
+                ctx.startActivity(i);
+            } catch (android.content.ActivityNotFoundException e) {
+                // Fallback URL — usually the play store page or the web page.
+                String fallback = i.getStringExtra("browser_fallback_url");
+                if (fallback != null && !fallback.isEmpty()) {
+                    Intent fb = new Intent(Intent.ACTION_VIEW, Uri.parse(fallback));
+                    fb.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    ctx.startActivity(fb);
+                } else {
+                    String pkg = i.getPackage();
+                    if (pkg != null) {
+                        try {
+                            ctx.startActivity(new Intent(Intent.ACTION_VIEW,
+                                    Uri.parse("market://details?id=" + pkg))
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                        } catch (Throwable ignored) {}
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            android.util.Log.w("AuraSecure", "Failed to parse intent:// " + url, t);
+        }
+        return true;
     }
 
     private static boolean isHardBlocked(String host) {
