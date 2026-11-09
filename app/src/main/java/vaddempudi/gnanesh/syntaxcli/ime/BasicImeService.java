@@ -36,6 +36,14 @@ public class BasicImeService extends InputMethodService
     private int savedVideoPositionMs = 0;
     private String savedVideoPath = null;
 
+    private android.app.AlertDialog overlayPromptDialog = null;
+
+    public static final String ACTION_LAYOUT_CHANGED =
+            "vaddempudi.gnanesh.syntaxcli.ime.LAYOUT_CHANGED";
+
+    private android.content.BroadcastReceiver layoutChangeReceiver;
+
+
     @Override
     public void closePanel() {
         showKeyboardPanel();
@@ -83,29 +91,6 @@ public class BasicImeService extends InputMethodService
         if (ic != null) ic.commitText(emoji, 1);
     }
 
-    @Override
-    public void onCreate() {
-        super.onCreate();
-        EmojiGridCache.get(this).setPicker(this);
-        GestureActionStore.get(this).all();
-        new Thread(() -> {
-            try {
-                EmojiGridCache.get(this).warm();
-            } catch (Throwable ignored) { }
-            try {
-                ClipboardManager cm = (ClipboardManager)
-                        getSystemService(CLIPBOARD_SERVICE);
-                if (cm != null) {
-                    cm.addPrimaryClipChangedListener(() -> {
-                        try {
-                            ClipboardStore.get(BasicImeService.this)
-                                    .capture(BasicImeService.this);
-                        } catch (Throwable ignored) { }
-                    });
-                }
-            } catch (Throwable ignored) { }
-        }, "emoji-warm").start();
-    }
 
     @Override
     public View onCreateInputView() {
@@ -126,6 +111,7 @@ public class BasicImeService extends InputMethodService
             measureKeyboard();
             applyKeyboardFrameLock();
             rebuildWallpaperLayers();
+            ensureOverlayPermission();
         });
 
         applyWallpaperWindowSettings();
@@ -655,13 +641,13 @@ public class BasicImeService extends InputMethodService
             rebuildWallpaperLayers();
             keyboardView.refreshWallpaper();
             showKeyboardPanel();
+            ensureOverlayPermission();
         }
 
         clipboardPanel = null;
         emojiPanel = null;
         applyEditorInputType(info);
     }
-
     @Override
     public void onStartInput(EditorInfo attribute, boolean restarting) {
         super.onStartInput(attribute, restarting);
@@ -681,6 +667,43 @@ public class BasicImeService extends InputMethodService
         try {
             ClipboardStore.get(this).capture(this);
         } catch (Throwable ignored) { }
+        ensureOverlayPermission();
+    }
+    // ── Overlay permission ──────────────────────────────────────────
+
+    private void ensureOverlayPermission() {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.M) return;
+        if (android.provider.Settings.canDrawOverlays(this)) return;
+
+        // Only one prompt at a time; the keyboard may call this from several
+        // lifecycle callbacks during the same open.
+        if (overlayPromptDialog != null && overlayPromptDialog.isShowing()) return;
+
+        // Post so we never block onCreateInputView / onStartInputView.
+        rootContainer.post(() -> {
+            if (overlayPromptDialog != null && overlayPromptDialog.isShowing()) return;
+            if (!isAddedToService()) return;
+            if (android.provider.Settings.canDrawOverlays(this)) return;
+
+            overlayPromptDialog = new android.app.AlertDialog.Builder(this)
+                    .setTitle("Enable key popup")
+                    .setMessage("To show the key-preview bubble above the keyboard, "
+                            + "please allow 'Display over other apps' for this keyboard.")
+                    .setPositiveButton("OPEN SETTINGS", (d, w) -> {
+                        try {
+                            android.content.Intent i = new android.content.Intent(
+                                    android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                    android.net.Uri.parse("package:" + getPackageName()));
+                            i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                            startActivity(i);
+                        } catch (Throwable ignored) { }
+                    })
+                    .setNegativeButton("SKIP", null)
+                    .setOnDismissListener(d -> overlayPromptDialog = null)
+                    .create();
+            overlayPromptDialog.setCanceledOnTouchOutside(true);
+            overlayPromptDialog.show();
+        });
     }
 
     private void applyWallpaperWindowSettings() {
@@ -722,18 +745,79 @@ public class BasicImeService extends InputMethodService
         emojiPanel = null;
     }
 
-    @Override
-    public void onDestroy() {
-        if (bubbleOverlay != null) {
-            bubbleOverlay.hide();
-            bubbleOverlay = null;
+
+    private void applyLayoutLive() {
+        // Refresh the keyboard: re-read all values from ImeColorStore,
+        // rebuild hit keys, re-measure, and re-invalidate.
+        if (keyboardView != null) {
+            keyboardView.refreshFromPrefs();
+            keyboardView.post(() -> {
+                measureKeyboard();
+                applyKeyboardFrameLock();
+            });
         }
-        releaseVideoKeepPosition();
-        rootContainer = null;
-        keyboardView = null;
-        super.onDestroy();
+
+        // Emoji panel: re-measure so the tab row picks up the new height.
+        if (emojiPanel != null) {
+            emojiPanel.refreshFromPrefs();
+        }
+
+        // Ask the InputMethodManager to re-layout the input view.
+        if (rootContainer != null) {
+            rootContainer.requestLayout();
+            rootContainer.invalidate();
+        }
     }
 
+    private boolean isAddedToService() {
+        // The IME is "alive" as long as it has a rootContainer and hasn't been
+        // destroyed. If onDestroy has run, rootContainer is null.
+        return rootContainer != null;
+    }
+
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        EmojiGridCache.get(this).setPicker(this);
+        GestureActionStore.get(this).all();
+
+        layoutChangeReceiver = new android.content.BroadcastReceiver() {
+            @Override
+            public void onReceive(android.content.Context c, android.content.Intent i) {
+                applyLayoutLive();
+            }
+        };
+        registerLayoutReceiver();
+
+        new Thread(() -> {
+            try { EmojiGridCache.get(this).warm(); } catch (Throwable ignored) { }
+            try {
+                ClipboardManager cm = (ClipboardManager)
+                        getSystemService(CLIPBOARD_SERVICE);
+                if (cm != null) {
+                    cm.addPrimaryClipChangedListener(() -> {
+                        try {
+                            ClipboardStore.get(BasicImeService.this)
+                                    .capture(BasicImeService.this);
+                        } catch (Throwable ignored) { }
+                    });
+                }
+            } catch (Throwable ignored) { }
+        }, "emoji-warm").start();
+    }
+
+    @android.annotation.SuppressLint({"UnspecifiedRegisterReceiverFlag", "RegisterReceiverFlag"})
+    private void registerLayoutReceiver() {
+        android.content.IntentFilter filter =
+                new android.content.IntentFilter(ACTION_LAYOUT_CHANGED);
+
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(layoutChangeReceiver, filter,
+                    android.content.Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(layoutChangeReceiver, filter);
+        }
+    }
     @Override
     public boolean onEvaluateFullscreenMode() {
         return false;

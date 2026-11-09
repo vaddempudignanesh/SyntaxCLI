@@ -14,13 +14,17 @@ public final class ImeColorStore {
     private static final String K_WP_IMG= "key_wallpaper_image";
     private static final String K_WP_VID= "key_wallpaper_video";
 
-    private volatile boolean keyShrinkEnabled;
+    // ── Layout customization keys (same prefs file) ─────────────
+    private static final String K_ROW_H       = "layout_row_height_dp";
+    private static final String K_ROW_GAP     = "layout_row_gap_dp";
+    private static final String K_KEY_GAP     = "layout_key_gap_dp";
+    private static final String K_KEY_RADIUS  = "layout_key_radius_dp";
+    private static final String K_TAB_H       = "layout_tab_row_height_dp";
 
     private static volatile ImeColorStore INSTANCE;
     private static final Object LOCK = new Object();
 
-    private volatile float keyShrinkIntensity;
-    private volatile long  keyShrinkDownMs;
+    private final SharedPreferences prefs;
 
     private volatile int textColor;
     private volatile int bgColor;
@@ -30,11 +34,20 @@ public final class ImeColorStore {
     private volatile String wallpaperImagePath;
     private volatile String wallpaperVideoPath;
 
-    private final SharedPreferences prefs;
+    private volatile boolean keyShrinkEnabled;
+    private volatile float keyShrinkIntensity;
+    private volatile long  keyShrinkDownMs;
+
+    private volatile float rowHeightDp;
+    private volatile float rowGapDp;
+    private volatile float keyGapDp;
+    private volatile float keyCornerRadiusDp;
+    private volatile float tabRowHeightDp;
 
     private ImeColorStore(Context ctx) {
         prefs = ctx.getApplicationContext()
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+
         textColor          = prefs.getInt(K_TEXT, KeyboardConfig.COLOR_TEXT);
         bgColor            = prefs.getInt(K_BG,   KeyboardConfig.COLOR_BACKGROUND);
         keyAlpha           = prefs.getInt(K_KEY_A, 255);
@@ -42,14 +55,19 @@ public final class ImeColorStore {
         wallpaperDim       = prefs.getInt(K_WP_DIM, KeyboardConfig.DEFAULT_WALLPAPER_DIM);
         wallpaperImagePath = prefs.getString(K_WP_IMG, null);
         wallpaperVideoPath = prefs.getString(K_WP_VID, null);
-        keyShrinkEnabled = prefs.getBoolean("key_shrink_enabled",
-                KeyboardConfig.DEFAULT_KEY_SHRINK_ENABLED);
+
         keyShrinkEnabled   = prefs.getBoolean("key_shrink_enabled",
                 KeyboardConfig.DEFAULT_KEY_SHRINK_ENABLED);
         keyShrinkIntensity = prefs.getFloat("key_shrink_intensity",
                 KeyboardConfig.DEFAULT_KEY_SHRINK_INTENSITY);
         keyShrinkDownMs    = prefs.getLong("key_shrink_down_ms",
                 KeyboardConfig.DEFAULT_KEY_SHRINK_MS);
+
+        rowHeightDp        = prefs.getFloat(K_ROW_H,      KeyboardConfig.DEFAULT_ROW_HEIGHT_DP);
+        rowGapDp           = prefs.getFloat(K_ROW_GAP,    KeyboardConfig.DEFAULT_ROW_GAP_DP);
+        keyGapDp           = prefs.getFloat(K_KEY_GAP,    KeyboardConfig.DEFAULT_KEY_HORIZONTAL_GAP_DP);
+        keyCornerRadiusDp  = prefs.getFloat(K_KEY_RADIUS, KeyboardConfig.DEFAULT_KEY_CORNER_RADIUS_DP);
+        tabRowHeightDp     = prefs.getFloat(K_TAB_H,      KeyboardConfig.DEFAULT_TAB_ROW_HEIGHT_DP);
     }
 
     public static ImeColorStore get(Context ctx) {
@@ -61,6 +79,7 @@ public final class ImeColorStore {
         return INSTANCE;
     }
 
+    // ── Existing getters ────────────────────────────────────────
     public int getTextColor() { return textColor; }
     public int getBgColor()   { return bgColor; }
     public int getKeyAlpha()  { return keyAlpha; }
@@ -105,7 +124,6 @@ public final class ImeColorStore {
         prefs.edit().putLong("key_shrink_down_ms", keyShrinkDownMs).apply();
     }
 
-
     public void saveKeyAlpha(int alpha) {
         keyAlpha = Math.max(0, Math.min(255, alpha));
         prefs.edit().putInt(K_KEY_A, keyAlpha).apply();
@@ -122,5 +140,43 @@ public final class ImeColorStore {
                 .putString(K_WP_IMG, imagePath)
                 .putString(K_WP_VID, videoPath)
                 .apply();
+    }
+
+    // ── Layout customization ────────────────────────────────────
+    public float getRowHeightDp()       { return rowHeightDp; }
+    public float getRowGapDp()          { return rowGapDp; }
+    public float getKeyGapDp()          { return keyGapDp; }
+    public float getKeyCornerRadiusDp() { return keyCornerRadiusDp; }
+    public float getTabRowHeightDp()    { return tabRowHeightDp; }
+
+    public void saveRowHeightDp(float dp) {
+        rowHeightDp = clamp(dp, 30f, 100f);
+        prefs.edit().putFloat(K_ROW_H, rowHeightDp).apply();
+    }
+
+    public void saveRowGapDp(float dp) {
+        rowGapDp = clamp(dp, 0f, 30f);
+        prefs.edit().putFloat(K_ROW_GAP, rowGapDp).apply();
+    }
+
+    public void saveKeyGapDp(float dp) {
+        keyGapDp = clamp(dp, 0f, 20f);
+        prefs.edit().putFloat(K_KEY_GAP, keyGapDp).apply();
+    }
+
+    public void saveKeyCornerRadiusDp(float dp) {
+        keyCornerRadiusDp = clamp(dp, 0f, 20f);
+        prefs.edit().putFloat(K_KEY_RADIUS, keyCornerRadiusDp).apply();
+    }
+
+    public void saveTabRowHeightDp(float dp) {
+        tabRowHeightDp = clamp(dp, 20f, 80f);
+        prefs.edit().putFloat(K_TAB_H, tabRowHeightDp).apply();
+    }
+
+    private static float clamp(float v, float lo, float hi) {
+        if (v < lo) return lo;
+        if (v > hi) return hi;
+        return v;
     }
 }

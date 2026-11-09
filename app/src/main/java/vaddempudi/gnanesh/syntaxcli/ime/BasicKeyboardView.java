@@ -246,9 +246,12 @@ public class BasicKeyboardView extends View {
 
     private int desiredHeightPx() {
         int rows = rowCount();
-        float total = 0f;
-        for (int r = 0; r < rows; r++) total += rowHeightDp(r);
-        total += (rows - 1) * KeyboardConfig.ROW_GAP_DP;
+        if (rows == 0) return 0;
+        ImeColorStore s = ImeColorStore.get(getContext());
+        float rowH = s.getRowHeightDp();
+        float gap  = s.getRowGapDp();
+        float total = rows * rowH;
+        total += (rows - 1) * gap;
         total += KeyboardConfig.KEYBOARD_TOP_PADDING_DP;
         total += KeyboardConfig.KEYBOARD_BOTTOM_PADDING_DP;
         return (int) (total * density);
@@ -276,9 +279,11 @@ public class BasicKeyboardView extends View {
         int rows = rowCount();
         if (rows == 0) return;
 
-        float gap = KeyboardConfig.ROW_GAP_DP * density;
-        float keyGap = KeyboardConfig.KEY_HORIZONTAL_GAP_DP * density;
-        float width = getWidth();
+        ImeColorStore s = ImeColorStore.get(getContext());
+        float gap    = s.getRowGapDp()    * density;
+        float keyGap = s.getKeyGapDp()    * density;
+        float rowH   = s.getRowHeightDp() * density;
+        float width  = getWidth();
         if (width <= 0) return;
 
         float top = KeyboardConfig.KEYBOARD_TOP_PADDING_DP * density;
@@ -286,12 +291,11 @@ public class BasicKeyboardView extends View {
 
         for (int r = 0; r < rows; r++) {
             BasicKey[] row = rows().get(r);
-            float rowHeight = rowHeightDp(r) * density;
+            float thisRowHeight = rowH;
 
             float sideInset = 0f;
             if (isAsdfRow(row)) {
-                Float ov = KeyboardConfig.rowSidePaddingOverride(r);
-                sideInset = (ov != null ? ov : KeyboardConfig.ASDF_SIDE_PADDING_DP) * density;
+                sideInset = KeyboardConfig.ASDF_SIDE_PADDING_DP * density;
             }
 
             float totalWeight = 0f;
@@ -301,7 +305,7 @@ public class BasicKeyboardView extends View {
             float x = sideInset;
 
             float rowTop    = y + KeyboardConfig.KEY_INNER_PADDING_TOP_DP * density;
-            float rowBottom = y + rowHeight - KeyboardConfig.KEY_INNER_PADDING_BOTTOM_DP * density;
+            float rowBottom = y + thisRowHeight - KeyboardConfig.KEY_INNER_PADDING_BOTTOM_DP * density;
 
             for (BasicKey k : row) {
                 float keyWidth = usableWidth * (k.weight / totalWeight);
@@ -310,7 +314,7 @@ public class BasicKeyboardView extends View {
                 x += keyWidth + keyGap;
             }
 
-            y += rowHeight + gap;
+            y += thisRowHeight + gap;
         }
     }
 
@@ -378,8 +382,7 @@ public class BasicKeyboardView extends View {
 
         textPaint.setColor(textColor);
 
-        float radius = KeyboardConfig.KEY_CORNER_RADIUS_DP * density;
-
+        float radius = ImeColorStore.get(getContext()).getKeyCornerRadiusDp() * density;
         int borderColor = KeyboardConfig.COLOR_BORDER;
         int borderAlpha = (borderColor >>> 24) & 0xFF;
         int finalBorderAlpha = (borderAlpha * keyAlpha) / 255;
@@ -885,6 +888,12 @@ public class BasicKeyboardView extends View {
 
     private boolean isSpaceKey(HitKey hk) {
         return hk != null && hk.key != null && hk.key.code == BasicKey.CODE_SPACE;
+    }
+
+    public void refreshFromPrefs() {
+        rebuildHitKeys();
+        requestLayout();
+        invalidate();
     }
 
     private static final class HitKey {

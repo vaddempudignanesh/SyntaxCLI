@@ -92,10 +92,176 @@ public class GestureActionEditorActivity extends Activity {
         TextView sub = new TextView(this);
         sub.setText("Assign an action to a key. Long-press that key on the keyboard to run it.\n"
                 + "Long-press SPACE to open this screen.");
+
+
         sub.setTextColor(DIM);
         sub.setTextSize(11);
         sub.setPadding(0, dp(8), 0, dp(16));
         root.addView(sub);
+
+        // ═══════════════════════════════════════════════════════════════
+// LAYOUT CUSTOMIZATION CARD
+// ═══════════════════════════════════════════════════════════════
+        LinearLayout layoutCard = new LinearLayout(this);
+        layoutCard.setOrientation(LinearLayout.VERTICAL);
+        layoutCard.setPadding(dp(14), dp(14), dp(14), dp(14));
+        GradientDrawable layoutBg = new GradientDrawable();
+        layoutBg.setColor(CARD_BG);
+        layoutBg.setCornerRadius(dp(8));
+        layoutBg.setStroke(dp(1), CARD_BORDER);
+        layoutCard.setBackground(layoutBg);
+        LinearLayout.LayoutParams layoutLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        layoutLp.bottomMargin = dp(16);
+        root.addView(layoutCard, layoutLp);
+
+        TextView layoutHeader = new TextView(this);
+        layoutHeader.setText("▌ LAYOUT");
+        layoutHeader.setTextColor(GREEN);
+        layoutHeader.setTextSize(13);
+        layoutHeader.setTypeface(Typeface.MONOSPACE);
+        layoutCard.addView(layoutHeader);
+
+        TextView layoutHint = new TextView(this);
+        layoutHint.setText("All sliders apply LIVE to the keyboard on this device.");
+        layoutHint.setTextColor(DIM);
+        layoutHint.setTextSize(11);
+        layoutHint.setTypeface(Typeface.MONOSPACE);
+        layoutHint.setPadding(0, dp(4), 0, dp(10));
+        layoutCard.addView(layoutHint);
+
+        final ImeColorStore layoutStore = ImeColorStore.get(this);
+
+// Helper builder for one labelled slider row.
+        java.util.function.BiFunction<String, float[], LinearLayout> makeLayoutSlider =
+                (label, rangeMinMaxDefaultStep) -> {
+                    float min   = rangeMinMaxDefaultStep[0];
+                    float max   = rangeMinMaxDefaultStep[1];
+                    float dflt  = rangeMinMaxDefaultStep[2];
+                    float step  = rangeMinMaxDefaultStep[3];
+                    int steps = Math.round((max - min) / step);
+
+                    LinearLayout row = new LinearLayout(this);
+                    row.setOrientation(LinearLayout.HORIZONTAL);
+                    row.setGravity(Gravity.CENTER_VERTICAL);
+                    LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT, dp(44));
+                    rlp.topMargin = dp(4);
+                    row.setLayoutParams(rlp);
+
+                    TextView tag = new TextView(this);
+                    tag.setText(label);
+                    tag.setTextColor(GREEN);
+                    tag.setTextSize(12);
+                    tag.setTypeface(Typeface.MONOSPACE);
+                    row.addView(tag, new LinearLayout.LayoutParams(
+                            dp(160), ViewGroup.LayoutParams.WRAP_CONTENT));
+
+                    SeekBar sb = new SeekBar(this);
+                    sb.setMax(steps);
+                    int cur = Math.round((dflt - min) / step);
+                    sb.setProgress(Math.max(0, Math.min(steps, cur)));
+                    sb.setSplitTrack(false);
+                    sb.setPadding(dp(12), 0, dp(12), 0);
+                    sb.setProgressTintList(android.content.res.ColorStateList.valueOf(GREEN));
+                    sb.setThumbTintList(android.content.res.ColorStateList.valueOf(GREEN));
+                    sb.setProgressBackgroundTintList(
+                            android.content.res.ColorStateList.valueOf(0xFF444444));
+                    row.addView(sb, new LinearLayout.LayoutParams(0, dp(40), 1f));
+
+                    TextView value = new TextView(this);
+                    value.setTextColor(DIM);
+                    value.setTextSize(11);
+                    value.setTypeface(Typeface.MONOSPACE);
+                    value.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+                    value.setText(String.format(java.util.Locale.US, "%.1f", dflt));
+                    row.addView(value, new LinearLayout.LayoutParams(
+                            dp(60), ViewGroup.LayoutParams.WRAP_CONTENT));
+
+                    sb.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+                        @Override public void onProgressChanged(SeekBar s, int p, boolean u) {
+                            float v = min + p * step;
+                            value.setText(String.format(java.util.Locale.US, "%.1f", v));
+                            // Store immediately.
+                            switch (label) {
+                                case "ROW HEIGHT":   layoutStore.saveRowHeightDp(v);       break;
+                                case "ROW GAP":      layoutStore.saveRowGapDp(v);          break;
+                                case "KEY GAP":      layoutStore.saveKeyGapDp(v);          break;
+                                case "KEY RADIUS":   layoutStore.saveKeyCornerRadiusDp(v); break;
+                                case "TAB ROW HEIGHT": layoutStore.saveTabRowHeightDp(v);  break;
+                            }
+                            if (u) broadcastLayoutChanged();
+                        }
+                        @Override public void onStartTrackingTouch(SeekBar s) { }
+                        @Override public void onStopTrackingTouch(SeekBar s) {
+                            broadcastLayoutChanged();
+                        }
+                    });
+
+                    // Tag the row with the initial value so refresh can reset the slider.
+                    row.setTag(new float[]{ min, max, step });
+
+                    return row;
+                };
+
+// Row height: 30..100, default from prefs, step 1
+        LinearLayout rowHeightRow = makeLayoutSlider.apply(
+                "ROW HEIGHT", new float[]{30f, 100f,
+                        layoutStore.getRowHeightDp(), 1f});
+        layoutCard.addView(rowHeightRow);
+
+// Row gap: 0..30, step 0.5
+        LinearLayout rowGapRow = makeLayoutSlider.apply(
+                "ROW GAP", new float[]{0f, 30f,
+                        layoutStore.getRowGapDp(), 0.5f});
+        layoutCard.addView(rowGapRow);
+
+// Key gap: 0..20, step 0.5
+        LinearLayout keyGapRow = makeLayoutSlider.apply(
+                "KEY GAP", new float[]{0f, 20f,
+                        layoutStore.getKeyGapDp(), 0.5f});
+        layoutCard.addView(keyGapRow);
+
+// Key radius: 0..20, step 0.5
+        LinearLayout keyRadiusRow = makeLayoutSlider.apply(
+                "KEY RADIUS", new float[]{0f, 20f,
+                        layoutStore.getKeyCornerRadiusDp(), 0.5f});
+        layoutCard.addView(keyRadiusRow);
+
+// Tab row height: 20..80, step 1
+        LinearLayout tabRowHeightRow = makeLayoutSlider.apply(
+                "TAB ROW HEIGHT", new float[]{20f, 80f,
+                        layoutStore.getTabRowHeightDp(), 1f});
+        layoutCard.addView(tabRowHeightRow);
+
+// Reset button
+        TextView resetBtn = new TextView(this);
+        resetBtn.setText("RESET TO DEFAULTS");
+        resetBtn.setTextColor(0xFFFFAA00);
+        resetBtn.setTypeface(Typeface.MONOSPACE);
+        resetBtn.setGravity(Gravity.CENTER);
+        resetBtn.setPadding(dp(14), dp(10), dp(14), dp(10));
+        GradientDrawable resetBg = new GradientDrawable();
+        resetBg.setColor(0xFF111111);
+        resetBg.setCornerRadius(dp(6));
+        resetBg.setStroke(dp(1), CARD_BORDER);
+        resetBtn.setBackground(resetBg);
+        resetBtn.setClickable(true);
+        LinearLayout.LayoutParams resetLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        resetLp.topMargin = dp(8);
+        layoutCard.addView(resetBtn, resetLp);
+        resetBtn.setOnClickListener(v -> {
+            layoutStore.saveRowHeightDp(KeyboardConfig.DEFAULT_ROW_HEIGHT_DP);
+            layoutStore.saveRowGapDp(KeyboardConfig.DEFAULT_ROW_GAP_DP);
+            layoutStore.saveKeyGapDp(KeyboardConfig.DEFAULT_KEY_HORIZONTAL_GAP_DP);
+            layoutStore.saveKeyCornerRadiusDp(KeyboardConfig.DEFAULT_KEY_CORNER_RADIUS_DP);
+            layoutStore.saveTabRowHeightDp(KeyboardConfig.DEFAULT_TAB_ROW_HEIGHT_DP);
+            broadcastLayoutChanged();
+            Toast.makeText(this, "Layout reset", Toast.LENGTH_SHORT).show();
+            // Re-run activity to reset slider positions.
+            recreate();
+        });
 
         LinearLayout themeCard = new LinearLayout(this);
         themeCard.setOrientation(LinearLayout.VERTICAL);
@@ -1098,6 +1264,13 @@ public class GestureActionEditorActivity extends Activity {
     }
 
     private void showAddDialog() { showEditDialog(null); }
+
+    private void broadcastLayoutChanged() {
+        android.content.Intent i = new android.content.Intent(
+                BasicImeService.ACTION_LAYOUT_CHANGED);
+        i.setPackage(getPackageName());
+        sendBroadcast(i);
+    }
 
     private View makeOnOffRow(String label, boolean initial,
                               java.util.function.Consumer<Boolean> onChange) {

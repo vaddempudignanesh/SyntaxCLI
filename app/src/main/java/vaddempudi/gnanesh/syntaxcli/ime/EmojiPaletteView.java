@@ -18,11 +18,14 @@ public class EmojiPaletteView extends LinearLayout {
 
     private static final String TAG = "EmojiPalette";
 
-    // ── ADJUST THESE TO CHANGE THE PANEL SIZE ──
     private static final int PANEL_HEIGHT_DP       = 352;
-    private static final int TAB_ROW_HEIGHT_DP     = 40;   // bigger — was 24
-    private static final int BOTTOM_BAR_HEIGHT_DP  = 60;   // ★ match keyboard ROW_HEIGHT_DP
-    private static final int SECTION_HEADER_DP     = 24;   // was 20
+    private static final int TAB_ROW_HEIGHT_DP     = 40;
+    private static final int BOTTOM_BAR_HEIGHT_DP  = 60;
+    private static final int SECTION_HEADER_DP     = 24;
+
+    private int currentTabHeightDp() {
+        return Math.round(ImeColorStore.get(getContext()).getTabRowHeightDp());
+    }
 
     public interface EmojiPickListener {
         void onEmojiPicked(String emoji);
@@ -69,6 +72,11 @@ public class EmojiPaletteView extends LinearLayout {
         setMeasuredDimension(width, h);
     }
 
+    public void refreshFromPrefs() {
+        requestLayout();
+        invalidate();
+    }
+
     private void build() {
         List<EmojiData.Category> cats = EmojiData.categories();
         if (cats == null || cats.isEmpty()) { return; }
@@ -82,7 +90,7 @@ public class EmojiPaletteView extends LinearLayout {
         HorizontalScrollView tabScroll = new HorizontalScrollView(getContext());
         tabScroll.setHorizontalScrollBarEnabled(false);
         tabScroll.setLayoutParams(new LinearLayout.LayoutParams(
-                LayoutParams.MATCH_PARENT, dp(TAB_ROW_HEIGHT_DP)));
+                LayoutParams.MATCH_PARENT, dp(currentTabHeightDp())));
         GradientDrawable barBg = new GradientDrawable();
         barBg.setColor(tabBarColor);
         barBg.setCornerRadius(dp(4));

@@ -7,13 +7,19 @@ public final class KeyboardConfig {
     public static final float KEYBOARD_TOP_PADDING_DP    = 8f;
     public static final float KEYBOARD_BOTTOM_PADDING_DP = 8f;
 
-    public static final float ROW_HEIGHT_DP              = 60f;
-    public static final float ROW_GAP_DP                 = 9f;
+    // ── DEFAULTS. The LIVE values live in ImeColorStore. ──
+    public static final float DEFAULT_ROW_HEIGHT_DP        = 60f;
+    public static final float DEFAULT_ROW_GAP_DP           = 9f;
+    public static final float DEFAULT_KEY_HORIZONTAL_GAP_DP= 3f;
+    public static final float DEFAULT_KEY_CORNER_RADIUS_DP = 6f;
+    public static final float DEFAULT_TAB_ROW_HEIGHT_DP    = 40f;
+    // Kept for source-compat — some code still references the old names.
+    public static final float ROW_HEIGHT_DP                = DEFAULT_ROW_HEIGHT_DP;
+    public static final float ROW_GAP_DP                   = DEFAULT_ROW_GAP_DP;
+    public static final float KEY_HORIZONTAL_GAP_DP        = DEFAULT_KEY_HORIZONTAL_GAP_DP;
+    public static final float KEY_CORNER_RADIUS_DP         = DEFAULT_KEY_CORNER_RADIUS_DP;
 
-    public static final float KEY_HORIZONTAL_GAP_DP      = 3f;
-    public static final float KEY_CORNER_RADIUS_DP       = 6f;
     public static final float KEY_BORDER_WIDTH_DP        = 1f;
-
     public static final float ASDF_SIDE_PADDING_DP       = 17f;
 
     public static final float TEXT_SIZE_LETTER_SP        = 22f;
@@ -37,7 +43,6 @@ public final class KeyboardConfig {
     public static final int    DEFAULT_WALLPAPER_DIM     = 70;
     public static final int    COLOR_WALLPAPER_DIM_FILL  = 0xFF000000;
 
-
     public static final long SHIFT_DOUBLE_TAP_MS         = 300L;
 
     public static final float PREVIEW_SIZE_DP            = 62f;
@@ -56,7 +61,6 @@ public final class KeyboardConfig {
     public static final int COLOR_PREVIEW_TEXT           = 0xFF33FF33;
     public static final int COLOR_PREVIEW_BORDER         = 0xFF33FF33;
 
-    // ─── Emoji panel ─────────────────────────────────────────────────
     public static final float EMOJI_PANEL_HEIGHT_DP      = 220f;
     public static final float EMOJI_TEXT_SIZE_SP         = 28f;
     public static final float EMOJI_CELL_SIZE_DP         = 48f;
@@ -66,18 +70,12 @@ public final class KeyboardConfig {
     public static final int   COLOR_EMOJI_CATEGORY_SEL   = 0xFF1E4D1E;
     public static final int   COLOR_EMOJI_TEXT           = 0xFFFFFFFF;
 
-    // ─── Gesture thresholds ──────────────────────────────────────────
     public static final long  LONG_PRESS_ENTER_MS        = 350L;
     public static final long  LONG_PRESS_SPACE_MS        = 350L;
     public static final long  DOUBLE_TAP_SPACE_MS        = 300L;
 
-    public static Float rowHeightOverride(int rowIndex) {
-        return null;
-    }
-
-    public static Float rowSidePaddingOverride(int rowIndex) {
-        return null;
-    }
+    public static Float rowHeightOverride(int rowIndex) { return null; }
+    public static Float rowSidePaddingOverride(int rowIndex) { return null; }
 
     public static final float KEY_INNER_PADDING_TOP_DP    = 0f;
     public static final float KEY_INNER_PADDING_BOTTOM_DP = 0f;
