@@ -1,53 +1,74 @@
 package vaddempudi.gnanesh.syntaxcli.gallery;
 
 import android.content.Context;
+import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.view.Surface;
-import android.view.SurfaceHolder;
-import android.view.SurfaceView;
-import android.view.View;
+import android.view.TextureView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.OptIn;
 import androidx.media3.common.AudioAttributes;
 import androidx.media3.common.C;
+import androidx.media3.common.Format;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.PlaybackParameters;
 import androidx.media3.common.Player;
-import androidx.media3.common.TrackSelectionParameters;
 import androidx.media3.common.util.UnstableApi;
+import androidx.media3.datasource.DataSource;
+import androidx.media3.datasource.FileDataSource;
+import androidx.media3.exoplayer.DecoderCounters;
+import androidx.media3.exoplayer.DefaultLoadControl;
 import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.exoplayer.analytics.AnalyticsListener;
 import androidx.media3.exoplayer.mediacodec.MediaCodecInfo;
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector;
 import androidx.media3.exoplayer.mediacodec.MediaCodecUtil;
+import androidx.media3.exoplayer.source.MediaSource;
+import androidx.media3.exoplayer.source.ProgressiveMediaSource;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * One ExoPlayer per process. Hardware decoder only. No fallback. No probing.
+ * SINGLE ExoPlayer for the entire gallery session.
  *
- * The player is created once and never released until the gallery is torn down.
- *   1. Swaps the player's video surface to the new SurfaceView (fast — ExoPlayer
- *      internally re-targets the existing Surface to the new SurfaceHolder)
- *   2. Calls {@code setMediaItem} with the new file. ExoPlayer releases the
- *      current hardware MediaCodec and allocates a new one for the new format.
- *      This is the "release codes and reassign" step; it runs in ~15–40 ms on
- *      Qualcomm because the Surface and AudioTrack are reused.
- *
- * NOTHING else in the app may create a new ExoPlayer. If it does, we are back
- * to OOM/black-screen territory.
+ * Battery rules enforced by this class:
+ *  1. The player is created ONCE (ensurePlayer) and never released until the
+ *     gallery activity itself is destroyed.
+ *  2. Surface binding uses TextureView + setVideoSurface(Surface) so the
+ *     underlying Surface is stable for the view's lifetime — no per-bind
+ *     VPU firmware re-init on MediaTek.
+ *  3. The audio renderer is NOT filtered to hardware-only. MediaTek's
+ *     c2.android.aac.decoder is a software decoder; filtering it out with
+ *     setEnableDecoderFallback(false) produces silent video. We keep the
+ *     DEFAULT selector for all tracks and set enableDecoderFallback(true).
+ *  4. handleAudioFocus = true — ExoPlayer requests/abandons focus itself
+ *     exactly once per play/pause transition. The activity NEVER calls
+ *     AudioManager.requestAudioFocus() / abandonAudioFocus() manually.
+ *  5. DefaultLoadControl is capped at 15 s so the VPU idles at half clock
+ *     after the first couple of seconds.
+ *  6. ProgressiveMediaSource + reusable FileDataSource.Factory avoids
+ *     re-parsing the MP4/MKV atom table on every setMediaItem().
+ *  7. stopAndDetach() only calls pause() — it never calls stop() or
+ *     clearMediaItems() or clearVideoSurface(), which would flush the
+ *     pipeline and force a codec re-create on the next bind.
  */
 @OptIn(markerClass = UnstableApi.class)
 public class HardwareVideoController {
 
     private static final String TAG = "video-cli";
-    private static final long SWAP_DEBOUNCE_MS = 16L;
+    private static final String AUDIO_TAG = "audio-check";
+
+    /** 2 s min buffer, 15 s max — same as Fossify Gallery. */
+    private static final int MIN_BUFFER_MS = 2000;
+    private static final int MAX_BUFFER_MS = 15000;
 
     public interface PreparedCallback { void onPrepared(long durationMs); }
     public interface ErrorCallback { void onError(Throwable error); }
@@ -58,6 +79,7 @@ public class HardwareVideoController {
     private String me() { return "ctrl[" + id + "]"; }
 
     private ExoPlayer player;
+    private DataSource.Factory dataSourceFactory;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     private PreparedCallback onPrepared;
@@ -71,16 +93,29 @@ public class HardwareVideoController {
     private boolean userPaused = false;
     private long lastKnownDurationMs = 0L;
 
-    // ── Current surface binding ────────────────────────────────────
-    private SurfaceView boundSurfaceView = null;
-    private SurfaceHolder boundHolder = null;
-    private SurfaceHolder.Callback boundCallback = null;
-    private boolean waitingForSurface = false;
+    // Current TextureView binding (never unbound until release()).
+    private TextureView boundTextureView = null;
+    private Surface boundSurface = null;
+    private final TextureView.SurfaceTextureListener boundSurfaceListener = new TextureView.SurfaceTextureListener() {
+        @Override public void onSurfaceTextureAvailable(@NonNull android.graphics.SurfaceTexture st, int w, int h) {
+            if (released) return;
+            attachSurface(st);
+        }
+        @Override public void onSurfaceTextureSizeChanged(@NonNull android.graphics.SurfaceTexture st, int w, int h) {}
+        @Override public boolean onSurfaceTextureDestroyed(@NonNull android.graphics.SurfaceTexture st) {
+            // Returning false means we keep the SurfaceTexture alive (Fossify does the same).
+            return false;
+        }
+        @Override public void onSurfaceTextureUpdated(@NonNull android.graphics.SurfaceTexture st) {}
+    };
 
-    /** Hardware-only selector. Returns the list as given; ExoPlayer will pick
-     *  the first hardware decoder. Because we set {@code setEnableDecoderFallback(false)},
-     *  if only software decoders exist the player will throw — which is what we want. */
-    private final MediaCodecSelector hardwareOnlySelector = new MediaCodecSelector() {
+    /**
+     * DEFAULT selector — no hardware-only filter. Filtering audio tracks out
+     * with a hardware-only selector makes MediaTek's software AAC decoder
+     * disappear from the list, and with setEnableDecoderFallback(false) the
+     * player builds zero audio renderers -> silent playback.
+     */
+    private final MediaCodecSelector selector = new MediaCodecSelector() {
         @NonNull
         @Override
         public List<MediaCodecInfo> getDecoderInfos(
@@ -90,16 +125,9 @@ public class HardwareVideoController {
                 throws MediaCodecUtil.DecoderQueryException {
             List<MediaCodecInfo> all = MediaCodecSelector.DEFAULT.getDecoderInfos(
                     mimeType, requiresSecureDecoder, requiresTunnelingDecoder);
-            ArrayList<MediaCodecInfo> out = new ArrayList<>();
-            if (all != null) {
-                for (MediaCodecInfo info : all) {
-                    if (info.hardwareAccelerated) out.add(info);
-                }
-            }
             Log.d(TAG, me() + " decoderQuery mime=" + mimeType
-                    + " total=" + (all != null ? all.size() : 0)
-                    + " hardware=" + out.size());
-            return out;   // may be empty; ExoPlayer will throw on empty, which we want
+                    + " count=" + (all != null ? all.size() : 0));
+            return all;
         }
     };
 
@@ -108,43 +136,69 @@ public class HardwareVideoController {
         Log.d(TAG, me() + " constructed");
     }
 
-    // ─── Public lifecycle ─────────────────────────────────────────
+    // ─── Public API ────────────────────────────────────────────────
 
-    /**
-     * Shows the given file on the given SurfaceView. Called from
-     * FullscreenAdapter.onBindViewHolder (via activateControllerAt) and from
-     * GalleryActivity.findAndStartVideoForPosition.
-     *
-     * Fast path: the SurfaceView's Surface is already valid → swap surface, set
-     * media item, prepare. ~15–40 ms.
-     *
-     * Slow path: the Surface doesn't exist yet → arm the holder callback, wait
-     * for surfaceCreated, then swap. surfaceCreated fires within ~1 frame.
-     */
-    public void showPath(@NonNull String path, @NonNull SurfaceView surfaceView, boolean startWhenReady) {
-        if (path.isEmpty()) return;
-        if (released) {
-            Log.e(TAG, me() + " showPath() after release() — ignoring. "
-                    + "This means a caller kept a controller that was torn down.");
-            return;
-        }
+    /** Bind to the given TextureView and (re)start playback of `path`. */
+    public void showPath(@NonNull String path, @NonNull TextureView textureView, boolean startWhenReady) {
+        if (path.isEmpty() || released) return;
+
         this.pendingPath = path;
         this.pendingStartWhenReady = startWhenReady;
         if (startWhenReady) userPaused = false;
-        isPrepared = false;
 
         ensurePlayer();
 
-        // If we're already bound to this exact SurfaceView, skip the swap.
-        if (boundSurfaceView == surfaceView && boundHolder != null
-                && boundHolder.getSurface() != null && boundHolder.getSurface().isValid()) {
-            applyMediaItem(path, startWhenReady);
-            return;
+        // Swap the target view WITHOUT tearing the codec pipeline down.
+        if (boundTextureView != textureView) {
+            if (boundTextureView != null) {
+                boundTextureView.setSurfaceTextureListener(null);
+            }
+            boundTextureView = textureView;
+            textureView.setSurfaceTextureListener(boundSurfaceListener);
+
+            android.graphics.SurfaceTexture st = textureView.getSurfaceTexture();
+            if (st != null) {
+                attachSurface(st);
+            }
+            // else: onSurfaceTextureAvailable will call attachSurface.
         }
 
-        bindToSurfaceView(surfaceView, path, startWhenReady);
+        applyMediaItem(path, startWhenReady);
     }
 
+    /** Pause and keep the player alive. Called on close/back. */
+    public void pauseOnly() {
+        if (player != null) {
+            try { player.pause(); } catch (Exception ignored) {}
+        }
+        userPaused = true;
+        pendingStartWhenReady = false;
+    }
+
+    /** Full teardown — only when the gallery activity is being destroyed. */
+    public void release() {
+        if (released) return;
+        released = true;
+        Log.d(TAG, me() + " release()");
+
+        if (boundTextureView != null) {
+            try { boundTextureView.setSurfaceTextureListener(null); } catch (Exception ignored) {}
+            boundTextureView = null;
+        }
+        if (boundSurface != null) {
+            try { boundSurface.release(); } catch (Exception ignored) {}
+            boundSurface = null;
+        }
+        if (player != null) {
+            try { player.release(); } catch (Exception ignored) {}
+            player = null;
+        }
+        isPrepared = false;
+        pendingPath = null;
+        pendingStartWhenReady = false;
+        userPaused = false;
+        lastKnownDurationMs = 0L;
+    }
 
     public void start() {
         userPaused = false;
@@ -158,127 +212,98 @@ public class HardwareVideoController {
         if (player != null) player.pause();
     }
 
-    /** Detaches the surface without releasing the player. Used when the current
-     *  page goes off-screen but might come back. */
-    public void detachSurfaceOnly() {
-        unbindSurface();
+    // ─── Internals ────────────────────────────────────────────────
+
+    private void attachSurface(@NonNull android.graphics.SurfaceTexture st) {
+        if (released || player == null) return;
+        if (boundSurface != null) {
+            try { boundSurface.release(); } catch (Exception ignored) {}
+        }
+        boundSurface = new Surface(st);
+        try { player.setVideoSurface(boundSurface); } catch (Exception ignored) {}
     }
 
-    // ─── Surface binding ──────────────────────────────────────────
+    private void ensurePlayer() {
+        if (released || player != null) return;
+        Log.d(TAG, me() + " ensurePlayer (one-time)");
 
-    private void unbindSurface() {
-        if (boundCallback != null && boundHolder != null) {
-            try { boundHolder.removeCallback(boundCallback); }
-            catch (Exception ignored) {}
-        }
-        if (player != null) {
-            try { player.clearVideoSurface(); } catch (Exception ignored) {}
-        }
-        boundSurfaceView = null;
-        boundHolder = null;
-        boundCallback = null;
-        waitingForSurface = false;
-    }
+        // enableDecoderFallback(true) is REQUIRED for audio: MediaTek's AAC
+        // decoder reports hardwareAccelerated=false on many builds, and with
+        // fallback off it would be filtered out by a hardware-only selector.
+        DefaultRenderersFactory renderers = new DefaultRenderersFactory(context)
+                .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF)
+                .setEnableDecoderFallback(true)
+                .setMediaCodecSelector(selector);
 
-    /** Stops playback and detaches the surface, but keeps the ExoPlayer instance
-     *  alive so it can be re-used by the next showPath(). Use this from
-     *  FullscreenAdapter.reset() and closeFullscreenViewer(). */
-    public void stopAndDetach() {
-        if (player != null) {
-            try {
-                player.stop();
-                player.clearMediaItems();
-                player.clearVideoSurface();
-            } catch (Exception ignored) {}
-        }
-        unbindSurface();
-        isPrepared = false;
-        pendingPath = null;
-        pendingStartWhenReady = false;
-        userPaused = false;
-        lastKnownDurationMs = 0L;
-    }
+        DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
+                .setBufferDurationsMs(MIN_BUFFER_MS, MAX_BUFFER_MS, MIN_BUFFER_MS, MIN_BUFFER_MS)
+                .setPrioritizeTimeOverSizeThresholds(true)
+                .build();
 
-    /** Full teardown — only safe at process exit / activity onDestroy when the
-     *  controller object itself is being discarded. */
-    public void release() {
-        if (released) return;
-        released = true;
-        Log.d(TAG, me() + " release()");
+        player = new ExoPlayer.Builder(context, renderers)
+                .setLoadControl(loadControl)
+                .build();
 
-        unbindSurface();
+        // handleAudioFocus = true -> ExoPlayer owns focus. The activity must
+        // NOT also request focus, or MIUI/One UI will thrash it per bind.
+        player.setAudioAttributes(
+                new AudioAttributes.Builder()
+                        .setUsage(C.USAGE_MEDIA)
+                        .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+                        .build(),
+                /* handleAudioFocus = */ true);
 
-        if (player != null) {
-            try { player.release(); } catch (Exception ignored) {}
-            player = null;
-        }
-        isPrepared = false;
-        pendingPath = null;
-        pendingStartWhenReady = false;
-        userPaused = false;
-        lastKnownDurationMs = 0L;
-    }
+        player.setRepeatMode(Player.REPEAT_MODE_ONE);
 
-    private void bindToSurfaceView(@NonNull final SurfaceView surfaceView,
-                                   @NonNull final String path,
-                                   final boolean startWhenReady) {
-        unbindSurface();
-        boundSurfaceView = surfaceView;
-        final SurfaceHolder holder = surfaceView.getHolder();
+        dataSourceFactory = () -> new FileDataSource();
 
-        // Surface is already valid → bind immediately, no callback round-trip.
-        Surface s = holder.getSurface();
-        if (s != null && s.isValid()) {
-            boundHolder = holder;
-            if (player != null) {
-                try { player.setVideoSurfaceHolder(holder); } catch (Exception ignored) {}
+        player.addAnalyticsListener(new AnalyticsListener() {
+            @Override public void onAudioEnabled(@NonNull EventTime e, @NonNull DecoderCounters c) {
+                Log.d(AUDIO_TAG, me() + " ★ audio ENABLED");
             }
-            applyMediaItem(path, startWhenReady);
-            return;
-        }
+            @Override public void onAudioDisabled(@NonNull EventTime e, @NonNull DecoderCounters c) {
+                Log.d(AUDIO_TAG, me() + " ★ audio disabled after " + c.renderedOutputBufferCount + " buffers");
+            }
+            @Override public void onAudioInputFormatChanged(@NonNull EventTime e, @NonNull Format f, @Nullable androidx.media3.exoplayer.DecoderReuseEvaluation r) {
+                Log.d(AUDIO_TAG, me() + " ★ audio input format=" + f.sampleMimeType
+                        + " sr=" + f.sampleRate + " ch=" + f.channelCount);
+            }
+            @Override public void onAudioDecoderInitialized(@NonNull EventTime e, @NonNull String n, long i, long d) {
+                Log.d(AUDIO_TAG, me() + " ★ audio decoder=" + n);
+            }
+            @Override public void onAudioSinkError(@NonNull EventTime e, @NonNull Exception x) {
+                Log.e(AUDIO_TAG, me() + " ✖ audio sink error", x);
+            }
+        });
 
-        // Not valid yet → register callback, wait for surfaceCreated.
-        final SurfaceHolder.Callback[] selfRef = new SurfaceHolder.Callback[1];
-        final SurfaceHolder.Callback cb = new SurfaceHolder.Callback() {
-            @Override
-            public void surfaceCreated(@NonNull SurfaceHolder h) {
-                if (boundCallback != selfRef[0] || released) return;
-                Log.d(TAG, me() + " surfaceCreated");
-                boundHolder = h;
-                waitingForSurface = false;
-                if (player != null) {
-                    try { player.setVideoSurfaceHolder(h); } catch (Exception ignored) {}
-                }
-                if (pendingPath != null) {
-                    applyMediaItem(pendingPath, pendingStartWhenReady);
+        player.addListener(new Player.Listener() {
+            @Override public void onPlaybackStateChanged(int state) {
+                if (state == Player.STATE_READY && !isPrepared) {
+                    isPrepared = true;
+                    long dur = Math.max(0L, player != null ? player.getDuration() : 0L);
+                    lastKnownDurationMs = dur;
+                    mainHandler.post(() -> { if (onPrepared != null) onPrepared.onPrepared(dur); });
+                } else if (state == Player.STATE_ENDED) {
+                    mainHandler.post(() -> { if (onCompletion != null) onCompletion.onCompletion(); });
                 }
             }
-
-            @Override
-            public void surfaceChanged(@NonNull SurfaceHolder h, int format, int width, int height) { }
-
-            @Override
-            public void surfaceDestroyed(@NonNull SurfaceHolder h) {
-                if (boundCallback != selfRef[0]) return;
-                Log.d(TAG, me() + " surfaceDestroyed");
-                if (player != null) {
-                    try { player.pause(); } catch (Exception ignored) {}
-                    try { player.clearVideoSurface(); } catch (Exception ignored) {}
-                }
-                boundHolder = null;
-                waitingForSurface = true;
+            @Override public void onPlayerError(@NonNull PlaybackException error) {
+                Log.e(TAG, me() + " onPlayerError code=" + error.errorCode, error);
+                mainHandler.post(() -> { if (onError != null) onError.onError(error); });
             }
-        };
-        selfRef[0] = cb;
-        boundCallback = cb;
-        waitingForSurface = true;
-        holder.addCallback(cb);
+        });
     }
 
     private void applyMediaItem(String path, boolean startWhenReady) {
         if (player == null) return;
         try {
-            player.setMediaItem(MediaItem.fromUri(path));
+            Log.d(TAG, me() + " applyMediaItem " + path + " play=" + (startWhenReady && !userPaused));
+            MediaItem item = path.startsWith("content://")
+                    ? MediaItem.fromUri(Uri.parse(path))
+                    : MediaItem.fromUri(Uri.fromFile(new File(path)));
+            MediaSource source = new ProgressiveMediaSource.Factory(dataSourceFactory)
+                    .createMediaSource(item);
+            player.setMediaSource(source);
             isPrepared = false;
             player.prepare();
             player.setPlayWhenReady(startWhenReady && !userPaused);
@@ -287,86 +312,24 @@ public class HardwareVideoController {
         }
     }
 
-    /** Lifecycle pause — auto-play can resume after this. Does NOT mark userPaused. */
     public void pauseForLifecycle() {
         if (player != null) {
             try { player.pause(); } catch (Exception ignored) {}
         }
     }
 
-    /** Requests a layout pass on the currently bound SurfaceView, if any. */
     public void requestLayout() {
-        if (boundSurfaceView != null) {
-            try { boundSurfaceView.requestLayout(); } catch (Exception ignored) {}
+        if (boundTextureView != null) {
+            try { boundTextureView.requestLayout(); } catch (Exception ignored) {}
         }
     }
 
-    // ─── Player creation (once) ───────────────────────────────────
-
-    private void ensurePlayer() {
-        if (released) {
-            Log.e(TAG, me() + " ensurePlayer() after release()");
-            return;
-        }
-        if (player != null) return;
-        Log.d(TAG, me() + " ensurePlayer (one-time)");
-
-        DefaultRenderersFactory renderersFactory = new DefaultRenderersFactory(context)
-                .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF)
-                .setEnableDecoderFallback(false)          // keep: hardware video only
-                .setMediaCodecSelector(hardwareOnlySelector);   // keep: hardware video only
-
-        player = new ExoPlayer.Builder(context, renderersFactory).build();
-
-        player.setAudioAttributes(
-                new AudioAttributes.Builder()
-                        .setUsage(C.USAGE_MEDIA)
-                        .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
-                        .build(),
-                /* handleAudioFocus = */ true);
-
-        player.setRepeatMode(Player.REPEAT_MODE_ONE);
-
-        player.addListener(new Player.Listener() {
-            @Override
-            public void onPlaybackStateChanged(int state) {
-                if (state == Player.STATE_READY && !isPrepared) {
-                    isPrepared = true;
-                    final long dur = Math.max(0L, player != null ? player.getDuration() : 0L);
-                    lastKnownDurationMs = dur;
-                    mainHandler.post(() -> {
-                        if (onPrepared != null) onPrepared.onPrepared(dur);
-                    });
-                } else if (state == Player.STATE_ENDED) {
-                    mainHandler.post(() -> {
-                        if (onCompletion != null) onCompletion.onCompletion();
-                    });
-                }
-            }
-
-            @Override
-            public void onPlayerError(@NonNull PlaybackException error) {
-                Log.e(TAG, me() + " onPlayerError code=" + error.errorCode, error);
-                mainHandler.post(() -> {
-                    if (onError != null) onError.onError(error);
-                });
-            }
-        });
-    }
-
-    // ─── Playback helpers (unchanged API) ─────────────────────────
+    // ─── Playback helpers ─────────────────────────────────────────
 
     public void stopPlayback() {
-        if (player != null) {
-            try {
-                player.stop();
-                player.clearMediaItems();
-            } catch (Exception ignored) {}
-        }
-        isPrepared = false;
-        pendingPath = null;
-        pendingStartWhenReady = false;
-        lastKnownDurationMs = 0L;
+        // Kept for API compatibility. Only pauses — never stops or clears,
+        // because that would flush the pipeline and force a codec re-create.
+        pause();
     }
 
     public void seekTo(long ms) { if (player != null) player.seekTo(Math.max(0L, ms)); }
@@ -390,15 +353,14 @@ public class HardwareVideoController {
 
     public float getPlaybackSpeed() {
         if (player == null) return 1.0f;
-        PlaybackParameters params = player.getPlaybackParameters();
-        return params != null ? params.speed : 1.0f;
+        PlaybackParameters p = player.getPlaybackParameters();
+        return p != null ? p.speed : 1.0f;
     }
 
     public boolean setPlaybackSpeed(float speed) {
         if (player == null) return false;
         try {
-            float s = (speed <= 0f) ? 1.0f : speed;
-            player.setPlaybackParameters(new PlaybackParameters(s));
+            player.setPlaybackParameters(new PlaybackParameters(speed <= 0f ? 1.0f : speed));
             return true;
         } catch (Exception e) { return false; }
     }
@@ -408,7 +370,7 @@ public class HardwareVideoController {
     public void setOnPreparedListener(PreparedCallback cb) {
         this.onPrepared = cb;
         if (isPrepared && cb != null) {
-            final long dur = lastKnownDurationMs;
+            long dur = lastKnownDurationMs;
             mainHandler.post(() -> cb.onPrepared(dur));
         }
     }

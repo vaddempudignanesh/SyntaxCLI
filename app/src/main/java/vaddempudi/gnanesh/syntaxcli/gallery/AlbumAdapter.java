@@ -20,6 +20,11 @@ import androidx.recyclerview.widget.AsyncListDiffer;
 import androidx.recyclerview.widget.DiffUtil;
 import androidx.recyclerview.widget.RecyclerView;
 
+import com.bumptech.glide.Glide;
+import com.bumptech.glide.load.engine.DiskCacheStrategy;
+import com.bumptech.glide.request.RequestOptions;
+import com.bumptech.glide.signature.ObjectKey;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -89,36 +94,28 @@ public class AlbumAdapter extends RecyclerView.Adapter<AlbumAdapter.VH> {
     @Override
     public void onBindViewHolder(@NonNull VH h, int position) {
         AlbumRecord album = differ.getCurrentList().get(position);
-
         h.name.setText(album.displayName);
-        h.cover.setTag(album.path);
 
-        Bitmap cached = COVERS.get(album.path);
-        if (cached != null && !cached.isRecycled()) {
-            h.cover.setImageBitmap(cached);
-            return;
-        }
+        RequestOptions opts = new RequestOptions()
+                .diskCacheStrategy(DiskCacheStrategy.RESOURCE)
+                .signature(new ObjectKey(album.coverPath + "_" + album.count))
+                .override(256, 256);
 
-        h.cover.setImageResource(android.R.drawable.ic_menu_gallery);
-
-        if (album.coverPath != null) {
-            final String coverPath = album.coverPath;
-            final String albumPath = album.path;
-            executor.execute(() -> {
-                Bitmap bmp = decode(coverPath);
-                if (bmp != null) {
-                    COVERS.put(albumPath, bmp);
-                    main.post(() -> {
-                        Object tag = h.cover.getTag();
-                        if (albumPath.equals(tag)) h.cover.setImageBitmap(bmp);
-                    });
-                }
-            });
-        }
+        Glide.with(h.cover.getContext())
+                .load(album.coverPath)
+                .apply(opts)
+                .placeholder(android.R.drawable.ic_menu_gallery)
+                .into(h.cover);
 
         h.itemView.setOnClickListener(v -> {
             if (listener != null) listener.onClick(album);
         });
+    }
+
+    @Override
+    public void onViewRecycled(@NonNull VH holder) {
+        super.onViewRecycled(holder);
+        Glide.with(holder.cover.getContext()).clear(holder.cover);
     }
 
     private Bitmap decode(String path) {

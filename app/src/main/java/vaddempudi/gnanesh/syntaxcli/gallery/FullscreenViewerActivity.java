@@ -1,6 +1,8 @@
 package vaddempudi.gnanesh.syntaxcli.gallery;
 
+import android.content.Context;
 import android.content.pm.ActivityInfo;
+import android.media.AudioManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -51,7 +53,6 @@ public class FullscreenViewerActivity extends AppCompatActivity {
 
     private boolean suppressChromeUntilNextTap = false;
 
-    /** The controller for the currently visible video page, or null. */
     private HardwareVideoController currentVideoView = null;
 
     private View videoControlContainer;
@@ -77,6 +78,9 @@ public class FullscreenViewerActivity extends AppCompatActivity {
     private FrameLayout rootLayout;
     private boolean currentPageIsVideo = false;
 
+    private AudioManager audioManager;
+    private AudioManager.OnAudioFocusChangeListener videoFocusListener;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
 
@@ -89,6 +93,21 @@ public class FullscreenViewerActivity extends AppCompatActivity {
         log("onCreate — activity hash=" + idHash);
         log("========================================================");
         setContentView(R.layout.activity_fullscreen_viewer);
+
+        audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        videoFocusListener = focusChange -> {
+            Log.d(LOG_TAG, src() + " audioFocus changed → " + focusChange);
+            if (focusChange == AudioManager.AUDIOFOCUS_LOSS
+                    || focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
+                if (currentVideoView != null) {
+                    try { currentVideoView.pause(); } catch (Exception ignored) {}
+                    isVideoPlaying = false;
+                    if (btnCenterPlayPause != null) {
+                        btnCenterPlayPause.setImageResource(android.R.drawable.ic_media_play);
+                    }
+                }
+            }
+        };
 
         ViewPager2 vpPre = findViewById(R.id.fullscreenViewPager);
         if (vpPre != null) {
@@ -160,6 +179,7 @@ public class FullscreenViewerActivity extends AppCompatActivity {
                 }
 
                 currentPageIsVideo = false;
+                releaseVideoAudioFocus();
                 stopCurrentVideo();
 
                 if (videoControlContainer != null) {
@@ -188,6 +208,7 @@ public class FullscreenViewerActivity extends AppCompatActivity {
                 }
 
                 try {
+                    acquireVideoAudioFocus();
                     Log.d(LOG_TAG, src() + "   calling ctrl.start()");
                     ctrl.start();
                     isVideoPlaying = true;
@@ -234,6 +255,7 @@ public class FullscreenViewerActivity extends AppCompatActivity {
 
                 if (position != currentPosition) {
                     stopCurrentVideo();
+                    releaseVideoAudioFocus();
                 }
 
                 currentPosition = position;
@@ -251,6 +273,31 @@ public class FullscreenViewerActivity extends AppCompatActivity {
         });
 
         updateTitle();
+    }
+
+    // ── Audio focus ──────────────────────────────────────────────
+
+    private void acquireVideoAudioFocus() {
+        if (audioManager == null || videoFocusListener == null) return;
+        int res = audioManager.requestAudioFocus(
+                videoFocusListener,
+                AudioManager.STREAM_MUSIC,
+                AudioManager.AUDIOFOCUS_GAIN);
+        Log.d(LOG_TAG, src() + " requestAudioFocus → "
+                + (res == AudioManager.AUDIOFOCUS_REQUEST_GRANTED ? "GRANTED" : "DENIED"));
+        int vol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
+        if (vol == 0) {
+            int max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, Math.max(1, max / 2), 0);
+            Log.d(LOG_TAG, src() + " stream was muted → raised to " + (max / 2));
+        }
+    }
+
+    private void releaseVideoAudioFocus() {
+        if (audioManager != null && videoFocusListener != null) {
+            audioManager.abandonAudioFocus(videoFocusListener);
+            Log.d(LOG_TAG, src() + " abandonAudioFocus");
+        }
     }
 
     private void setupTapToToggleChrome() {
@@ -282,7 +329,6 @@ public class FullscreenViewerActivity extends AppCompatActivity {
             return false;
         });
     }
-
 
     private void skipByMs(int deltaMs) {
         if (currentVideoView == null) return;
@@ -368,7 +414,6 @@ public class FullscreenViewerActivity extends AppCompatActivity {
         });
     }
 
-
     private void setChromeVisible(boolean visible) {
         controlsVisible = visible;
 
@@ -378,8 +423,6 @@ public class FullscreenViewerActivity extends AppCompatActivity {
         }
         setImmersiveFullscreen();
     }
-
-
 
     private void resetVideoUi() {
         if (btnCenterPlayPause != null) {
@@ -426,7 +469,7 @@ public class FullscreenViewerActivity extends AppCompatActivity {
         log("stopCurrentVideo: currentVideoView=" + currentVideoView);
         if (currentVideoView != null) {
             try {
-                currentVideoView.stopPlayback();
+                currentVideoView.pause();
             } catch (Exception ignored) {}
             currentVideoView = null;
         }
@@ -510,6 +553,7 @@ public class FullscreenViewerActivity extends AppCompatActivity {
             videoHandler.removeCallbacks(updateProgressRunnable);
             showVideoControlsWithTimeout();
         } else {
+            acquireVideoAudioFocus();
             currentVideoView.start();
             if (btnCenterPlayPause != null) {
                 btnCenterPlayPause.setImageResource(android.R.drawable.ic_media_pause);
@@ -669,6 +713,7 @@ public class FullscreenViewerActivity extends AppCompatActivity {
             isLandscape = false;
             videoHandler.postDelayed(() -> {
                 stopCurrentVideo();
+                releaseVideoAudioFocus();
                 if (decorView != null) {
                     decorView.setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
                 }
@@ -677,6 +722,7 @@ public class FullscreenViewerActivity extends AppCompatActivity {
             }, 300);
         } else {
             stopCurrentVideo();
+            releaseVideoAudioFocus();
             if (decorView != null) {
                 decorView.setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
             }
@@ -685,16 +731,25 @@ public class FullscreenViewerActivity extends AppCompatActivity {
         }
     }
 
-
     @Override
     protected void onResume() {
         super.onResume();
         log("onResume");
         setImmersiveFullscreen();
         if (currentVideoView != null && !currentVideoView.isPlaying() && isVideoPlaying) {
+            acquireVideoAudioFocus();
             currentVideoView.start();
             startProgressUpdate();
         }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        if (currentVideoView != null && currentVideoView.isPlaying()) {
+            currentVideoView.pauseForLifecycle();
+        }
+        releaseVideoAudioFocus();
     }
 
     @Override
@@ -702,6 +757,7 @@ public class FullscreenViewerActivity extends AppCompatActivity {
         super.onDestroy();
         log("onDestroy");
         stopCurrentVideo();
+        releaseVideoAudioFocus();
         videoHandler.removeCallbacks(updateProgressRunnable);
         videoHandler.removeCallbacks(hideControlsRunnable);
         if (decorView != null) {

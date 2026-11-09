@@ -8,7 +8,7 @@ import android.graphics.drawable.Drawable;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
-import android.view.SurfaceView;
+import android.view.TextureView;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ProgressBar;
@@ -24,16 +24,10 @@ import java.util.concurrent.Executors;
 import vaddempudi.gnanesh.syntaxcli.R;
 
 /**
- * Single-controller architecture:
- *
- *  - ONE HardwareVideoController for the entire adapter. It owns ONE ExoPlayer.
- *  - Each video ViewHolder owns its own SurfaceView (as before).
- *  - When a page becomes active, FullscreenAdapter.activateControllerAt binds
- *    the controller to that page's SurfaceView via showPath().
- *  - When a page goes inactive, the controller's surface binding is swapped
- *    synchronously to the new active page's SurfaceView by the next showPath().
- *  - The adapter never creates or releases the controller during normal swiping;
- *    only reset() (called on close/back) releases it.
+ * Single-controller architecture, feature-identical to the previous version.
+ * Only the surface type changed (SurfaceView -> TextureView) and the
+ * onDetachedFromRecyclerView guard, which prevents the controller from being
+ * released when notifyDataSetChanged() detaches the ViewPager2 inner RV.
  */
 public class FullscreenAdapter extends RecyclerView.Adapter<FullscreenAdapter.ViewHolder> {
 
@@ -68,16 +62,9 @@ public class FullscreenAdapter extends RecyclerView.Adapter<FullscreenAdapter.Vi
 
     public void setActivePosition(int pos) { this.activePosition = pos; }
     public int getActivePosition() { return activePosition; }
-
     public HardwareVideoController getController(int position) { return controller; }
 
-    /**
-     * Called by GalleryActivity when a page becomes the active one. Binds the
-     * shared controller to this page's SurfaceView and starts playback. If the
-     * incoming page isn't a video, we don't touch the controller at all (the
-     * previous video's surface is left attached so swipe-back is instant).
-     */
-    public HardwareVideoController activateControllerAt(int position, SurfaceView surface) {
+    public HardwareVideoController activateControllerAt(int position, TextureView surface) {
         this.activePosition = position;
         if (position < 0 || position >= paths.size()) return null;
         String path = paths.get(position);
@@ -91,7 +78,7 @@ public class FullscreenAdapter extends RecyclerView.Adapter<FullscreenAdapter.Vi
     public static class ViewHolder extends RecyclerView.ViewHolder {
         public final ProgressBar progressBar;
         public final ZoomableImageView imageView;
-        public final SurfaceView videoSurface;
+        public final TextureView videoSurface;     // renamed type
         public int boundPosition = -1;
 
         public ViewHolder(@NonNull View itemView) {
@@ -122,9 +109,8 @@ public class FullscreenAdapter extends RecyclerView.Adapter<FullscreenAdapter.Vi
             holder.imageView.setVisibility(View.GONE);
             holder.imageView.setImageDrawable(null);
             holder.imageView.setTag(null);
-
-            // SurfaceView must be VISIBLE for its Surface to be produced.
             holder.videoSurface.setVisibility(View.VISIBLE);
+
             holder.videoSurface.setOnTouchListener((v, event) -> {
                 if (videoTouchForwarder != null) videoTouchForwarder.onTouch(event);
                 if (event.getActionMasked() == MotionEvent.ACTION_UP && tapCallback != null) {
@@ -134,7 +120,6 @@ public class FullscreenAdapter extends RecyclerView.Adapter<FullscreenAdapter.Vi
             });
 
             if (boundPosition == activePosition) {
-                // Active page — bind the shared controller to this surface.
                 controller.setOnPreparedListener(d -> {
                     if (holder.boundPosition != boundPosition) return;
                     holder.progressBar.setVisibility(View.GONE);
@@ -148,7 +133,6 @@ public class FullscreenAdapter extends RecyclerView.Adapter<FullscreenAdapter.Vi
                 controller.showPath(path, holder.videoSurface, true);
                 if (controller.isPreparedNow()) holder.progressBar.setVisibility(View.GONE);
             } else {
-                // Off-screen neighbor — no player activity, no spinner.
                 holder.progressBar.setVisibility(View.GONE);
             }
             return;
@@ -196,15 +180,21 @@ public class FullscreenAdapter extends RecyclerView.Adapter<FullscreenAdapter.Vi
                 || lower.endsWith(".m4v") || lower.endsWith(".flv") || lower.endsWith(".wmv");
     }
 
-    /** Release everything. Called on close/back. */
-    public void reset() {
-        Log.d(LOG_TAG, "adapter.reset");
+    /** Pause only — do NOT release. Called from closeFullscreenViewer(). */
+    public void pauseForClose() {
+        Log.d(LOG_TAG, "adapter.pauseForClose");
         activePosition = -1;
-        // IMPORTANT: do not call controller.release() here. The adapter owns the
-        // controller for its own lifetime; the activity owns the adapter. We only
-        // stop playback + detach the surface, so the next open reuses the same
-        // ExoPlayer instance (no decoder churn, no black screen).
-        controller.stopAndDetach();
+        controller.pauseOnly();
+    }
+
+    /**
+     * Called when the RecyclerView is truly discarded (activity destroy).
+     * We deliberately IGNORE notifyDataSetChanged()-driven detaches so the
+     * player survives normal page refreshes.
+     */
+    public void hardReset() {
+        activePosition = -1;
+        controller.release();
     }
 
     private Bitmap decodeSampled(String path) {
@@ -248,9 +238,10 @@ public class FullscreenAdapter extends RecyclerView.Adapter<FullscreenAdapter.Vi
     @Override
     public void onDetachedFromRecyclerView(@NonNull RecyclerView recyclerView) {
         super.onDetachedFromRecyclerView(recyclerView);
+        // Do NOT release here. notifyDataSetChanged() also detaches the inner
+        // ViewPager2 RecyclerView, which would kill the shared player and
+        // force a MediaCodec re-create on the next bind.
         executor.shutdownNow();
-        controller.stopAndDetach();
-        controller.release();   // safe: adapter is being torn down for good
     }
 
     @Override

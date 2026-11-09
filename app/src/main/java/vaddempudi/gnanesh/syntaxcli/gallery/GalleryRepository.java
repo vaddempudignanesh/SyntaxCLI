@@ -132,7 +132,20 @@ public final class GalleryRepository {
         mediaEnded = false;
         mediaLoading.set(false);
         pager.reset();
-        loadNextPage();
+
+        // Immediately publish whatever is already in the DB cache. This is the
+        // first frame the user sees — before the MediaStore query even starts.
+        ioPool.execute(() -> {
+            final List<GalleryMediaItem> cached = indexCache.readMediaPage(60);
+            Collections.sort(cached, LATEST_FIRST);
+            synchronized (allItems) {
+                allItems.clear();
+                allItems.addAll(cached);
+            }
+            publishMedia(false);
+            // Kick off the real scan on the same background thread.
+            loadNextPage();
+        });
     }
 
     public void loadNextPage() {
@@ -140,7 +153,6 @@ public final class GalleryRepository {
         if (!mediaLoading.compareAndSet(false, true)) return;
 
         final int startOffset = nextOffset;
-
         ioPool.execute(() -> {
             int offset = startOffset;
             boolean end = false;
@@ -151,7 +163,9 @@ public final class GalleryRepository {
                 final List<GalleryMediaItem>[] pageHolder = new List[1];
                 final Throwable[] errHolder = new Throwable[1];
 
-                pager.loadPage(offset, MediaStorePager.DEFAULT_PAGE_SIZE,
+                // Smaller page size => first batch arrives much faster.
+                // 60 items = 20 rows in a 3-col grid = enough to fill 3 screens.
+                pager.loadPage(offset, 60,
                         new MediaStorePager.PageCallback() {
                             @Override public void onPage(List<GalleryMediaItem> page, boolean e) {
                                 pageHolder[0] = page;
@@ -188,9 +202,10 @@ public final class GalleryRepository {
                 nextOffset = offset;
                 mediaEnded = end;
 
-                publishMedia(end);       // posts snapshot to main; listener works unchanged
+                // THE KEY: publish after EVERY page, not only at the end.
+                publishMedia(end);
 
-                if (page.isEmpty() && !end) break;   // safety: never infinite-loop
+                if (page.isEmpty() && !end) break;
             }
             mediaLoading.set(false);
         });

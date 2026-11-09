@@ -31,20 +31,18 @@ android {
 
     buildTypes {
         debug {
-            // Explicitly use the debug keystore — NOT the release keystore.
             signingConfig signingConfigs.debug
             debuggable true
-            minifyEnabled false
-            shrinkResources false
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'),
+                    'proguard-rules.pro'
         }
         release {
-            // Leave minify off for now — you're building debug, and turning
-            // R8 on just slows the build. Re-enable once playback is fixed.
-            minifyEnabled false
-            shrinkResources false
-            // signingConfig deliberately omitted — unsigned release.
-            // Nothing references release.jks anymore.
-            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'),
+                    'proguard-rules.pro'
         }
     }
 
@@ -80,4 +78,5 @@ dependencies {
     implementation 'it.andreuzzi:CompareString2:1.0.9'
     implementation "androidx.media3:media3-exoplayer:1.4.1"
     implementation "androidx.media3:media3-common:1.4.1"
+    implementation 'com.github.bumptech.glide:glide:4.16.0'
 }

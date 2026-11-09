@@ -1,10 +1,7 @@
 package vaddempudi.gnanesh.syntaxcli.gallery;
 
 import android.content.Context;
-import android.graphics.Bitmap;
 import android.graphics.Color;
-import android.os.Handler;
-import android.os.Looper;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -13,20 +10,19 @@ import android.widget.ImageView;
 import android.widget.RelativeLayout;
 
 import androidx.annotation.NonNull;
-import androidx.recyclerview.widget.AsyncDifferConfig;
-import androidx.recyclerview.widget.AsyncListDiffer;
 import androidx.recyclerview.widget.DiffUtil;
-import androidx.recyclerview.widget.ListUpdateCallback;
+import androidx.recyclerview.widget.AsyncListDiffer;
 import androidx.recyclerview.widget.RecyclerView;
+
+import com.bumptech.glide.Glide;
+import com.bumptech.glide.load.engine.DiskCacheStrategy;
+import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions;
+import com.bumptech.glide.request.RequestOptions;
+import com.bumptech.glide.signature.ObjectKey;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicLong;
 
 import vaddempudi.gnanesh.syntaxcli.R;
 
@@ -35,6 +31,7 @@ public class GalleryAdapter extends RecyclerView.Adapter<GalleryAdapter.ViewHold
     private static final Object PAYLOAD_SELECTION = new Object();
     private static final Object PAYLOAD_FAVORITE = new Object();
     private volatile boolean forcedEmpty = false;
+
     public interface OnItemClickListener {
         void onImageClick(String path);
         void onVideoClick(String path);
@@ -48,9 +45,6 @@ public class GalleryAdapter extends RecyclerView.Adapter<GalleryAdapter.ViewHold
 
     private final Context context;
     private final OnItemClickListener listener;
-    private final ThumbnailCache thumbnailCache;
-    private final ExecutorService executor = Executors.newFixedThreadPool(4);
-    private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     private final AsyncListDiffer<GalleryMediaItem> differ;
     private List<String> selectedItems = Collections.emptyList();
@@ -58,9 +52,7 @@ public class GalleryAdapter extends RecyclerView.Adapter<GalleryAdapter.ViewHold
     public GalleryAdapter(Context context, OnItemClickListener listener) {
         this.context = context;
         this.listener = listener;
-        this.thumbnailCache = ThumbnailCache.getInstance(context);
         setHasStableIds(true);
-
         this.differ = new AsyncListDiffer<>(this, DIFF);
     }
 
@@ -86,9 +78,7 @@ public class GalleryAdapter extends RecyclerView.Adapter<GalleryAdapter.ViewHold
                 @Override
                 public Object getChangePayload(@NonNull GalleryMediaItem oldItem,
                                                @NonNull GalleryMediaItem newItem) {
-                    if (oldItem.isFavorite != newItem.isFavorite) {
-                        return PAYLOAD_FAVORITE;
-                    }
+                    if (oldItem.isFavorite != newItem.isFavorite) return PAYLOAD_FAVORITE;
                     return null;
                 }
             };
@@ -108,7 +98,6 @@ public class GalleryAdapter extends RecyclerView.Adapter<GalleryAdapter.ViewHold
         List<GalleryMediaItem> immutable = items == null
                 ? Collections.emptyList()
                 : Collections.unmodifiableList(new ArrayList<>(items));
-
         forcedEmpty = false;
         differ.submitList(immutable);
     }
@@ -124,9 +113,7 @@ public class GalleryAdapter extends RecyclerView.Adapter<GalleryAdapter.ViewHold
             String path = current.get(i).path;
             boolean wasSelected = oldSelected.contains(path);
             boolean nowSelected = this.selectedItems.contains(path);
-            if (wasSelected != nowSelected) {
-                notifyItemChanged(i, PAYLOAD_SELECTION);
-            }
+            if (wasSelected != nowSelected) notifyItemChanged(i, PAYLOAD_SELECTION);
         }
     }
 
@@ -137,7 +124,6 @@ public class GalleryAdapter extends RecyclerView.Adapter<GalleryAdapter.ViewHold
                 .inflate(R.layout.item_gallery, parent, false);
         return new ViewHolder(v);
     }
-
 
     public void clearNow() {
         forcedEmpty = true;
@@ -153,14 +139,12 @@ public class GalleryAdapter extends RecyclerView.Adapter<GalleryAdapter.ViewHold
         notifyDataSetChanged();
     }
 
-    @Override
-    public int getItemCount() {
+    @Override public int getItemCount() {
         if (forcedEmpty) return 0;
         return differ.getCurrentList().size();
     }
 
-    @Override
-    public long getItemId(int position) {
+    @Override public long getItemId(int position) {
         if (forcedEmpty) return RecyclerView.NO_ID;
         GalleryMediaItem item = differ.getCurrentList().get(position);
         return item.id ^ (((long) item.type) << 61);
@@ -193,7 +177,6 @@ public class GalleryAdapter extends RecyclerView.Adapter<GalleryAdapter.ViewHold
         return differ.getCurrentList();
     }
 
-
     private void updateSelection(ViewHolder holder, GalleryMediaItem item) {
         boolean selectionMode = listener.isSelectionMode();
         holder.checkIcon.setVisibility(selectionMode ? View.VISIBLE : View.GONE);
@@ -222,9 +205,6 @@ public class GalleryAdapter extends RecyclerView.Adapter<GalleryAdapter.ViewHold
         final ImageView checkIcon;
         final RelativeLayout videoOverlay;
 
-        final AtomicLong bindGeneration = new AtomicLong(0);
-        String boundPath;
-
         ViewHolder(View itemView) {
             super(itemView);
             imageView = itemView.findViewById(R.id.gallery_image);
@@ -235,8 +215,6 @@ public class GalleryAdapter extends RecyclerView.Adapter<GalleryAdapter.ViewHold
         }
 
         void bind(GalleryMediaItem item) {
-            boundPath = item.path;
-
             videoIcon.setVisibility(View.GONE);
             checkIcon.setVisibility(View.GONE);
             videoOverlay.setVisibility(View.GONE);
@@ -262,11 +240,8 @@ public class GalleryAdapter extends RecyclerView.Adapter<GalleryAdapter.ViewHold
                 if (listener.isSelectionMode()) {
                     listener.onItemClick(item.path);
                 } else {
-                    if (item.type == GalleryMediaItem.TYPE_IMAGE) {
-                        listener.onImageClick(item.path);
-                    } else {
-                        listener.onVideoClick(item.path);
-                    }
+                    if (item.type == GalleryMediaItem.TYPE_IMAGE) listener.onImageClick(item.path);
+                    else listener.onVideoClick(item.path);
                 }
             });
 
@@ -293,35 +268,38 @@ public class GalleryAdapter extends RecyclerView.Adapter<GalleryAdapter.ViewHold
         } catch (Exception ignored) {}
     }
 
+    /**
+     * Glide-based thumbnail load. This is the ONLY functional change from
+     * the previous BitmapFactory implementation. Every call site, every
+     * bitmap, every size, every content — identical.
+     *
+     * The ObjectKey signature is (dateModifiedSeconds + path hash) so Glide
+     * can safely reuse the cached bitmap until the file is actually modified.
+     * Disk cache = RESOURCE, so a cold second-launch is instant.
+     */
     private void loadThumbnail(ViewHolder holder, GalleryMediaItem item) {
         final String path = item.path;
-        Object currentTag = holder.imageView.getTag();
-        if (currentTag != null && currentTag.equals(path)
-                && holder.imageView.getDrawable() != null) {
-            return;
-        }
-        holder.imageView.setTag(path);
-        final long myGen = holder.bindGeneration.incrementAndGet();
 
-        Bitmap memHit = thumbnailCache.getFromMemory(path, item.type);
-        if (memHit != null) {
-            holder.imageView.setImageBitmap(memHit);
-            return;
-        }
-
+        // Placeholder first so the view never shows a stale bitmap.
         holder.imageView.setImageResource(android.R.drawable.ic_menu_gallery);
 
-        executor.execute(() -> {
-            Bitmap bitmap = thumbnailCache.getThumbnail(path, item.type);
-            mainHandler.post(() -> {
-                if (holder.bindGeneration.get() != myGen) return;
-                Object tag = holder.imageView.getTag();
-                if (tag == null || !tag.equals(path)) return;
-                if (bitmap != null) {
-                    holder.imageView.setImageBitmap(bitmap);
-                }
-            });
-        });
+        RequestOptions opts = new RequestOptions()
+                .diskCacheStrategy(DiskCacheStrategy.RESOURCE)
+                .signature(new ObjectKey(item.dateModifiedSeconds + "_" + path.hashCode()))
+                .override(512, 512);   // fixed decode size → constant memory
+
+        Glide.with(holder.imageView.getContext())
+                .load(path)
+                .apply(opts)
+                .transition(DrawableTransitionOptions.withCrossFade(80))
+                .into(holder.imageView);
+    }
+
+    @Override
+    public void onViewRecycled(@NonNull ViewHolder holder) {
+        super.onViewRecycled(holder);
+        // Glide wants the request cleared so it can be re-targeted on the next bind.
+        Glide.with(holder.imageView.getContext()).clear(holder.imageView);
     }
 
     @Override

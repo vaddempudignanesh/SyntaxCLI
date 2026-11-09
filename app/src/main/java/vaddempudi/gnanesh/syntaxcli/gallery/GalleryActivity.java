@@ -23,6 +23,7 @@ import android.view.GestureDetector;
 import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
+import android.view.TextureView;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
@@ -86,9 +87,6 @@ public class GalleryActivity extends AppCompatActivity {
     private FilterMode lastRenderedFilter = null;
     private int lastRenderedCount = -1;
     private AlbumsController albumsController;
-
-    private enum FilterMode {ALL, IMAGES, VIDEOS, FAVORITES, BIN, PRIVATE}
-
     private PrivateVault privateVault;
     private boolean privateUnlocked = false;
     private SharedPreferences prefs;
@@ -229,6 +227,9 @@ public class GalleryActivity extends AppCompatActivity {
     private String pendingInitialPath;
 
     private boolean pendingOpenAfterLoad = false;
+
+    private enum FilterMode {ALL, IMAGES, VIDEOS, FAVORITES, BIN, PRIVATE}
+
 
     private final ActivityResultLauncher<String[]> requestMultiplePermissionsLauncher =
             registerForActivityResult(new ActivityResultContracts.RequestMultiplePermissions(),
@@ -408,6 +409,7 @@ public class GalleryActivity extends AppCompatActivity {
     }
 
 
+
     private void bindViews() {
         recyclerView = findViewById(R.id.galleryRecycler);
         albumRecycler = findViewById(R.id.albumRecycler);
@@ -542,11 +544,9 @@ public class GalleryActivity extends AppCompatActivity {
 
         recyclerView.setLayoutManager(new GridLayoutManager(this, GRID_COLUMNS));
         recyclerView.setAdapter(screenAdapter);
-        recyclerView.setHasFixedSize(true);
-        recyclerView.setItemViewCacheSize(8);
+        recyclerView.setItemViewCacheSize(20);
         recyclerView.setItemAnimator(null);
         setupDragToSelect();
-
 
         if (loadingSpinner != null) loadingSpinner.setVisibility(View.GONE);
         recyclerView.setVisibility(View.VISIBLE);
@@ -589,7 +589,6 @@ public class GalleryActivity extends AppCompatActivity {
                         openFullscreenViewerWithItems(path, albumItems);
                     }
 
-                    // ★ 3 new methods — reuse existing selection machinery.
                     @Override
                     public void onAlbumMediaLongPress(String path) {
                         if (!isActivityAlive()) return;
@@ -621,7 +620,7 @@ public class GalleryActivity extends AppCompatActivity {
         if (!albumIsActive()) return;
         RecyclerView mr = albumsController.getMediaRecycler();
         if (mr == null) return;
-        if (Boolean.TRUE.equals(mr.getTag(R.id.galleryRecycler))) return; // already attached
+        if (Boolean.TRUE.equals(mr.getTag(R.id.galleryRecycler))) return;
         mr.setTag(R.id.galleryRecycler, Boolean.TRUE);
         mr.addOnItemTouchListener(new RecyclerView.SimpleOnItemTouchListener() {
             @Override
@@ -658,10 +657,8 @@ public class GalleryActivity extends AppCompatActivity {
     private boolean isInAlbum(GalleryMediaItem it, String albumPath) {
         if (it == null || it.path == null || albumPath == null) return false;
 
-        // Raw path prefix — works regardless of canonical form on either side.
         if (it.path.startsWith(albumPath + "/")) return true;
 
-        // Canonical equality between the item's albumPath and the target.
         String itemCanon = it.albumPath == null ? null : getCachedCanonical(it.albumPath);
         String targetCanon = getCachedCanonical(albumPath);
         if (itemCanon != null && targetCanon != null && itemCanon.equals(targetCanon)) {
@@ -677,7 +674,6 @@ public class GalleryActivity extends AppCompatActivity {
             return;
         }
 
-        // Save grid scroll so back returns to the same row.
         GridLayoutManager glm = (GridLayoutManager) recyclerView.getLayoutManager();
         savedGridScrollPosition = glm != null ? glm.findFirstVisibleItemPosition() : -1;
 
@@ -766,14 +762,12 @@ public class GalleryActivity extends AppCompatActivity {
 
                     if (!pendingAlbumLoad.equals(albumPath)) return;
 
-                    // This result belongs to the currently selected album.
                     albumMedia.clear();
 
                     if (items != null) {
                         albumMedia.addAll(items);
                     }
 
-                    // Mark this particular album request as completed.
                     pendingAlbumLoad = null;
                     transientLoading = false;
 
@@ -788,7 +782,6 @@ public class GalleryActivity extends AppCompatActivity {
 
                     recyclerView.setVisibility(View.VISIBLE);
 
-                    // Directly display ONLY this album's media.
                     screenAdapter.submitList(new ArrayList<>(albumMedia));
 
                     updateSelectionUI();
@@ -822,9 +815,8 @@ public class GalleryActivity extends AppCompatActivity {
                         pendingAlbumLoad = null;
                     }
 
-                    if ((items == null || items.isEmpty()) && !cachedMedia.isEmpty()) {
-                        return;
-                    }
+                    if (items == null) return;
+                    if (items.isEmpty() && !cachedMedia.isEmpty()) return;
 
                     mediaEverLoaded = true;
                     repositoryAtEnd = endReached;
@@ -993,12 +985,12 @@ public class GalleryActivity extends AppCompatActivity {
         tv.setText("Private");
         tv.setTextColor(0xFF33FF33);
         tv.setTypeface(android.graphics.Typeface.MONOSPACE);
-        tv.setTextSize(16);                                            // was 13
-        tv.setGravity(Gravity.CENTER);                                 // was default
+        tv.setTextSize(16);
+        tv.setGravity(Gravity.CENTER);
         tv.setPadding(dpToPx(14), dpToPx(8), dpToPx(14), dpToPx(8));
-        tv.setBackgroundColor(0xFF000000);                             // match siblings
+        tv.setBackgroundColor(0xFF000000);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dpToPx(48));      // same height as others
+                ViewGroup.LayoutParams.MATCH_PARENT, dpToPx(48));
         tv.setLayoutParams(lp);
         tv.setClickable(true);
         tv.setFocusable(true);
@@ -1025,7 +1017,6 @@ public class GalleryActivity extends AppCompatActivity {
 
             @Override
             public void onCancelled() {
-                // User backed out — stay on whatever they were on.
             }
         });
     }
@@ -1127,8 +1118,6 @@ public class GalleryActivity extends AppCompatActivity {
     private void moveSelectedToPrivate() {
         if (selectedItems.isEmpty()) return;
 
-        // Make sure the vault exists and is unlocked. First-ever call has no
-        // password yet, so show the "create password" dialog.
         if (privateVault == null) privateVault = new PrivateVault(this);
         if (!privateVault.hasPassword()) {
             PrivateLockDialog.show(this, privateVault, new PrivateLockDialog.OnResult() {
@@ -1551,8 +1540,7 @@ public class GalleryActivity extends AppCompatActivity {
     private void tryOpenPendingInitialPath() {
         if (pendingInitialPath == null) return;
 
-        // If the adapter has no items yet, mark that we must retry
-        // once the repository finishes loading the first page.
+
         if (screenAdapter == null || screenAdapter.getItemCount() == 0) {
             pendingOpenAfterLoad = true;
             return;
@@ -1560,8 +1548,7 @@ public class GalleryActivity extends AppCompatActivity {
 
         String path = pendingInitialPath;
 
-        // Ensure the file is in the adapter's list — if not, insert it
-        // synchronously so openFullscreenViewer() sees it.
+
         List<GalleryMediaItem> current = screenAdapter.getItems();
         boolean present = false;
         for (GalleryMediaItem m : current) {
@@ -1591,14 +1578,11 @@ public class GalleryActivity extends AppCompatActivity {
             merged.add(mi);
             merged.addAll(current);
 
-            // submitList is async; we don't rely on it having landed yet —
-            // openFullscreenViewer will read the CURRENT list, but we also
-            // push the synthetic item into the "current" snapshot below.
+
             screenAdapter.submitList(merged);
             current = merged;
         }
 
-        // Reset to ALL filter so the viewer's list covers this file.
         currentFilter = FilterMode.ALL;
         currentAlbum = null;
         showAlbums = false;
@@ -1607,9 +1591,6 @@ public class GalleryActivity extends AppCompatActivity {
         pendingInitialPath = null;
         pendingOpenAfterLoad = false;
 
-        // Post one frame so RecyclerView has a chance to apply the list,
-        // but openFullscreenViewer is idempotent — it will re-insert
-        // the path if the list it reads doesn't contain it.
         final String openPath = path;
         recyclerView.post(() -> openFullscreenViewer(openPath));
     }
@@ -1828,8 +1809,6 @@ public class GalleryActivity extends AppCompatActivity {
             }
         }
 
-        // The list is already in LATEST_FIRST order because cachedMedia
-        // is sorted above, and we iterated it in order.
         screenAdapter.submitList(filtered);
         if (loadingSpinner != null) loadingSpinner.setVisibility(View.GONE);
         recyclerView.setVisibility(View.VISIBLE);
@@ -1904,7 +1883,6 @@ public class GalleryActivity extends AppCompatActivity {
                         selectedItems.isEmpty() ? View.GONE : View.VISIBLE);
             }
         } else if (isPrivate) {
-            // Private: three tabs at the bottom, logout at the top.
             if (privateTabsBar != null) privateTabsBar.setVisibility(View.VISIBLE);
             if (btnPrivateLogout != null) btnPrivateLogout.setVisibility(View.VISIBLE);
             if (selectionMode && !selectedItems.isEmpty()) {
@@ -2005,9 +1983,6 @@ public class GalleryActivity extends AppCompatActivity {
         if (nowFav) favs.add(path);
         else favs.remove(path);
         saveFavoritePaths(favs);
-
-        // Update BOTH cachedMedia and the adapter's current list with
-        // fresh instances so DiffUtil sees a real change.
         List<GalleryMediaItem> adapterItems = screenAdapter.getItems();
         List<GalleryMediaItem> replacement = new ArrayList<>(adapterItems.size());
         for (GalleryMediaItem it : adapterItems) {
@@ -2024,7 +1999,6 @@ public class GalleryActivity extends AppCompatActivity {
         }
         screenAdapter.submitList(replacement);
 
-        // Mirror into cachedMedia so subsequent refreshes keep the flag.
         for (int i = 0; i < cachedMedia.size(); i++) {
             if (cachedMedia.get(i).path.equals(path)) {
                 cachedMedia.get(i).isFavorite = nowFav;
@@ -2175,7 +2149,6 @@ public class GalleryActivity extends AppCompatActivity {
 
     private void updateMoveProgress(final long done, final long total,
                                     final String fileName) {
-        // Throttle: never post more than ~20 fps worth of updates.
         long now = System.currentTimeMillis();
         if (now - lastProgressUiPostMs < 50L && done < total) return;
         lastProgressUiPostMs = now;
@@ -2224,7 +2197,6 @@ public class GalleryActivity extends AppCompatActivity {
         boolean isBin = currentFilter == FilterMode.BIN;
         boolean isPrivate = currentFilter == FilterMode.PRIVATE;
 
-        // CHANGE PW chip — only in private mode, only when nothing selected.
         if (privateChangePwInTopBar != null) {
             privateChangePwInTopBar.setVisibility(
                     isPrivate && selectedItems.isEmpty() ? View.VISIBLE : View.GONE);
@@ -2239,7 +2211,6 @@ public class GalleryActivity extends AppCompatActivity {
             if (selectionCount != null) selectionCount.setText(selectedItems.size() + " selected");
         }
 
-        // Rebuild the action chips row depending on mode.
         rebuildSelectionActions(isBin, isPrivate);
 
         updateBarsVisibility();
@@ -2250,12 +2221,10 @@ public class GalleryActivity extends AppCompatActivity {
         selectionBar.removeAllViews();
 
         if (isBin) {
-            // Restore / Delete live in binBottomBar, nothing here.
             return;
         }
 
         if (isPrivate) {
-            // Are any selected items actually inside the private vault?
             boolean anyPrivate = false;
             String privateRoot = privateVault != null
                     ? privateVault.getPrivateDir().getAbsolutePath() : null;
@@ -2269,7 +2238,6 @@ public class GalleryActivity extends AppCompatActivity {
             }
 
             if (anyPrivate) {
-                // Selected at least one private file → offer "MOVE OUT".
                 TextView out = makeSelectionAction("MOVE OUT", 0xFFFFAA00,
                         () -> moveSelectedOutOfPrivate());
                 TextView cancelSel = makeSelectionAction("CANCEL", 0xFFFFFFFF,
@@ -2280,7 +2248,6 @@ public class GalleryActivity extends AppCompatActivity {
                 selectionBar.addView(out, lp);
                 selectionBar.addView(cancelSel, new LinearLayout.LayoutParams(lp));
             } else {
-                // Selected public files (Images/Videos tabs) → offer "MOVE TO PRIVATE".
                 TextView move = makeSelectionAction("MOVE TO PRIVATE", 0xFF33FF33,
                         () -> moveSelectedToPrivate());
                 TextView cancelSel = makeSelectionAction("CANCEL", 0xFFFFFFFF,
@@ -2294,7 +2261,6 @@ public class GalleryActivity extends AppCompatActivity {
             return;
         }
 
-        // Normal mode
         TextView bin = makeSelectionAction("BIN", 0xFFFF4444,
                 () -> moveSelectedToTrash());
         TextView share = makeSelectionAction("SHARE", 0xFFFFFFFF,
@@ -2398,7 +2364,6 @@ public class GalleryActivity extends AppCompatActivity {
                     continue;
                 }
 
-                // ★ Stream with progress.
                 boolean ok = false;
                 final int BUF = 256 * 1024;
                 long copied = 0;
@@ -2773,8 +2738,6 @@ public class GalleryActivity extends AppCompatActivity {
         String oldPath = item.path;
         String newPath = trashedFile.getAbsolutePath();
 
-        // Replace the entry in cachedMedia with a fresh instance carrying
-        // the new path so the differ sees a real change.
         for (int i = 0; i < cachedMedia.size(); i++) {
             if (cachedMedia.get(i).path.equals(oldPath)) {
                 GalleryMediaItem repl = new GalleryMediaItem(
@@ -2787,7 +2750,6 @@ public class GalleryActivity extends AppCompatActivity {
             }
         }
 
-        // Make it visible in Bin immediately without waiting for the scan.
         GalleryMediaItem binItem = new GalleryMediaItem(
                 item.id, newPath, trashedFile.getName(), item.albumPath,
                 item.dateModifiedSeconds, item.type);
@@ -2903,9 +2865,6 @@ public class GalleryActivity extends AppCompatActivity {
     private void moveSelectedToTrash() {
         if (selectedItems.isEmpty()) return;
 
-        // In the Private tab the correct action is handled by
-        // rebuildSelectionActions → moveSelectedOutOfPrivate(), so a direct
-        // call here should just delete (matches old behaviour). Keep it simple.
         if (currentFilter == FilterMode.PRIVATE) {
             final List<String> paths = new ArrayList<>(selectedItems);
             final Toast t = Toast.makeText(this, "Deleting…", Toast.LENGTH_SHORT);
@@ -2940,7 +2899,6 @@ public class GalleryActivity extends AppCompatActivity {
             return;
         }
 
-        // Public gallery → rename to ".trashed." (existing behaviour).
         final List<String> paths = new ArrayList<>(selectedItems);
         final Toast t = Toast.makeText(this, "Moving…", Toast.LENGTH_SHORT);
         t.show();
@@ -3100,7 +3058,6 @@ public class GalleryActivity extends AppCompatActivity {
                             t.cancel();
                             if (!isActivityAlive()) return;
 
-                            // Remove from cachedMedia immediately.
                             for (String path : paths) {
                                 for (int i = cachedMedia.size() - 1; i >= 0; i--) {
                                     if (cachedMedia.get(i).path.equals(path)) {
@@ -3324,7 +3281,6 @@ public class GalleryActivity extends AppCompatActivity {
                     videoControlContainer.setVisibility(View.GONE);
                 overlayControlsVisible = false;
             }
-
             @Override
             public void onVideoVisible(HardwareVideoController ctrl, int position) {
                 if (position != fullscreenCurrentPosition) return;
@@ -3334,6 +3290,9 @@ public class GalleryActivity extends AppCompatActivity {
                 currentFullscreenVideoPosition = position;
                 currentFullscreenPageIsVideo = true;
                 ctrl.setCompletionListener(() -> loopWithRetry(ctrl, 0));
+
+                ctrl.start();
+                isOverlayVideoPlaying = true;
 
                 syncOverlayPlayPauseIcon();
                 updateOverlayTitle();
@@ -3365,10 +3324,6 @@ public class GalleryActivity extends AppCompatActivity {
                 String path = (position >= 0 && position < fullscreenMediaPaths.size())
                         ? fullscreenMediaPaths.get(position) : null;
                 boolean targetIsVideo = isVideoPath(path);
-
-                // Note: no controller release loop here. The single shared controller
-                // swaps its surface and media item in activateControllerAt /
-                // showPath without ever being released or re-created.
 
                 if (fullscreenAdapter != null) {
                     fullscreenAdapter.setActivePosition(position);
@@ -3578,8 +3533,6 @@ public class GalleryActivity extends AppCompatActivity {
         overlayPendingSeekMs = -1;
         userPausedPaths.clear();
 
-// ★ Critical: set active position BEFORE notifyDataSetChanged so the
-//   ViewHolder for currentIndex is bound with videoSurface == VISIBLE.
         if (fullscreenAdapter != null) {
             fullscreenAdapter.setActivePosition(currentIndex);
         }
@@ -3612,7 +3565,6 @@ public class GalleryActivity extends AppCompatActivity {
 
         if (isVideoPath(fullscreenMediaPaths.get(currentIndex))) {
             final int finalIndex = currentIndex;
-            // Post twice: once for layout, once for surface attachment.
             fullscreenViewPager.post(() ->
                     fullscreenViewPager.post(() -> {
                         if (fullscreenCurrentPosition == finalIndex)
@@ -3706,7 +3658,7 @@ public class GalleryActivity extends AppCompatActivity {
             savedPosSync = null;
         }
         if (fullscreenAdapter != null) {
-            fullscreenAdapter.reset();   // releases the single ExoPlayer + MediaCodec
+            fullscreenAdapter.pauseForClose();
         }
         currentFullscreenVideo = null;
         currentFullscreenVideoPosition = -1;
@@ -3801,8 +3753,7 @@ public class GalleryActivity extends AppCompatActivity {
                 View child = rv.getChildAt(i);
                 RecyclerView.ViewHolder vh = rv.getChildViewHolder(child);
                 if (vh == null || vh.getBindingAdapterPosition() != targetPosition) continue;
-
-                SurfaceView surface = child.findViewById(R.id.fullscreen_video);
+                TextureView surface = child.findViewById(R.id.fullscreen_video);   // ← TextureView
                 if (surface == null) continue;
                 if (surface.getVisibility() != View.VISIBLE) surface.setVisibility(View.VISIBLE);
 
@@ -3813,7 +3764,6 @@ public class GalleryActivity extends AppCompatActivity {
                 currentFullscreenVideoPosition = targetPosition;
                 currentFullscreenPageIsVideo = true;
                 overlayPendingSeekMs = -1;
-
                 surface.setOnTouchListener((v, event) -> {
                     if (overlayVideoGestureDetector != null)
                         overlayVideoGestureDetector.onTouchEvent(event);
@@ -3884,7 +3834,6 @@ public class GalleryActivity extends AppCompatActivity {
         String path = (position >= 0 && position < fullscreenMediaPaths.size())
                 ? fullscreenMediaPaths.get(position) : null;
 
-        // Only honor a pause if the user explicitly paused THIS SAME file this session.
         int restoreMs = -1;
         boolean restorePlaying = true;
         if (path != null
@@ -3915,11 +3864,7 @@ public class GalleryActivity extends AppCompatActivity {
         boolean playing = false;
         if (currentFullscreenVideo != null) {
             try {
-                // isPlaying() is true only after ExoPlayer transitions to
-                // STATE_READY *and* is rendering. If the player is still
-                // BUFFERING or the surface hasn't produced frames yet,
-                // isPlaying() returns false — which is what we want the
-                // icon to reflect.
+
                 playing = currentFullscreenVideo.isPlaying();
             } catch (Exception ignored) {
             }
@@ -4004,6 +3949,7 @@ public class GalleryActivity extends AppCompatActivity {
                 btnCenterPlayPause.setImageResource(android.R.drawable.ic_media_play);
             videoHandler.removeCallbacks(overlayProgressRunnable);
         } else {
+
             currentFullscreenVideo.start();
             isOverlayVideoPlaying = true;
             if (path != null) userPausedPaths.remove(path);
@@ -4046,13 +3992,11 @@ public class GalleryActivity extends AppCompatActivity {
         if (cur < 0) cur = 0;
         if (cur > dur) cur = dur;
 
-        // If a pending seek is in flight, keep the UI on the pending target
-        // until the player catches up — but only for ~600 ms.
+
         if (overlayPendingSeekMs >= 0 && overlayPendingSeekMs <= dur) {
             cur = overlayPendingSeekMs;
         } else {
-            // Player has caught up — clear the commanded target so the next
-            // skip bases off the real position again.
+
             if (lastSeekTargetMs >= 0
                     && Math.abs(cur - lastSeekTargetMs) <= 500) {
                 lastSeekTargetMs = -1;
@@ -4266,6 +4210,7 @@ public class GalleryActivity extends AppCompatActivity {
     }
     @Override
     public void onBackPressed() {
+        // 1. Fullscreen viewer open -> close it.
         if (fullscreenOverlay != null && fullscreenOverlay.getVisibility() == View.VISIBLE) {
             try {
                 closeFullscreenViewer();
@@ -4275,6 +4220,16 @@ public class GalleryActivity extends AppCompatActivity {
             if (brightnessDimOverlay != null) brightnessDimOverlay.setVisibility(View.GONE);
             return;
         }
+
+
+        if (albumsController != null
+                && (albumsController.isAlbumOpen() || albumsController.isShowingAlbums())) {
+            albumsController.onBack();
+            updateTopNavBar();
+            updateBarsVisibility();
+            return;
+        }
+
         super.onBackPressed();
     }
 
@@ -4284,12 +4239,11 @@ public class GalleryActivity extends AppCompatActivity {
         privateUnlocked = false;
         if (fullscreenAdapter != null) {
             try {
-                fullscreenAdapter.getController(0).release();   // full teardown
+                fullscreenAdapter.hardReset();
             } catch (Exception ignored) {}
         }
         super.onDestroy();
     }
-
     private String formatTime(int ms) {
         if (ms < 0) ms = 0;
         int totalSec = ms / 1000;
