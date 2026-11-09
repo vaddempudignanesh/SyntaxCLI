@@ -24,13 +24,16 @@ import java.util.UUID;
 
 public class GestureActionEditorActivity extends Activity {
 
-    private static final int BG     = 0xFF000000;
-    private static final int GREEN  = 0xFF33FF33;
-    private static final int DIM    = 0xFF00AA00;
-    private static final int CARD_BG     = 0xFF0A0A0A;
+    private static final int BG = 0xFF000000;
+    private static final int GREEN = 0xFF33FF33;
+    private static final int DIM = 0xFF00AA00;
+    private static final int CARD_BG = 0xFF0A0A0A;
     private static final int CARD_BORDER = 0xFF1F3F1F;
     private static final int REQ_PICK_WALLPAPER = 4211;
-    private static final int REQ_PICK_VIDEO     = 4212;
+    private static final int REQ_PICK_VIDEO = 4212;
+
+    private EditText testerField;
+    private TextView testerStatus;
 
     private int pendingTextColor;
     private int pendingBgColor;
@@ -61,11 +64,11 @@ public class GestureActionEditorActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         ImeColorStore store = ImeColorStore.get(this);
-        pendingTextColor          = store.getTextColor();
-        pendingBgColor            = store.getBgColor();
-        pendingKeyAlpha           = store.getKeyAlpha();
-        pendingWallpaperEnabled   = store.isWallpaperEnabled();
-        pendingWallpaperDim       = store.getWallpaperDim();
+        pendingTextColor = store.getTextColor();
+        pendingBgColor = store.getBgColor();
+        pendingKeyAlpha = store.getKeyAlpha();
+        pendingWallpaperEnabled = store.isWallpaperEnabled();
+        pendingWallpaperDim = store.getWallpaperDim();
         pendingWallpaperImagePath = store.getWallpaperImagePath();
         pendingWallpaperVideoPath = store.getWallpaperVideoPath();
         build();
@@ -92,16 +95,12 @@ public class GestureActionEditorActivity extends Activity {
         TextView sub = new TextView(this);
         sub.setText("Assign an action to a key. Long-press that key on the keyboard to run it.\n"
                 + "Long-press SPACE to open this screen.");
-
-
         sub.setTextColor(DIM);
         sub.setTextSize(11);
         sub.setPadding(0, dp(8), 0, dp(16));
         root.addView(sub);
+        root.addView(buildTesterCard());
 
-        // ═══════════════════════════════════════════════════════════════
-// LAYOUT CUSTOMIZATION CARD
-// ═══════════════════════════════════════════════════════════════
         LinearLayout layoutCard = new LinearLayout(this);
         layoutCard.setOrientation(LinearLayout.VERTICAL);
         layoutCard.setPadding(dp(14), dp(14), dp(14), dp(14));
@@ -132,13 +131,12 @@ public class GestureActionEditorActivity extends Activity {
 
         final ImeColorStore layoutStore = ImeColorStore.get(this);
 
-// Helper builder for one labelled slider row.
         java.util.function.BiFunction<String, float[], LinearLayout> makeLayoutSlider =
                 (label, rangeMinMaxDefaultStep) -> {
-                    float min   = rangeMinMaxDefaultStep[0];
-                    float max   = rangeMinMaxDefaultStep[1];
-                    float dflt  = rangeMinMaxDefaultStep[2];
-                    float step  = rangeMinMaxDefaultStep[3];
+                    float min = rangeMinMaxDefaultStep[0];
+                    float max = rangeMinMaxDefaultStep[1];
+                    float dflt = rangeMinMaxDefaultStep[2];
+                    float step = rangeMinMaxDefaultStep[3];
                     int steps = Math.round((max - min) / step);
 
                     LinearLayout row = new LinearLayout(this);
@@ -182,15 +180,14 @@ public class GestureActionEditorActivity extends Activity {
                         @Override public void onProgressChanged(SeekBar s, int p, boolean u) {
                             float v = min + p * step;
                             value.setText(String.format(java.util.Locale.US, "%.1f", v));
-                            // Store immediately.
                             switch (label) {
-                                case "ROW HEIGHT":   layoutStore.saveRowHeightDp(v);       break;
-                                case "ROW GAP":      layoutStore.saveRowGapDp(v);          break;
-                                case "KEY GAP":      layoutStore.saveKeyGapDp(v);          break;
-                                case "KEY RADIUS":   layoutStore.saveKeyCornerRadiusDp(v); break;
-                                case "TAB ROW HEIGHT": layoutStore.saveTabRowHeightDp(v);  break;
+                                case "ROW HEIGHT": layoutStore.saveRowHeightDp(v); break;
+                                case "ROW GAP": layoutStore.saveRowGapDp(v); break;
+                                case "KEY GAP": layoutStore.saveKeyGapDp(v); break;
+                                case "KEY RADIUS": layoutStore.saveKeyCornerRadiusDp(v); break;
+                                case "TAB ROW HEIGHT": layoutStore.saveTabRowHeightDp(v); break;
                             }
-                            if (u) broadcastLayoutChanged();
+                            broadcastLayoutChanged();          // ← live, every tick
                         }
                         @Override public void onStartTrackingTouch(SeekBar s) { }
                         @Override public void onStopTrackingTouch(SeekBar s) {
@@ -198,43 +195,36 @@ public class GestureActionEditorActivity extends Activity {
                         }
                     });
 
-                    // Tag the row with the initial value so refresh can reset the slider.
                     row.setTag(new float[]{ min, max, step });
 
                     return row;
                 };
 
-// Row height: 30..100, default from prefs, step 1
         LinearLayout rowHeightRow = makeLayoutSlider.apply(
                 "ROW HEIGHT", new float[]{30f, 100f,
                         layoutStore.getRowHeightDp(), 1f});
         layoutCard.addView(rowHeightRow);
 
-// Row gap: 0..30, step 0.5
         LinearLayout rowGapRow = makeLayoutSlider.apply(
                 "ROW GAP", new float[]{0f, 30f,
                         layoutStore.getRowGapDp(), 0.5f});
         layoutCard.addView(rowGapRow);
 
-// Key gap: 0..20, step 0.5
         LinearLayout keyGapRow = makeLayoutSlider.apply(
                 "KEY GAP", new float[]{0f, 20f,
                         layoutStore.getKeyGapDp(), 0.5f});
         layoutCard.addView(keyGapRow);
 
-// Key radius: 0..20, step 0.5
         LinearLayout keyRadiusRow = makeLayoutSlider.apply(
                 "KEY RADIUS", new float[]{0f, 20f,
                         layoutStore.getKeyCornerRadiusDp(), 0.5f});
         layoutCard.addView(keyRadiusRow);
 
-// Tab row height: 20..80, step 1
         LinearLayout tabRowHeightRow = makeLayoutSlider.apply(
                 "TAB ROW HEIGHT", new float[]{20f, 80f,
                         layoutStore.getTabRowHeightDp(), 1f});
         layoutCard.addView(tabRowHeightRow);
 
-// Reset button
         TextView resetBtn = new TextView(this);
         resetBtn.setText("RESET TO DEFAULTS");
         resetBtn.setTextColor(0xFFFFAA00);
@@ -259,10 +249,36 @@ public class GestureActionEditorActivity extends Activity {
             layoutStore.saveTabRowHeightDp(KeyboardConfig.DEFAULT_TAB_ROW_HEIGHT_DP);
             broadcastLayoutChanged();
             Toast.makeText(this, "Layout reset", Toast.LENGTH_SHORT).show();
-            // Re-run activity to reset slider positions.
             recreate();
         });
 
+        TextView restartImeBtn = new TextView(this);
+        restartImeBtn.setText("⟳  RESTART IME SERVICE");
+        restartImeBtn.setTextColor(0xFFFFAA00);
+        restartImeBtn.setTypeface(Typeface.MONOSPACE);
+        restartImeBtn.setTextSize(13);
+        restartImeBtn.setGravity(Gravity.CENTER);
+        restartImeBtn.setPadding(dp(14), dp(12), dp(14), dp(12));
+        GradientDrawable restartBg = new GradientDrawable();
+        restartBg.setColor(0xFF1A1200);
+        restartBg.setCornerRadius(dp(6));
+        restartBg.setStroke(dp(1), 0xFFFFAA00);
+        restartImeBtn.setBackground(restartBg);
+        restartImeBtn.setClickable(true);
+        restartImeBtn.setFocusable(true);
+        LinearLayout.LayoutParams restartLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        restartLp.topMargin = dp(10);
+        layoutCard.addView(restartImeBtn, restartLp);
+
+        restartImeBtn.setOnClickListener(v -> {
+            new android.app.AlertDialog.Builder(this)
+                    .setTitle("Restart keyboard?")
+                    .setMessage("The keyboard will restart with the new settings applied.")
+                    .setPositiveButton("RESTART", (d, w) -> killImeProcess())
+                    .setNegativeButton("CANCEL", null)
+                    .show();
+        });
         LinearLayout themeCard = new LinearLayout(this);
         themeCard.setOrientation(LinearLayout.VERTICAL);
         themeCard.setPadding(dp(14), dp(14), dp(14), dp(14));
@@ -803,6 +819,29 @@ public class GestureActionEditorActivity extends Activity {
         refreshPreviews();
     }
 
+    private void broadcastRestartIme() {
+        try {
+            java.io.File marker = new java.io.File(
+                    getFilesDir(), "ime_restart.requested");
+            marker.getParentFile().mkdirs();
+            java.io.FileOutputStream fos =
+                    new java.io.FileOutputStream(marker, false);
+            fos.write(1);
+            fos.getFD().sync();
+            fos.close();
+            marker.setLastModified(System.currentTimeMillis());
+
+            XLog.d("IME-EDITOR", "restart marker written: " + marker.getAbsolutePath());
+
+            try {
+                android.content.Intent i = new android.content.Intent(
+                        BasicImeService.ACTION_RESTART_IME);
+                sendBroadcast(i);
+            } catch (Throwable ignored) { }
+        } catch (Throwable t) {
+            XLog.e("IME-EDITOR", "restart marker write failed", t);
+        }
+    }
     private void saveWallpaper() {
         ImeColorStore.get(this).saveWallpaper(
                 pendingWallpaperEnabled,
@@ -810,6 +849,7 @@ public class GestureActionEditorActivity extends Activity {
                 pendingWallpaperImagePath,
                 pendingWallpaperVideoPath);
     }
+
 
     private LinearLayout makeColorRow(String label, int currentColor,
                                       ColorPickedCallback onPicked) {
@@ -872,7 +912,7 @@ public class GestureActionEditorActivity extends Activity {
                         "please allow 'Display over other apps' for this keyboard.")
                 .setPositiveButton("OPEN SETTINGS", (d, w) -> {
                     try {
-                        android.content.Intent i = new android.content.Intent(
+                        Intent i = new Intent(
                                 android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                                 android.net.Uri.parse("package:" + getPackageName()));
                         startActivity(i);
@@ -888,6 +928,41 @@ public class GestureActionEditorActivity extends Activity {
         ActivityEntry(String component, String label) {
             this.component = component;
             this.label = label;
+        }
+    }
+
+    private void killImeProcess() {
+        try {
+            android.app.ActivityManager am =
+                    (android.app.ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+            if (am == null) {
+                Toast.makeText(this, "ActivityManager unavailable", Toast.LENGTH_LONG).show();
+                return;
+            }
+
+            // killBackgroundProcesses kills every process of the given package
+            // that is *not* in the foreground. The main process (this Activity)
+            // is in the foreground, so it survives. The :keyboard IME process
+            // is not foregrounded (the keyboard is hidden behind this Activity),
+            // so it gets killed. The IME restarts on next focus and reloads
+            // everything from disk — every pref, every setting, every gesture.
+            am.killBackgroundProcesses(getPackageName());
+
+            // Also try forceStopPackage (hidden API) so ROMs that ignore
+            // killBackgroundProcesses still get the memo.
+            try {
+                java.lang.reflect.Method m = android.app.ActivityManager.class
+                        .getMethod("forceStopPackage", String.class);
+                m.invoke(am, getPackageName());
+            } catch (Throwable ignored) { }
+
+            Toast.makeText(this,
+                    "Keyboard process killed — it will restart on next focus",
+                    Toast.LENGTH_LONG).show();
+        } catch (Throwable t) {
+            XLog.e("IME-EDITOR", "killImeProcess failed", t);
+            Toast.makeText(this, "Restart failed: " + t.getMessage(),
+                    Toast.LENGTH_LONG).show();
         }
     }
 
@@ -1230,7 +1305,8 @@ public class GestureActionEditorActivity extends Activity {
             if (a.type == KeyAction.TYPE_TEXT) {
                 auto = a.autoEnter ? "  [ENTER: ON]" : "  [ENTER: OFF]";
             }
-            line1.setText("KEY: [" + a.keyChar + "]  →  " + kindLabel + a.payload + auto);           line1.setTextColor(GREEN);
+            line1.setText("KEY: [" + a.keyChar + "]  →  " + kindLabel + a.payload + auto);
+            line1.setTextColor(GREEN);
             line1.setTypeface(Typeface.MONOSPACE);
             line1.setTextSize(13);
             row.addView(line1);
@@ -1265,13 +1341,180 @@ public class GestureActionEditorActivity extends Activity {
 
     private void showAddDialog() { showEditDialog(null); }
 
-    private void broadcastLayoutChanged() {
-        android.content.Intent i = new android.content.Intent(
-                BasicImeService.ACTION_LAYOUT_CHANGED);
-        i.setPackage(getPackageName());
-        sendBroadcast(i);
+
+    private LinearLayout buildTesterCard() {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(14), dp(14), dp(14), dp(14));
+
+        GradientDrawable cardBg = new GradientDrawable();
+        cardBg.setColor(CARD_BG);
+        cardBg.setCornerRadius(dp(8));
+        cardBg.setStroke(dp(1), GREEN);   // bright border so it stands out
+        card.setBackground(cardBg);
+
+        LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        cardLp.bottomMargin = dp(16);
+        card.setLayoutParams(cardLp);
+
+        TextView header = new TextView(this);
+        header.setText("▌ TEST KEYBOARD");
+        header.setTextColor(GREEN);
+        header.setTextSize(13);
+        header.setTypeface(Typeface.MONOSPACE);
+        card.addView(header);
+
+        TextView hint = new TextView(this);
+        hint.setText("Tap the box below to focus it. The keyboard will slide up. "
+                + "Type here to test the layout, gestures, emoji and clipboard "
+                + "without leaving this screen.");
+        hint.setTextColor(DIM);
+        hint.setTextSize(11);
+        hint.setTypeface(Typeface.MONOSPACE);
+        hint.setPadding(0, dp(4), 0, dp(10));
+        card.addView(hint);
+
+        testerField = new EditText(this);
+        testerField.setHint("type here...");
+        testerField.setTextColor(GREEN);
+        testerField.setHintTextColor(DIM);
+        testerField.setTypeface(Typeface.MONOSPACE);
+        testerField.setTextSize(14);
+        testerField.setMinLines(3);
+        testerField.setMaxLines(6);
+        testerField.setGravity(Gravity.TOP | Gravity.START);
+        testerField.setInputType(InputType.TYPE_CLASS_TEXT
+                | InputType.TYPE_TEXT_FLAG_MULTI_LINE
+                | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        testerField.setPadding(dp(10), dp(8), dp(10), dp(8));
+
+        GradientDrawable testBg = new GradientDrawable();
+        testBg.setColor(0xFF000000);
+        testBg.setCornerRadius(dp(6));
+        testBg.setStroke(dp(1), GREEN);
+        testerField.setBackground(testBg);
+
+        LinearLayout.LayoutParams tfLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        card.addView(testerField, tfLp);
+
+        // Tapping the box explicitly requests focus + shows the IME.
+        testerField.setOnClickListener(v -> {
+            testerField.requestFocus();
+            testerField.post(() -> {
+                android.view.inputmethod.InputMethodManager imm =
+                        (android.view.inputmethod.InputMethodManager)
+                                getSystemService(Context.INPUT_METHOD_SERVICE);
+                if (imm != null) imm.showSoftInput(testerField,
+                        android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
+            });
+        });
+        testerField.setOnFocusChangeListener((v, hasFocus) -> {
+            if (hasFocus) {
+                testerField.postDelayed(() -> {
+                    android.view.inputmethod.InputMethodManager imm =
+                            (android.view.inputmethod.InputMethodManager)
+                                    getSystemService(Context.INPUT_METHOD_SERVICE);
+                    if (imm != null) imm.showSoftInput(testerField,
+                            android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
+                }, 50L);
+            }
+            updateTesterStatus();
+        });
+
+        // Tiny character counter + clear button row.
+        LinearLayout bottomRow = new LinearLayout(this);
+        bottomRow.setOrientation(LinearLayout.HORIZONTAL);
+        bottomRow.setGravity(Gravity.CENTER_VERTICAL);
+        bottomRow.setPadding(0, dp(8), 0, 0);
+
+        testerStatus = new TextView(this);
+        testerStatus.setTextColor(DIM);
+        testerStatus.setTextSize(11);
+        testerStatus.setTypeface(Typeface.MONOSPACE);
+        testerStatus.setText("");
+        bottomRow.addView(testerStatus, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView clearBtn = new TextView(this);
+        clearBtn.setText("CLEAR");
+        clearBtn.setTextColor(GREEN);
+        clearBtn.setTextSize(11);
+        clearBtn.setTypeface(Typeface.MONOSPACE);
+        clearBtn.setPadding(dp(12), dp(6), dp(12), dp(6));
+        GradientDrawable clearBg = new GradientDrawable();
+        clearBg.setColor(0xFF0A1A0A);
+        clearBg.setCornerRadius(dp(4));
+        clearBg.setStroke(dp(1), CARD_BORDER);
+        clearBtn.setBackground(clearBg);
+        clearBtn.setClickable(true);
+        clearBtn.setOnClickListener(v -> {
+            testerField.setText("");
+            testerField.requestFocus();
+            updateTesterStatus();
+        });
+        bottomRow.addView(clearBtn, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        card.addView(bottomRow);
+
+        // Live char counter.
+        testerField.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void afterTextChanged(android.text.Editable s) {
+                updateTesterStatus();
+            }
+        });
+
+        // Focus on attach so a single tap (or the showSoftInput post above)
+        // reliably brings up the IME.
+        testerField.post(() -> updateTesterStatus());
+
+        return card;
     }
 
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (testerField != null) {
+            // Refresh status when coming back from the overlay permission
+            // dialog or a picker.
+            updateTesterStatus();
+        }
+    }
+    private void updateTesterStatus() {
+        if (testerStatus == null || testerField == null) return;
+        int n = testerField.getText() == null ? 0 : testerField.getText().length();
+        boolean focused = testerField.hasFocus();
+        testerStatus.setText((focused ? "FOCUSED" : "IDLE") + "  ·  " + n + " chars");
+        testerStatus.setTextColor(focused ? 0xFFFFAA00 : DIM);
+    }
+
+    private void broadcastLayoutChanged() {
+        ImeColorStore s = ImeColorStore.get(this);
+        LiveLayoutBridge.LayoutSnapshot snap =
+                new LiveLayoutBridge.LayoutSnapshot(
+                        s.getRowHeightDp(),
+                        s.getRowGapDp(),
+                        s.getKeyGapDp(),
+                        s.getKeyCornerRadiusDp(),
+                        s.getTabRowHeightDp(),
+                        System.currentTimeMillis());
+
+        // Direct call into the service's public entry point.
+        // (Writes the live channel file; applied by the IME process within ~180ms.)
+        BasicImeService.pushLiveLayout(this, snap);
+
+        // Keep the legacy broadcast too — harmless, and lets an older
+        // service build in the same APK react until it's rebuilt.
+        try {
+            Intent i = new Intent(BasicImeService.ACTION_LAYOUT_CHANGED);
+            i.setPackage(getPackageName());
+            sendBroadcast(i);
+        } catch (Throwable ignored) { }
+    }
     private View makeOnOffRow(String label, boolean initial,
                               java.util.function.Consumer<Boolean> onChange) {
         final boolean[] state = { initial };

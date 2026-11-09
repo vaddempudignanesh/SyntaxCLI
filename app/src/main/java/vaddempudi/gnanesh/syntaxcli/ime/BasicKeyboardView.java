@@ -896,6 +896,13 @@ public class BasicKeyboardView extends View {
         invalidate();
     }
 
+    /** Re-read ImeColorStore into the layout and re-measure. */
+    public void rebuildFromStore() {
+        rebuildHitKeys();
+        requestLayout();
+        invalidate();
+    }
+
     private static final class HitKey {
         final BasicKey key;
         final RectF rect;

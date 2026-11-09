@@ -14,7 +14,6 @@ public final class ImeColorStore {
     private static final String K_WP_IMG= "key_wallpaper_image";
     private static final String K_WP_VID= "key_wallpaper_video";
 
-    // ── Layout customization keys (same prefs file) ─────────────
     private static final String K_ROW_H       = "layout_row_height_dp";
     private static final String K_ROW_GAP     = "layout_row_gap_dp";
     private static final String K_KEY_GAP     = "layout_key_gap_dp";
@@ -68,6 +67,11 @@ public final class ImeColorStore {
         keyGapDp           = prefs.getFloat(K_KEY_GAP,    KeyboardConfig.DEFAULT_KEY_HORIZONTAL_GAP_DP);
         keyCornerRadiusDp  = prefs.getFloat(K_KEY_RADIUS, KeyboardConfig.DEFAULT_KEY_CORNER_RADIUS_DP);
         tabRowHeightDp     = prefs.getFloat(K_TAB_H,      KeyboardConfig.DEFAULT_TAB_ROW_HEIGHT_DP);
+
+        // Overlay any newer live snapshot left by the editor process.
+        LiveLayoutBridge.LayoutSnapshot snap =
+                LiveLayoutBridge.read(ctx.getApplicationContext());
+        if (snap != null) applySnapshotInternal(snap);
     }
 
     public static ImeColorStore get(Context ctx) {
@@ -79,7 +83,6 @@ public final class ImeColorStore {
         return INSTANCE;
     }
 
-    // ── Existing getters ────────────────────────────────────────
     public int getTextColor() { return textColor; }
     public int getBgColor()   { return bgColor; }
     public int getKeyAlpha()  { return keyAlpha; }
@@ -142,7 +145,6 @@ public final class ImeColorStore {
                 .apply();
     }
 
-    // ── Layout customization ────────────────────────────────────
     public float getRowHeightDp()       { return rowHeightDp; }
     public float getRowGapDp()          { return rowGapDp; }
     public float getKeyGapDp()          { return keyGapDp; }
@@ -172,6 +174,20 @@ public final class ImeColorStore {
     public void saveTabRowHeightDp(float dp) {
         tabRowHeightDp = clamp(dp, 20f, 80f);
         prefs.edit().putFloat(K_TAB_H, tabRowHeightDp).apply();
+    }
+
+    // ── Live in-memory update (no prefs write) ────────────────
+    public void applySnapshot(LiveLayoutBridge.LayoutSnapshot s) {
+        applySnapshotInternal(s);
+    }
+
+    private void applySnapshotInternal(LiveLayoutBridge.LayoutSnapshot s) {
+        if (s == null) return;
+        rowHeightDp       = clamp(s.rowHeightDp,    30f, 100f);
+        rowGapDp          = clamp(s.rowGapDp,        0f,  30f);
+        keyGapDp          = clamp(s.keyGapDp,        0f,  20f);
+        keyCornerRadiusDp = clamp(s.keyRadiusDp,     0f,  20f);
+        tabRowHeightDp    = clamp(s.tabRowHeightDp, 20f,  80f);
     }
 
     private static float clamp(float v, float lo, float hi) {

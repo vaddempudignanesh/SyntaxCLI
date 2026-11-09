@@ -1459,7 +1459,7 @@ public class AuraBrowserActivity extends AppCompatActivity {
         rebuildTabSheetRows();
     }
 
-    
+
     private void rebuildTabSheetRows() {
         if (tabSheetDialog == null || tabSheetList == null) return;
         if (!tabSheetDialog.isShowing()) return;

@@ -1,6 +1,9 @@
 package vaddempudi.gnanesh.syntaxcli.ime;
 
 import android.content.ClipboardManager;
+import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
 import android.graphics.Matrix;
 import android.graphics.SurfaceTexture;
 import android.inputmethodservice.InputMethodService;
@@ -41,8 +44,13 @@ public class BasicImeService extends InputMethodService
     public static final String ACTION_LAYOUT_CHANGED =
             "vaddempudi.gnanesh.syntaxcli.ime.LAYOUT_CHANGED";
 
-    private android.content.BroadcastReceiver layoutChangeReceiver;
+    public static final String ACTION_RESTART_IME =
+            "vaddempudi.gnanesh.syntaxcli.ime.RESTART_IME";
 
+    public static final String PREFS_RESTART = "ime_restart_signal";
+    public static final String KEY_RESTART = "restart_requested_at";
+
+    private android.content.BroadcastReceiver layoutChangeReceiver;
 
     @Override
     public void closePanel() {
@@ -74,7 +82,7 @@ public class BasicImeService extends InputMethodService
         InputConnection ic = getCurrentInputConnection();
         if (ic == null) return;
         ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER));
-        ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_ENTER));
+        ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER));
     }
 
     @Override
@@ -82,7 +90,7 @@ public class BasicImeService extends InputMethodService
         InputConnection ic = getCurrentInputConnection();
         if (ic == null) return;
         ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL));
-        ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_DEL));
+        ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DEL));
     }
 
     @Override
@@ -90,7 +98,6 @@ public class BasicImeService extends InputMethodService
         InputConnection ic = getCurrentInputConnection();
         if (ic != null) ic.commitText(emoji, 1);
     }
-
 
     @Override
     public View onCreateInputView() {
@@ -130,7 +137,7 @@ public class BasicImeService extends InputMethodService
                     spec);
             h = keyboardView.getMeasuredHeight();
         }
-        keyboardWidthPx  = w;
+        keyboardWidthPx = w;
         keyboardHeightPx = h;
     }
 
@@ -140,7 +147,7 @@ public class BasicImeService extends InputMethodService
         ViewGroup.LayoutParams rootLp = rootContainer.getLayoutParams();
         if (rootLp != null) {
             rootLp.height = keyboardHeightPx;
-            rootLp.width  = keyboardWidthPx;
+            rootLp.width = keyboardWidthPx;
             rootContainer.setLayoutParams(rootLp);
         } else {
             rootContainer.setMinimumHeight(keyboardHeightPx);
@@ -151,7 +158,7 @@ public class BasicImeService extends InputMethodService
             ViewGroup.LayoutParams lp = keyboardView.getLayoutParams();
             if (lp != null) {
                 lp.height = keyboardHeightPx;
-                lp.width  = keyboardWidthPx;
+                lp.width = keyboardWidthPx;
                 keyboardView.setLayoutParams(lp);
             }
         }
@@ -225,7 +232,7 @@ public class BasicImeService extends InputMethodService
 
         float sx = (float) vw / videoWidth;
         float sy = (float) vh / videoHeight;
-        float s  = Math.max(sx, sy);
+        float s = Math.max(sx, sy);
 
         Matrix m = new Matrix();
         m.setScale(s, s, vw / 2f, vh / 2f);
@@ -261,7 +268,7 @@ public class BasicImeService extends InputMethodService
             mediaPlayer.setLooping(true);
             mediaPlayer.setVolume(0f, 0f);
             mediaPlayer.setOnPreparedListener(mp -> {
-                videoWidth  = mp.getVideoWidth();
+                videoWidth = mp.getVideoWidth();
                 videoHeight = mp.getVideoHeight();
                 if (videoWidth <= 0 || videoHeight <= 0) {
                     mp.start();
@@ -274,7 +281,7 @@ public class BasicImeService extends InputMethodService
                 mp.start();
             });
             mediaPlayer.setOnVideoSizeChangedListener((mp, w, h) -> {
-                videoWidth  = w;
+                videoWidth = w;
                 videoHeight = h;
                 applyVideoTransform();
             });
@@ -363,7 +370,7 @@ public class BasicImeService extends InputMethodService
                     InputConnection ic2 = getCurrentInputConnection();
                     if (ic2 == null) return;
                     ic2.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER));
-                    ic2.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_ENTER));
+                    ic2.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER));
                 }, 30L);
             }
             return;
@@ -371,10 +378,10 @@ public class BasicImeService extends InputMethodService
 
         if (a.type == KeyAction.TYPE_APP_LAUNCH) {
             try {
-                android.content.Intent launch = getPackageManager()
+                Intent launch = getPackageManager()
                         .getLaunchIntentForPackage(a.payload);
                 if (launch != null) {
-                    launch.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                     startActivity(launch);
                 }
             } catch (Exception ignored) { }
@@ -386,9 +393,9 @@ public class BasicImeService extends InputMethodService
                 android.content.ComponentName cn =
                         android.content.ComponentName.unflattenFromString(a.payload);
                 if (cn != null) {
-                    android.content.Intent i = new android.content.Intent();
+                    Intent i = new Intent();
                     i.setComponent(cn);
-                    i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                    i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                     startActivity(i);
                 }
             } catch (Exception ignored) { }
@@ -506,35 +513,28 @@ public class BasicImeService extends InputMethodService
         };
     }
 
-
     private void moveCursor(InputConnection ic, int direction) {
         if (ic == null) return;
 
-        // Prefer the true extents (works on every host).
         CharSequence before = ic.getTextBeforeCursor(1024, 0);
-        CharSequence after  = ic.getTextAfterCursor(1024, 0);
+        CharSequence after = ic.getTextAfterCursor(1024, 0);
 
         int beforeLen = before == null ? 0 : before.length();
-        int afterLen  = after  == null ? 0 : after.length();
+        int afterLen = after == null ? 0 : after.length();
 
-        // Total length at the cursor. selStart = beforeLen, selEnd = selEndAbs.
-        // We only need selStart because there's no selection during typing.
         int selStart = beforeLen;
-        int selEnd   = beforeLen;   // assume collapsed
+        int selEnd = beforeLen;
 
         int target;
         if (direction < 0) {
-            // Move left by one codepoint (not one UTF-16 char).
             target = selStart - 1;
             if (before != null && beforeLen > 0) {
-                // If the last char is a low surrogate, step back one more.
                 char c = before.charAt(beforeLen - 1);
                 if (Character.isLowSurrogate(c) && beforeLen >= 2) {
                     target = selStart - 2;
                 }
             }
         } else {
-            // Move right by one codepoint.
             target = selStart + 1;
             if (after != null && afterLen > 0) {
                 char c = after.charAt(0);
@@ -548,10 +548,7 @@ public class BasicImeService extends InputMethodService
         int total = beforeLen + afterLen;
         if (target > total) target = total;
 
-        // setSelection moves the cursor without dispatching a key event,
-        // so the host app cannot interpret it as "close the keyboard".
         ic.setSelection(Math.min(selStart, selEnd), Math.max(selStart, selEnd));
-        // Now do the actual move.
         ic.setSelection(target, target);
     }
 
@@ -560,7 +557,6 @@ public class BasicImeService extends InputMethodService
         InputConnection ic = getCurrentInputConnection();
 
         try {
-            // TEXT — unchanged
             if (e.type == ClipEntry.TYPE_TEXT) {
                 if (ic != null) ic.commitText(e.text, 1);
                 return;
@@ -568,9 +564,6 @@ public class BasicImeService extends InputMethodService
 
             String mime = e.mimeType != null ? e.mimeType : "image/png";
 
-            // 1) Preferred: commitContent with a real ClipDescription.
-            //    This delivers the image directly to the focused EditText and
-            //    grants read on the URI to the target app. Works in WhatsApp.
             android.net.Uri fpUri = ClipboardStore.get(this).fileProviderUriFor(e);
             if (ic != null && fpUri != null) {
                 try {
@@ -589,13 +582,8 @@ public class BasicImeService extends InputMethodService
                 }
             }
 
-            // 2) Fallback: MediaStore URI on the clipboard.
-            //    FileProvider URI will NOT work for the manual long-press → Paste
-            //    path, because WhatsApp's UID has no read grant on it. MediaStore
-            //    URIs are readable by any app with READ_EXTERNAL_STORAGE.
             android.net.Uri publicUri = ClipboardStore.get(this).publicImageUriFor(e);
             if (publicUri == null) {
-                // last resort: put the file URI on the clipboard anyway
                 publicUri = fpUri;
             }
             if (publicUri == null) {
@@ -616,7 +604,7 @@ public class BasicImeService extends InputMethodService
                 boolean handled = ic.performContextMenuAction(android.R.id.paste);
                 if (!handled) {
                     ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_PASTE));
-                    ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_PASTE));
+                    ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_PASTE));
                 }
             }
         } catch (Throwable t) {
@@ -624,9 +612,73 @@ public class BasicImeService extends InputMethodService
         }
     }
 
+    private void consumeRestartRequestIfAny() {
+        try {
+            java.io.File marker = new java.io.File(
+                    getFilesDir(), "ime_restart.requested");
+            if (!marker.exists()) return;
+
+            long requestedAt = marker.lastModified();
+            boolean deleted = marker.delete();
+
+            XLog.d("IME", "restart: marker found, deleted=" + deleted
+                    + " requestedAt=" + requestedAt);
+
+            if (System.currentTimeMillis() - requestedAt > 30_000L) {
+                XLog.d("IME", "restart: stale request ignored");
+                return;
+            }
+
+            rebuildInputViewNow();
+        } catch (Throwable t) {
+            XLog.e("IME", "consumeRestartRequestIfAny failed", t);
+        }
+    }
+
+
+
+    private void rebuildInputViewNow() {
+        try {
+            releaseVideoKeepPosition();
+
+            emojiPanel = null;
+            clipboardPanel = null;
+
+            if (rootContainer != null) rootContainer.removeAllViews();
+            keyboardView = null;
+            videoView = null;
+            bubbleOverlay = null;
+
+            View fresh = onCreateInputView();
+
+            if (fresh != null) {
+                setInputView(fresh);
+                fresh.requestLayout();
+            }
+
+            if (keyboardView != null) {
+                keyboardView.post(() -> {
+                    try {
+                        measureKeyboard();
+                        applyKeyboardFrameLock();
+                        rebuildWallpaperLayers();
+                        ensureOverlayPermission();
+                    } catch (Throwable t) {
+                        XLog.e("IME", "rebuild post failed", t);
+                    }
+                });
+            }
+
+            applyWallpaperWindowSettings();
+        } catch (Throwable t) {
+            XLog.e("IME", "rebuildInputViewNow failed", t);
+        }
+    }
+
     @Override
     public void onStartInputView(EditorInfo info, boolean restarting) {
         super.onStartInputView(info, restarting);
+        consumeRestartRequestIfAny();
         try {
             ClipboardStore.get(this).capture(this);
         } catch (Throwable ignored) { }
@@ -648,9 +700,11 @@ public class BasicImeService extends InputMethodService
         emojiPanel = null;
         applyEditorInputType(info);
     }
+
     @Override
     public void onStartInput(EditorInfo attribute, boolean restarting) {
         super.onStartInput(attribute, restarting);
+        consumeRestartRequestIfAny();
         if (keyboardView != null) keyboardView.invalidate();
         applyWallpaperWindowSettings();
         measureKeyboard();
@@ -660,26 +714,97 @@ public class BasicImeService extends InputMethodService
         applyEditorInputType(attribute);
     }
 
+
+    // ── Live-layout channel (no prefs, no broadcasts) ───────────
+    private static volatile BasicImeService INSTANCE = null;
+    private long lastLiveLayoutStamp = 0L;
+    private final android.os.Handler liveLayoutHandler =
+            new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable liveLayoutPoll = new Runnable() {
+        @Override public void run() {
+            try {
+                long st = LiveLayoutBridge.stamp(BasicImeService.this);
+                if (st != 0L && st != lastLiveLayoutStamp) {
+                    lastLiveLayoutStamp = st;
+                    LiveLayoutBridge.LayoutSnapshot snap =
+                            LiveLayoutBridge.read(BasicImeService.this);
+                    if (snap != null) {
+                        ImeColorStore.get(BasicImeService.this).applySnapshot(snap);
+                        applyLayoutLiveFromSnapshot(snap);
+                    }
+                }
+            } catch (Throwable ignored) { }
+            liveLayoutHandler.postDelayed(this, 180L);
+        }
+    };
+
+    /**
+     * PUBLIC STATIC ENTRY POINT the editor calls (the "function on the
+     * service"). The editor supplies the snapshot; we (a) write it to the
+     * live-layout file for the cross-process IME to pick up, and (b) if the
+     * service happens to live in the same process (rare today), apply it
+     * immediately.
+     */
+    public static void pushLiveLayout(Context ctx,
+                                      LiveLayoutBridge.LayoutSnapshot snap) {
+        if (snap == null) return;
+        LiveLayoutBridge.write(ctx, snap);
+
+        BasicImeService local = INSTANCE;
+        if (local != null) {
+            local.liveLayoutHandler.post(() -> {
+                ImeColorStore.get(local).applySnapshot(snap);
+                local.applyLayoutLiveFromSnapshot(snap);
+            });
+        }
+    }
+
+    /** Apply a snapshot to the live keyboard view and re-lock the frame. */
+    private void applyLayoutLiveFromSnapshot(LiveLayoutBridge.LayoutSnapshot snap) {
+        if (snap == null) return;
+
+        if (keyboardView != null) {
+            keyboardView.rebuildFromStore();       // re-reads ImeColorStore
+        }
+        if (emojiPanel != null) {
+            emojiPanel.refreshFromPrefs();
+        }
+        if (clipboardPanel != null) {
+            clipboardPanel.requestLayout();
+        }
+        if (rootContainer != null) {
+            rootContainer.requestLayout();
+            rootContainer.invalidate();
+        }
+
+        keyboardView.post(() -> {
+            try {
+                measureKeyboard();
+                applyKeyboardFrameLock();
+                rebuildWallpaperLayers();
+            } catch (Throwable t) {
+                XLog.e("IME", "applyLayoutLiveFromSnapshot post failed", t);
+            }
+        });
+    }
+
     @Override
     public void onWindowShown() {
         super.onWindowShown();
+        consumeRestartRequestIfAny();
         applyWallpaperWindowSettings();
         try {
             ClipboardStore.get(this).capture(this);
         } catch (Throwable ignored) { }
         ensureOverlayPermission();
     }
-    // ── Overlay permission ──────────────────────────────────────────
 
     private void ensureOverlayPermission() {
         if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.M) return;
         if (android.provider.Settings.canDrawOverlays(this)) return;
 
-        // Only one prompt at a time; the keyboard may call this from several
-        // lifecycle callbacks during the same open.
         if (overlayPromptDialog != null && overlayPromptDialog.isShowing()) return;
 
-        // Post so we never block onCreateInputView / onStartInputView.
         rootContainer.post(() -> {
             if (overlayPromptDialog != null && overlayPromptDialog.isShowing()) return;
             if (!isAddedToService()) return;
@@ -691,10 +816,10 @@ public class BasicImeService extends InputMethodService
                             + "please allow 'Display over other apps' for this keyboard.")
                     .setPositiveButton("OPEN SETTINGS", (d, w) -> {
                         try {
-                            android.content.Intent i = new android.content.Intent(
+                            Intent i = new Intent(
                                     android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                                     android.net.Uri.parse("package:" + getPackageName()));
-                            i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                             startActivity(i);
                         } catch (Throwable ignored) { }
                     })
@@ -720,7 +845,7 @@ public class BasicImeService extends InputMethodService
     private void applyEditorInputType(EditorInfo info) {
         if (keyboardView == null) return;
         int type = info == null ? EditorInfo.TYPE_NULL : info.inputType;
-        int cls  = type & android.text.InputType.TYPE_MASK_CLASS;
+        int cls = type & android.text.InputType.TYPE_MASK_CLASS;
         int vari = type & android.text.InputType.TYPE_MASK_VARIATION;
 
         boolean num = (cls == android.text.InputType.TYPE_CLASS_NUMBER)
@@ -745,10 +870,20 @@ public class BasicImeService extends InputMethodService
         emojiPanel = null;
     }
 
-
     private void applyLayoutLive() {
-        // Refresh the keyboard: re-read all values from ImeColorStore,
-        // rebuild hit keys, re-measure, and re-invalidate.
+        // Pull the latest snapshot from the live channel (file-backed).
+        try {
+            LiveLayoutBridge.LayoutSnapshot snap =
+                    LiveLayoutBridge.read(this);
+            if (snap != null) {
+                lastLiveLayoutStamp = LiveLayoutBridge.stamp(this);
+                ImeColorStore.get(this).applySnapshot(snap);
+                applyLayoutLiveFromSnapshot(snap);
+                return;
+            }
+        } catch (Throwable ignored) { }
+
+        // Fallback — legacy path (prefs + broadcast) still works.
         if (keyboardView != null) {
             keyboardView.refreshFromPrefs();
             keyboardView.post(() -> {
@@ -756,13 +891,7 @@ public class BasicImeService extends InputMethodService
                 applyKeyboardFrameLock();
             });
         }
-
-        // Emoji panel: re-measure so the tab row picks up the new height.
-        if (emojiPanel != null) {
-            emojiPanel.refreshFromPrefs();
-        }
-
-        // Ask the InputMethodManager to re-layout the input view.
+        if (emojiPanel != null) emojiPanel.refreshFromPrefs();
         if (rootContainer != null) {
             rootContainer.requestLayout();
             rootContainer.invalidate();
@@ -770,21 +899,40 @@ public class BasicImeService extends InputMethodService
     }
 
     private boolean isAddedToService() {
-        // The IME is "alive" as long as it has a rootContainer and hasn't been
-        // destroyed. If onDestroy has run, rootContainer is null.
         return rootContainer != null;
     }
 
     @Override
     public void onCreate() {
         super.onCreate();
-        EmojiGridCache.get(this).setPicker(this);
-        GestureActionStore.get(this).all();
+        INSTANCE = this;
 
+        // Prime the live-layout stamp so we don't apply a stale snapshot
+        // on the first poll tick.
+        try {
+            lastLiveLayoutStamp = LiveLayoutBridge.stamp(this);
+            LiveLayoutBridge.LayoutSnapshot snap =
+                    LiveLayoutBridge.read(this);
+            if (snap != null) ImeColorStore.get(this).applySnapshot(snap);
+        } catch (Throwable ignored) { }
+
+        EmojiGridCache.get(this).setPicker(this);
+        GestureActionStore.get(this).all();        EmojiGridCache.get(this).setPicker(this);
+        GestureActionStore.get(this).all();
         layoutChangeReceiver = new android.content.BroadcastReceiver() {
             @Override
-            public void onReceive(android.content.Context c, android.content.Intent i) {
-                applyLayoutLive();
+            public void onReceive(Context c, Intent i) {
+                if (i == null) return;
+                String action = i.getAction();
+                if (ACTION_RESTART_IME.equals(action)) {
+                    try {
+                        rebuildInputViewNow();
+                    } catch (Throwable t) {
+                        XLog.e("IME-RCV", "rebuild failed", t);
+                    }
+                } else {
+                    applyLayoutLive();
+                }
             }
         };
         registerLayoutReceiver();
@@ -809,11 +957,13 @@ public class BasicImeService extends InputMethodService
     @android.annotation.SuppressLint({"UnspecifiedRegisterReceiverFlag", "RegisterReceiverFlag"})
     private void registerLayoutReceiver() {
         android.content.IntentFilter filter =
-                new android.content.IntentFilter(ACTION_LAYOUT_CHANGED);
+                new android.content.IntentFilter();
+        filter.addAction(ACTION_LAYOUT_CHANGED);
+        filter.addAction(ACTION_RESTART_IME);
 
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(layoutChangeReceiver, filter,
-                    android.content.Context.RECEIVER_NOT_EXPORTED);
+                    android.content.Context.RECEIVER_EXPORTED);
         } else {
             registerReceiver(layoutChangeReceiver, filter);
         }
