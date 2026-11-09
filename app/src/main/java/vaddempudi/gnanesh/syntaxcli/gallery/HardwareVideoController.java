@@ -33,40 +33,14 @@ import androidx.media3.exoplayer.source.MediaSource;
 import androidx.media3.exoplayer.source.ProgressiveMediaSource;
 
 import java.io.File;
-import java.util.ArrayList;
 import java.util.List;
 
-/**
- * SINGLE ExoPlayer for the entire gallery session.
- *
- * Battery rules enforced by this class:
- *  1. The player is created ONCE (ensurePlayer) and never released until the
- *     gallery activity itself is destroyed.
- *  2. Surface binding uses TextureView + setVideoSurface(Surface) so the
- *     underlying Surface is stable for the view's lifetime — no per-bind
- *     VPU firmware re-init on MediaTek.
- *  3. The audio renderer is NOT filtered to hardware-only. MediaTek's
- *     c2.android.aac.decoder is a software decoder; filtering it out with
- *     setEnableDecoderFallback(false) produces silent video. We keep the
- *     DEFAULT selector for all tracks and set enableDecoderFallback(true).
- *  4. handleAudioFocus = true — ExoPlayer requests/abandons focus itself
- *     exactly once per play/pause transition. The activity NEVER calls
- *     AudioManager.requestAudioFocus() / abandonAudioFocus() manually.
- *  5. DefaultLoadControl is capped at 15 s so the VPU idles at half clock
- *     after the first couple of seconds.
- *  6. ProgressiveMediaSource + reusable FileDataSource.Factory avoids
- *     re-parsing the MP4/MKV atom table on every setMediaItem().
- *  7. stopAndDetach() only calls pause() — it never calls stop() or
- *     clearMediaItems() or clearVideoSurface(), which would flush the
- *     pipeline and force a codec re-create on the next bind.
- */
 @OptIn(markerClass = UnstableApi.class)
 public class HardwareVideoController {
 
     private static final String TAG = "video-cli";
     private static final String AUDIO_TAG = "audio-check";
 
-    /** 2 s min buffer, 15 s max — same as Fossify Gallery. */
     private static final int MIN_BUFFER_MS = 2000;
     private static final int MAX_BUFFER_MS = 15000;
 
@@ -93,28 +67,30 @@ public class HardwareVideoController {
     private boolean userPaused = false;
     private long lastKnownDurationMs = 0L;
 
-    // Current TextureView binding (never unbound until release()).
+    // ── Single source of truth for the bound TextureView ─────────
+    // INVARIANT: boundTextureView is non-null iff player != null and we have
+    // a live Surface attached. Everywhere it is written goes through
+    // showPath() / detachSurface() / release(). No other method touches it.
     private TextureView boundTextureView = null;
     private Surface boundSurface = null;
-    private final TextureView.SurfaceTextureListener boundSurfaceListener = new TextureView.SurfaceTextureListener() {
-        @Override public void onSurfaceTextureAvailable(@NonNull android.graphics.SurfaceTexture st, int w, int h) {
-            if (released) return;
-            attachSurface(st);
-        }
-        @Override public void onSurfaceTextureSizeChanged(@NonNull android.graphics.SurfaceTexture st, int w, int h) {}
-        @Override public boolean onSurfaceTextureDestroyed(@NonNull android.graphics.SurfaceTexture st) {
-            // Returning false means we keep the SurfaceTexture alive (Fossify does the same).
-            return false;
-        }
-        @Override public void onSurfaceTextureUpdated(@NonNull android.graphics.SurfaceTexture st) {}
-    };
 
-    /**
-     * DEFAULT selector — no hardware-only filter. Filtering audio tracks out
-     * with a hardware-only selector makes MediaTek's software AAC decoder
-     * disappear from the list, and with setEnableDecoderFallback(false) the
-     * player builds zero audio renderers -> silent playback.
-     */
+    private final TextureView.SurfaceTextureListener boundSurfaceListener =
+            new TextureView.SurfaceTextureListener() {
+                @Override public void onSurfaceTextureAvailable(@NonNull android.graphics.SurfaceTexture st, int w, int h) {
+                    if (released) return;
+                    attachSurface(st);
+                }
+                @Override public void onSurfaceTextureSizeChanged(@NonNull android.graphics.SurfaceTexture st, int w, int h) {}
+                @Override public boolean onSurfaceTextureDestroyed(@NonNull android.graphics.SurfaceTexture st) {
+                    // Returning false keeps the SurfaceTexture alive across
+                    // visibility changes (Fossify does the same). The Surface
+                    // itself is released by detachSurface() when the view is
+                    // recycled.
+                    return false;
+                }
+                @Override public void onSurfaceTextureUpdated(@NonNull android.graphics.SurfaceTexture st) {}
+            };
+
     private final MediaCodecSelector selector = new MediaCodecSelector() {
         @NonNull
         @Override
@@ -123,22 +99,17 @@ public class HardwareVideoController {
                 boolean requiresSecureDecoder,
                 boolean requiresTunnelingDecoder)
                 throws MediaCodecUtil.DecoderQueryException {
-            List<MediaCodecInfo> all = MediaCodecSelector.DEFAULT.getDecoderInfos(
+            return MediaCodecSelector.DEFAULT.getDecoderInfos(
                     mimeType, requiresSecureDecoder, requiresTunnelingDecoder);
-            Log.d(TAG, me() + " decoderQuery mime=" + mimeType
-                    + " count=" + (all != null ? all.size() : 0));
-            return all;
         }
     };
 
     public HardwareVideoController(Context context) {
         this.context = context.getApplicationContext();
-        Log.d(TAG, me() + " constructed");
     }
 
     // ─── Public API ────────────────────────────────────────────────
 
-    /** Bind to the given TextureView and (re)start playback of `path`. */
     public void showPath(@NonNull String path, @NonNull TextureView textureView, boolean startWhenReady) {
         if (path.isEmpty() || released) return;
 
@@ -150,9 +121,7 @@ public class HardwareVideoController {
 
         // Swap the target view WITHOUT tearing the codec pipeline down.
         if (boundTextureView != textureView) {
-            if (boundTextureView != null) {
-                boundTextureView.setSurfaceTextureListener(null);
-            }
+            detachSurface(boundTextureView);   // release the old one first
             boundTextureView = textureView;
             textureView.setSurfaceTextureListener(boundSurfaceListener);
 
@@ -166,7 +135,35 @@ public class HardwareVideoController {
         applyMediaItem(path, startWhenReady);
     }
 
-    /** Pause and keep the player alive. Called on close/back. */
+    /**
+     * Detaches the given TextureView from this controller:
+     *  - removes our SurfaceTextureListener
+     *  - releases our Surface
+     *  - clears boundTextureView if it was the one
+     *
+     * Called from FullscreenAdapter.onViewRecycled() and from
+     * FullscreenAdapter.onBindViewHolder() before reusing a recycled view.
+     * This is the fix for "BufferQueue has been abandoned".
+     */
+    public void detachSurface(@Nullable TextureView textureView) {
+        if (textureView == null) return;
+
+        // Remove the listener so onSurfaceTextureAvailable cannot fire again.
+        try { textureView.setSurfaceTextureListener(null); } catch (Exception ignored) {}
+
+        // Only drop our Surface if this is the one we attached.
+        if (boundTextureView == textureView) {
+            if (boundSurface != null) {
+                try { boundSurface.release(); } catch (Exception ignored) {}
+                boundSurface = null;
+            }
+            if (player != null) {
+                try { player.clearVideoSurface(); } catch (Exception ignored) {}
+            }
+            boundTextureView = null;
+        }
+    }
+
     public void pauseOnly() {
         if (player != null) {
             try { player.pause(); } catch (Exception ignored) {}
@@ -175,20 +172,13 @@ public class HardwareVideoController {
         pendingStartWhenReady = false;
     }
 
-    /** Full teardown — only when the gallery activity is being destroyed. */
     public void release() {
         if (released) return;
         released = true;
-        Log.d(TAG, me() + " release()");
 
-        if (boundTextureView != null) {
-            try { boundTextureView.setSurfaceTextureListener(null); } catch (Exception ignored) {}
-            boundTextureView = null;
-        }
-        if (boundSurface != null) {
-            try { boundSurface.release(); } catch (Exception ignored) {}
-            boundSurface = null;
-        }
+        // Detach first, then release player.
+        detachSurface(boundTextureView);
+
         if (player != null) {
             try { player.release(); } catch (Exception ignored) {}
             player = null;
@@ -227,9 +217,6 @@ public class HardwareVideoController {
         if (released || player != null) return;
         Log.d(TAG, me() + " ensurePlayer (one-time)");
 
-        // enableDecoderFallback(true) is REQUIRED for audio: MediaTek's AAC
-        // decoder reports hardwareAccelerated=false on many builds, and with
-        // fallback off it would be filtered out by a hardware-only selector.
         DefaultRenderersFactory renderers = new DefaultRenderersFactory(context)
                 .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF)
                 .setEnableDecoderFallback(true)
@@ -244,8 +231,6 @@ public class HardwareVideoController {
                 .setLoadControl(loadControl)
                 .build();
 
-        // handleAudioFocus = true -> ExoPlayer owns focus. The activity must
-        // NOT also request focus, or MIUI/One UI will thrash it per bind.
         player.setAudioAttributes(
                 new AudioAttributes.Builder()
                         .setUsage(C.USAGE_MEDIA)
@@ -258,21 +243,12 @@ public class HardwareVideoController {
         dataSourceFactory = () -> new FileDataSource();
 
         player.addAnalyticsListener(new AnalyticsListener() {
-            @Override public void onAudioEnabled(@NonNull EventTime e, @NonNull DecoderCounters c) {
-                Log.d(AUDIO_TAG, me() + " ★ audio ENABLED");
-            }
-            @Override public void onAudioDisabled(@NonNull EventTime e, @NonNull DecoderCounters c) {
-                Log.d(AUDIO_TAG, me() + " ★ audio disabled after " + c.renderedOutputBufferCount + " buffers");
-            }
-            @Override public void onAudioInputFormatChanged(@NonNull EventTime e, @NonNull Format f, @Nullable androidx.media3.exoplayer.DecoderReuseEvaluation r) {
-                Log.d(AUDIO_TAG, me() + " ★ audio input format=" + f.sampleMimeType
-                        + " sr=" + f.sampleRate + " ch=" + f.channelCount);
-            }
-            @Override public void onAudioDecoderInitialized(@NonNull EventTime e, @NonNull String n, long i, long d) {
-                Log.d(AUDIO_TAG, me() + " ★ audio decoder=" + n);
-            }
+            @Override public void onAudioEnabled(@NonNull EventTime e, @NonNull DecoderCounters c) {}
+            @Override public void onAudioDisabled(@NonNull EventTime e, @NonNull DecoderCounters c) {}
+            @Override public void onAudioInputFormatChanged(@NonNull EventTime e, @NonNull Format f, @Nullable androidx.media3.exoplayer.DecoderReuseEvaluation r) {}
+            @Override public void onAudioDecoderInitialized(@NonNull EventTime e, @NonNull String n, long i, long d) {}
             @Override public void onAudioSinkError(@NonNull EventTime e, @NonNull Exception x) {
-                Log.e(AUDIO_TAG, me() + " ✖ audio sink error", x);
+                Log.e(AUDIO_TAG, me() + " audio sink error", x);
             }
         });
 
@@ -297,7 +273,6 @@ public class HardwareVideoController {
     private void applyMediaItem(String path, boolean startWhenReady) {
         if (player == null) return;
         try {
-            Log.d(TAG, me() + " applyMediaItem " + path + " play=" + (startWhenReady && !userPaused));
             MediaItem item = path.startsWith("content://")
                     ? MediaItem.fromUri(Uri.parse(path))
                     : MediaItem.fromUri(Uri.fromFile(new File(path)));
@@ -324,11 +299,7 @@ public class HardwareVideoController {
         }
     }
 
-    // ─── Playback helpers ─────────────────────────────────────────
-
     public void stopPlayback() {
-        // Kept for API compatibility. Only pauses — never stops or clears,
-        // because that would flush the pipeline and force a codec re-create.
         pause();
     }
 

@@ -5,7 +5,6 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
-import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.TextureView;
@@ -23,15 +22,7 @@ import java.util.concurrent.Executors;
 
 import vaddempudi.gnanesh.syntaxcli.R;
 
-/**
- * Single-controller architecture, feature-identical to the previous version.
- * Only the surface type changed (SurfaceView -> TextureView) and the
- * onDetachedFromRecyclerView guard, which prevents the controller from being
- * released when notifyDataSetChanged() detaches the ViewPager2 inner RV.
- */
 public class FullscreenAdapter extends RecyclerView.Adapter<FullscreenAdapter.ViewHolder> {
-
-    private static final String LOG_TAG = "gallery-tui";
 
     public interface TapCallback { void onTap(); }
     public interface PageTypeCallback {
@@ -78,7 +69,7 @@ public class FullscreenAdapter extends RecyclerView.Adapter<FullscreenAdapter.Vi
     public static class ViewHolder extends RecyclerView.ViewHolder {
         public final ProgressBar progressBar;
         public final ZoomableImageView imageView;
-        public final TextureView videoSurface;     // renamed type
+        public final TextureView videoSurface;
         public int boundPosition = -1;
 
         public ViewHolder(@NonNull View itemView) {
@@ -100,7 +91,13 @@ public class FullscreenAdapter extends RecyclerView.Adapter<FullscreenAdapter.Vi
     public void onBindViewHolder(@NonNull ViewHolder holder, int position) {
         final int boundPosition = position;
         final String path = paths.get(position);
-        Log.d(LOG_TAG, "bind pos=" + boundPosition + " active=" + activePosition + " path=" + path);
+
+        // If this holder was previously bound to a different position AND it
+        // was the controller's bound view, we must detach it before reuse.
+        // Otherwise the old SurfaceTextureListener can fire on a stale view.
+        if (holder.boundPosition != -1 && holder.boundPosition != boundPosition) {
+            controller.detachSurface(holder.videoSurface);
+        }
 
         holder.boundPosition = boundPosition;
         holder.progressBar.setVisibility(View.VISIBLE);
@@ -128,7 +125,7 @@ public class FullscreenAdapter extends RecyclerView.Adapter<FullscreenAdapter.Vi
                     }
                 });
                 controller.setOnErrorListener(err ->
-                        Log.e(LOG_TAG, "shared onError pos=" + boundPosition, err));
+                        android.util.Log.e("gallery-tui", "shared onError pos=" + boundPosition, err));
 
                 controller.showPath(path, holder.videoSurface, true);
                 if (controller.isPreparedNow()) holder.progressBar.setVisibility(View.GONE);
@@ -180,18 +177,11 @@ public class FullscreenAdapter extends RecyclerView.Adapter<FullscreenAdapter.Vi
                 || lower.endsWith(".m4v") || lower.endsWith(".flv") || lower.endsWith(".wmv");
     }
 
-    /** Pause only — do NOT release. Called from closeFullscreenViewer(). */
     public void pauseForClose() {
-        Log.d(LOG_TAG, "adapter.pauseForClose");
         activePosition = -1;
         controller.pauseOnly();
     }
 
-    /**
-     * Called when the RecyclerView is truly discarded (activity destroy).
-     * We deliberately IGNORE notifyDataSetChanged()-driven detaches so the
-     * player survives normal page refreshes.
-     */
     public void hardReset() {
         activePosition = -1;
         controller.release();
@@ -218,6 +208,11 @@ public class FullscreenAdapter extends RecyclerView.Adapter<FullscreenAdapter.Vi
 
     @Override
     public void onViewRecycled(@NonNull ViewHolder holder) {
+        // THE FIX: detach the surface BEFORE clearing visibility. This is
+        // what prevents "BufferQueue has been abandoned" — the SurfaceTexture
+        // no longer has a consumer and the codec stops writing to it.
+        controller.detachSurface(holder.videoSurface);
+
         Drawable d = holder.imageView.getDrawable();
         if (d instanceof BitmapDrawable) {
             Bitmap b = ((BitmapDrawable) d).getBitmap();
@@ -238,9 +233,8 @@ public class FullscreenAdapter extends RecyclerView.Adapter<FullscreenAdapter.Vi
     @Override
     public void onDetachedFromRecyclerView(@NonNull RecyclerView recyclerView) {
         super.onDetachedFromRecyclerView(recyclerView);
-        // Do NOT release here. notifyDataSetChanged() also detaches the inner
-        // ViewPager2 RecyclerView, which would kill the shared player and
-        // force a MediaCodec re-create on the next bind.
+        // Do NOT release the player here — notifyDataSetChanged() also
+        // detaches the ViewPager2 inner RV. hardReset() handles teardown.
         executor.shutdownNow();
     }
 
