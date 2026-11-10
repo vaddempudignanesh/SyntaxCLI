@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════
-// File: AlbumLoader.java
+// File: AlbumLoader.java — FAST VERSION
 // ═══════════════════════════════════════════════════════════════
 package vaddempudi.gnanesh.syntaxcli.gallery;
 
@@ -18,35 +18,130 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class AlbumLoader {
 
     private final ContentResolver resolver;
 
+    // ── Single-shot index. All albums come from here. ──────────────
+    private volatile Map<String, List<GalleryMediaItem>> index = null;
+    private final AtomicBoolean building = new AtomicBoolean(false);
+    private final Object buildLock = new Object();
 
     public AlbumLoader(Context context) {
         this.resolver = context.getApplicationContext().getContentResolver();
     }
 
+    /** Force the next loadAlbums/loadAlbumItems to rebuild the index. */
+    public void invalidate() {
+        synchronized (buildLock) {
+            index = null;
+        }
+    }
+
+    private Map<String, List<GalleryMediaItem>> ensureIndex() {
+        Map<String, List<GalleryMediaItem>> snapshot = index;
+        if (snapshot != null) return snapshot;
+
+        if (!building.compareAndSet(false, true)) {
+            // Another thread is building — wait for it.
+            synchronized (buildLock) {
+                while (index == null) {
+                    try { buildLock.wait(50L); }
+                    catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
+                }
+            }
+            return index;
+        }
+
+        try {
+            Map<String, List<GalleryMediaItem>> built = new HashMap<>();
+            queryIntoIndex(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                    GalleryMediaItem.TYPE_IMAGE, built);
+            queryIntoIndex(MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                    GalleryMediaItem.TYPE_VIDEO, built);
+
+            for (List<GalleryMediaItem> l : built.values()) {
+                Collections.sort(l, LATEST_FIRST);
+            }
+
+            synchronized (buildLock) {
+                index = built;
+                buildLock.notifyAll();
+            }
+            return built;
+        } finally {
+            building.set(false);
+        }
+    }
+
+    private void queryIntoIndex(android.net.Uri uri, int type,
+                                Map<String, List<GalleryMediaItem>> out) {
+        Cursor c = null;
+        try {
+            c = resolver.query(uri,
+                    new String[]{
+                            MediaStore.MediaColumns._ID,
+                            MediaStore.MediaColumns.DATA,
+                            MediaStore.MediaColumns.DISPLAY_NAME,
+                            MediaStore.MediaColumns.DATE_MODIFIED
+                    },
+                    null, null,
+                    MediaStore.MediaColumns.DATE_MODIFIED + " DESC");
+            if (c == null) return;
+
+            int idCol   = c.getColumnIndex(MediaStore.MediaColumns._ID);
+            int dataCol = c.getColumnIndex(MediaStore.MediaColumns.DATA);
+            int nameCol = c.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME);
+            int modCol  = c.getColumnIndex(MediaStore.MediaColumns.DATE_MODIFIED);
+
+            while (c.moveToNext()) {
+                String path = dataCol >= 0 ? c.getString(dataCol) : null;
+                if (TextUtils.isEmpty(path)) continue;
+
+                String fileName = new File(path).getName();
+                if (fileName.startsWith(".trashed.")) continue;
+                if (path.contains("/.trashed.")) continue;
+                if (fileName.startsWith("p_")) continue;
+                if (path.contains("/com.whatsapp/")) continue;
+
+                File parent = new File(path).getParentFile();
+                if (parent == null) continue;
+                String albumPath;
+                try { albumPath = parent.getCanonicalPath(); }
+                catch (Exception e) { albumPath = parent.getAbsolutePath(); }
+
+                long id   = idCol >= 0 ? c.getLong(idCol) : -1L;
+                String name = nameCol >= 0 ? c.getString(nameCol) : null;
+                if (TextUtils.isEmpty(name)) name = fileName;
+                long modified = modCol >= 0 ? c.getLong(modCol) : 0L;
+
+                List<GalleryMediaItem> bucket = out.get(albumPath);
+                if (bucket == null) {
+                    bucket = new ArrayList<>();
+                    out.put(albumPath, bucket);
+                }
+                bucket.add(new GalleryMediaItem(id, path, name, albumPath, modified, type));
+            }
+        } catch (Exception ignored) {
+        } finally {
+            if (c != null) c.close();
+        }
+    }
+
     // ── Album list ────────────────────────────────────────────────
 
     public List<AlbumRecord> loadAlbums() {
-        Map<String, int[]> counts = new HashMap<>();
-        Map<String, String> names = new HashMap<>();
-        Map<String, String> covers = new HashMap<>();
+        Map<String, List<GalleryMediaItem>> idx = ensureIndex();
 
-        queryAlbums(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, counts, names, covers);
-        queryAlbums(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, counts, names, covers);
-
-        List<AlbumRecord> out = new ArrayList<>(counts.size());
-        for (Map.Entry<String, int[]> e : counts.entrySet()) {
-            String albumPath = e.getKey();
-            int count = e.getValue()[0];
-            if (count <= 0) continue;
-
-            String display = names.get(albumPath);
-            if (TextUtils.isEmpty(display)) display = new File(albumPath).getName();
-            out.add(new AlbumRecord(albumPath, display, count, covers.get(albumPath)));
+        List<AlbumRecord> out = new ArrayList<>(idx.size());
+        for (Map.Entry<String, List<GalleryMediaItem>> e : idx.entrySet()) {
+            List<GalleryMediaItem> items = e.getValue();
+            if (items == null || items.isEmpty()) continue;
+            String display = new File(e.getKey()).getName();
+            String cover = items.get(0).path;
+            out.add(new AlbumRecord(e.getKey(), display, items.size(), cover));
         }
 
         out.addAll(buildWhatsAppAlbums());
@@ -63,51 +158,6 @@ public final class AlbumLoader {
         });
 
         return out;
-    }
-
-    private void queryAlbums(android.net.Uri uri,
-                             Map<String, int[]> counts,
-                             Map<String, String> names,
-                             Map<String, String> covers) {
-        Cursor c = null;
-        try {
-            c = resolver.query(uri,
-                    new String[]{
-                            MediaStore.MediaColumns.DATA,
-                            MediaStore.Images.Media.BUCKET_DISPLAY_NAME
-                    }, null, null, null);
-            if (c == null) return;
-
-            int dataCol = c.getColumnIndex(MediaStore.MediaColumns.DATA);
-            int bucketCol = c.getColumnIndex(MediaStore.Images.Media.BUCKET_DISPLAY_NAME);
-
-            while (c.moveToNext()) {
-                String path = dataCol >= 0 ? c.getString(dataCol) : null;
-                if (TextUtils.isEmpty(path)) continue;
-                if (path.contains("/com.whatsapp/")) continue;
-
-                File parent = new File(path).getParentFile();
-                if (parent == null) continue;
-
-                String albumPath = parent.getAbsolutePath();
-                int[] cnt = counts.get(albumPath);
-                if (cnt == null) {
-                    cnt = new int[]{0};
-                    counts.put(albumPath, cnt);
-                    covers.put(albumPath, path);
-                }
-                cnt[0]++;
-
-                if (!names.containsKey(albumPath)) {
-                    String bucket = bucketCol >= 0 ? c.getString(bucketCol) : null;
-                    if (TextUtils.isEmpty(bucket)) bucket = parent.getName();
-                    names.put(albumPath, bucket);
-                }
-            }
-        } catch (Exception ignored) {
-        } finally {
-            if (c != null) c.close();
-        }
     }
 
     private List<AlbumRecord> buildWhatsAppAlbums() {
@@ -166,67 +216,26 @@ public final class AlbumLoader {
         return out;
     }
 
-    // ── Album contents ────────────────────────────────────────────
+    // ── Album contents — O(1) via index ───────────────────────────
 
     public List<GalleryMediaItem> loadAlbumItems(AlbumRecord album) {
         if (album == null) return Collections.emptyList();
-
         if (album.isWhatsApp()) return loadWhatsAppItems(album);
 
-        final List<GalleryMediaItem> out = new ArrayList<>();
-        final String albumDir = album.path;
+        Map<String, List<GalleryMediaItem>> idx = ensureIndex();
 
-        collectItems(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                GalleryMediaItem.TYPE_IMAGE, albumDir, out);
-        collectItems(MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-                GalleryMediaItem.TYPE_VIDEO, albumDir, out);
+        // Try direct canonical key first.
+        List<GalleryMediaItem> direct = idx.get(album.path);
+        if (direct != null) return new ArrayList<>(direct);
 
-        Collections.sort(out, LATEST_FIRST);
-        return out;
-    }
+        // Fallback: canonicalise the album path and try again.
+        String canonical;
+        try { canonical = new File(album.path).getCanonicalPath(); }
+        catch (Exception e) { canonical = album.path; }
+        List<GalleryMediaItem> byCanon = idx.get(canonical);
+        if (byCanon != null) return new ArrayList<>(byCanon);
 
-    private void collectItems(android.net.Uri uri, int type,
-                              String albumDir, List<GalleryMediaItem> out) {
-        Cursor c = null;
-        try {
-            c = resolver.query(uri,
-                    new String[]{
-                            MediaStore.MediaColumns._ID,
-                            MediaStore.MediaColumns.DATA,
-                            MediaStore.MediaColumns.DISPLAY_NAME,
-                            MediaStore.MediaColumns.DATE_MODIFIED
-                    }, null, null, null);
-            if (c == null) return;
-
-            int idCol = c.getColumnIndex(MediaStore.MediaColumns._ID);
-            int dataCol = c.getColumnIndex(MediaStore.MediaColumns.DATA);
-            int nameCol = c.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME);
-            int modCol = c.getColumnIndex(MediaStore.MediaColumns.DATE_MODIFIED);
-
-            final String prefix = albumDir.endsWith("/") ? albumDir : albumDir + "/";
-
-            while (c.moveToNext()) {
-                String path = dataCol >= 0 ? c.getString(dataCol) : null;
-                if (TextUtils.isEmpty(path)) continue;
-                if (!path.startsWith(prefix)) continue;
-                String fileName = new File(path).getName();
-                if (fileName.startsWith(".trashed.")) continue;
-                if (path.contains("/.trashed.")) continue;
-                if (fileName.startsWith("p_")) continue;
-                long id = idCol >= 0 ? c.getLong(idCol) : -1L;
-                String name = nameCol >= 0 ? c.getString(nameCol) : null;
-                if (TextUtils.isEmpty(name)) name = new File(path).getName();
-                long modified = modCol >= 0 ? c.getLong(modCol) : 0L;
-
-                File parent = new File(path).getParentFile();
-                String albumPath = parent == null ? "" : parent.getAbsolutePath();
-
-                out.add(new GalleryMediaItem(id, path, name, albumPath, modified, type));
-            }
-        } catch (Exception ignored) {
-        } finally {
-            if (c != null) c.close();
-        }
+        return Collections.emptyList();
     }
 
     private List<GalleryMediaItem> loadWhatsAppItems(AlbumRecord album) {

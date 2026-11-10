@@ -124,31 +124,7 @@ public class GalleryAdapter extends RecyclerView.Adapter<GalleryAdapter.ViewHold
                 .inflate(R.layout.item_gallery, parent, false);
         return new ViewHolder(v);
     }
-
-    public void clearNow() {
-        forcedEmpty = true;
-        notifyDataSetChanged();
-    }
-
-    public void publishImmediately(List<GalleryMediaItem> items) {
-        forcedEmpty = false;
-        List<GalleryMediaItem> immutable = items == null
-                ? Collections.emptyList()
-                : Collections.unmodifiableList(new ArrayList<>(items));
-        differ.submitList(immutable);
-        notifyDataSetChanged();
-    }
-
-    @Override public int getItemCount() {
-        if (forcedEmpty) return 0;
-        return differ.getCurrentList().size();
-    }
-
-    @Override public long getItemId(int position) {
-        if (forcedEmpty) return RecyclerView.NO_ID;
-        GalleryMediaItem item = differ.getCurrentList().get(position);
-        return item.id ^ (((long) item.type) << 61);
-    }
+    
 
     @Override
     public void onBindViewHolder(@NonNull ViewHolder holder, int position,
@@ -167,7 +143,6 @@ public class GalleryAdapter extends RecyclerView.Adapter<GalleryAdapter.ViewHold
 
     @Override
     public void onBindViewHolder(@NonNull ViewHolder holder, int position) {
-        if (forcedEmpty) return;
         GalleryMediaItem item = differ.getCurrentList().get(position);
         holder.bind(item);
     }
@@ -175,6 +150,25 @@ public class GalleryAdapter extends RecyclerView.Adapter<GalleryAdapter.ViewHold
     public List<GalleryMediaItem> getItems() {
         if (forcedEmpty) return Collections.emptyList();
         return differ.getCurrentList();
+    }
+
+    public void clearNow() {
+        differ.submitList(Collections.emptyList());
+    }
+
+    public void publishImmediately(List<GalleryMediaItem> items) {
+        differ.submitList(items == null
+                ? Collections.emptyList()
+                : Collections.unmodifiableList(new ArrayList<>(items)));
+    }
+
+    @Override public int getItemCount() {
+        return differ.getCurrentList().size();
+    }
+
+    @Override public long getItemId(int position) {
+        GalleryMediaItem item = differ.getCurrentList().get(position);
+        return item.id ^ (((long) item.type) << 61);
     }
 
     private void updateSelection(ViewHolder holder, GalleryMediaItem item) {

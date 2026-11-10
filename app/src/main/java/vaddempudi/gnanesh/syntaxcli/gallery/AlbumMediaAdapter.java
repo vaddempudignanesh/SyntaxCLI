@@ -1,10 +1,7 @@
 package vaddempudi.gnanesh.syntaxcli.gallery;
 
 import android.content.Context;
-import android.graphics.Bitmap;
 import android.graphics.Color;
-import android.os.Handler;
-import android.os.Looper;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -12,7 +9,14 @@ import android.widget.ImageView;
 import android.widget.RelativeLayout;
 
 import androidx.annotation.NonNull;
+import androidx.recyclerview.widget.AsyncListDiffer;
+import androidx.recyclerview.widget.DiffUtil;
 import androidx.recyclerview.widget.RecyclerView;
+
+import com.bumptech.glide.Glide;
+import com.bumptech.glide.load.engine.DiskCacheStrategy;
+import com.bumptech.glide.request.RequestOptions;
+import com.bumptech.glide.signature.ObjectKey;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -20,9 +24,6 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicLong;
 
 import vaddempudi.gnanesh.syntaxcli.R;
 
@@ -36,87 +37,101 @@ public class AlbumMediaAdapter extends RecyclerView.Adapter<AlbumMediaAdapter.VH
         boolean isSelectionMode();
     }
 
-    /** Payload tag — tells onBindViewHolder to only refresh the checkbox. */
     private static final Object PAYLOAD_SELECTION = new Object();
 
     private final Context context;
     private final Listener listener;
-    private final ThumbnailCache thumbnailCache;
-    private final ExecutorService executor = Executors.newFixedThreadPool(4);
-    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final AsyncListDiffer<GalleryMediaItem> differ;
 
-    private List<GalleryMediaItem> items = Collections.emptyList();
     private final Set<String> selected = new HashSet<>();
+
+    private static final DiffUtil.ItemCallback<GalleryMediaItem> DIFF =
+            new DiffUtil.ItemCallback<GalleryMediaItem>() {
+                @Override public boolean areItemsTheSame(@NonNull GalleryMediaItem a,
+                                                         @NonNull GalleryMediaItem b) {
+                    return a.stableKey().equals(b.stableKey());
+                }
+                @Override public boolean areContentsTheSame(@NonNull GalleryMediaItem a,
+                                                            @NonNull GalleryMediaItem b) {
+                    return a.isFavorite == b.isFavorite
+                            && a.isTrashed == b.isTrashed
+                            && a.dateModifiedSeconds == b.dateModifiedSeconds
+                            && a.type == b.type
+                            && (a.path == null ? b.path == null : a.path.equals(b.path));
+                }
+                @Override public Object getChangePayload(@NonNull GalleryMediaItem oldItem,
+                                                         @NonNull GalleryMediaItem newItem) {
+                    return null;
+                }
+            };
 
     public AlbumMediaAdapter(Context context, Listener listener) {
         this.context = context;
         this.listener = listener;
-        this.thumbnailCache = ThumbnailCache.getInstance(context);
+        this.differ = new AsyncListDiffer<>(this, DIFF);
+        setHasStableIds(true);
     }
 
     public void setItems(List<GalleryMediaItem> newItems) {
-        this.items = newItems == null
+        differ.submitList(newItems == null
                 ? Collections.<GalleryMediaItem>emptyList()
-                : Collections.unmodifiableList(new ArrayList<>(newItems));
-        notifyDataSetChanged();
+                : Collections.unmodifiableList(new ArrayList<>(newItems)));
     }
 
     public void clear() {
-        this.items = Collections.emptyList();
-        notifyDataSetChanged();
+        differ.submitList(Collections.<GalleryMediaItem>emptyList());
     }
 
     public List<GalleryMediaItem> getItems() {
-        return items;
+        return differ.getCurrentList();
     }
 
     public List<GalleryMediaItem> getItemsSnapshot() {
-        return new ArrayList<>(items);
+        return new ArrayList<>(differ.getCurrentList());
     }
 
-    /**
-     * Updates the selected set and notifies ONLY the rows whose selection
-     * actually changed, using PAYLOAD_SELECTION so the image is left alone.
-     * This is what kills the flicker during long-press drag.
-     */
     public void setSelectedItems(Collection<String> sel) {
         Set<String> oldSelected = new HashSet<>(selected);
         selected.clear();
         if (sel != null) selected.addAll(sel);
 
-        if (oldSelected.equals(selected)) return;   // nothing changed → no rebind
+        if (oldSelected.equals(selected)) return;
 
-        for (int i = 0; i < items.size(); i++) {
-            String path = items.get(i).path;
+        List<GalleryMediaItem> current = differ.getCurrentList();
+        for (int i = 0; i < current.size(); i++) {
+            String path = current.get(i).path;
             if (path == null) continue;
             boolean was = oldSelected.contains(path);
             boolean now = selected.contains(path);
-            if (was != now) {
-                notifyItemChanged(i, PAYLOAD_SELECTION);
-            }
+            if (was != now) notifyItemChanged(i, PAYLOAD_SELECTION);
         }
     }
 
     public int indexOfPath(String path) {
         if (path == null) return -1;
-        for (int i = 0; i < items.size(); i++) {
-            if (path.equals(items.get(i).path)) return i;
+        List<GalleryMediaItem> current = differ.getCurrentList();
+        for (int i = 0; i < current.size(); i++) {
+            if (path.equals(current.get(i).path)) return i;
         }
         return -1;
     }
 
     public GalleryMediaItem getItemAt(int pos) {
-        if (pos < 0 || pos >= items.size()) return null;
-        return items.get(pos);
+        List<GalleryMediaItem> current = differ.getCurrentList();
+        if (pos < 0 || pos >= current.size()) return null;
+        return current.get(pos);
     }
 
-    @Override
-    public int getItemCount() {
-        return items.size();
+    @Override public int getItemCount() {
+        return differ.getCurrentList().size();
     }
 
-    @NonNull
-    @Override
+    @Override public long getItemId(int position) {
+        GalleryMediaItem item = differ.getCurrentList().get(position);
+        return item.id ^ (((long) item.type) << 61);
+    }
+
+    @NonNull @Override
     public VH onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
         View v = LayoutInflater.from(context)
                 .inflate(R.layout.item_gallery, parent, false);
@@ -126,12 +141,10 @@ public class AlbumMediaAdapter extends RecyclerView.Adapter<AlbumMediaAdapter.VH
     @Override
     public void onBindViewHolder(@NonNull VH h, int position,
                                  @NonNull List<Object> payloads) {
+        GalleryMediaItem item = differ.getCurrentList().get(position);
         if (payloads != null && !payloads.isEmpty()) {
-            GalleryMediaItem item = items.get(position);
             for (Object p : payloads) {
-                if (p == PAYLOAD_SELECTION) {
-                    updateSelection(h, item);
-                }
+                if (p == PAYLOAD_SELECTION) updateSelection(h, item);
             }
             return;
         }
@@ -140,7 +153,7 @@ public class AlbumMediaAdapter extends RecyclerView.Adapter<AlbumMediaAdapter.VH
 
     @Override
     public void onBindViewHolder(@NonNull VH h, int position) {
-        GalleryMediaItem item = items.get(position);
+        GalleryMediaItem item = differ.getCurrentList().get(position);
 
         h.videoIcon.setVisibility(
                 item.type == GalleryMediaItem.TYPE_VIDEO ? View.VISIBLE : View.GONE);
@@ -189,25 +202,28 @@ public class AlbumMediaAdapter extends RecyclerView.Adapter<AlbumMediaAdapter.VH
         final String path = item.path;
 
         Object tag = holder.imageView.getTag();
-        if (tag != null && tag.equals(path) && holder.imageView.getDrawable() != null) {
-            return;
+        if (path.equals(tag) && holder.imageView.getDrawable() != null) {
+            return;   // already showing the correct image — no Glide churn
         }
-
-        holder.imageView.setImageDrawable(null);
         holder.imageView.setTag(path);
 
-        final long myGen = holder.bindGeneration.incrementAndGet();
+        RequestOptions opts = new RequestOptions()
+                .diskCacheStrategy(DiskCacheStrategy.RESOURCE)
+                .signature(new ObjectKey(item.dateModifiedSeconds + "_" + path.hashCode()))
+                .override(512, 512)
+                .placeholder(android.R.drawable.ic_menu_gallery);
 
-        executor.execute(() -> {
-            Bitmap bmp = thumbnailCache.getThumbnail(path, item.type);
-            mainHandler.post(() -> {
-                if (holder.bindGeneration.get() != myGen) return;
-                Object t = holder.imageView.getTag();
-                if (t == null || !t.equals(path)) return;
-                if (bmp != null) holder.imageView.setImageBitmap(bmp);
-                else holder.imageView.setImageResource(android.R.drawable.ic_menu_gallery);
-            });
-        });
+        Glide.with(holder.imageView.getContext())
+                .load(path)
+                .apply(opts)
+                .into(holder.imageView);
+    }
+
+    @Override
+    public void onViewRecycled(@NonNull VH holder) {
+        super.onViewRecycled(holder);
+        Glide.with(holder.imageView.getContext()).clear(holder.imageView);
+        holder.imageView.setTag(null);
     }
 
     static class VH extends RecyclerView.ViewHolder {
@@ -216,7 +232,6 @@ public class AlbumMediaAdapter extends RecyclerView.Adapter<AlbumMediaAdapter.VH
         final ImageView favIcon;
         final ImageView checkIcon;
         final RelativeLayout videoOverlay;
-        final AtomicLong bindGeneration = new AtomicLong(0);
 
         VH(View v) {
             super(v);

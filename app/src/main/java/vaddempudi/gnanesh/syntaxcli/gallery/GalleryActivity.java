@@ -156,6 +156,8 @@ public class GalleryActivity extends AppCompatActivity {
     private boolean trashedIndexDirty = true;
     private boolean albumsCacheValid = false;
 
+    private AlbumLoader albumLoader;
+
     private final HashMap<String, String> canonicalAlbumCache = new HashMap<>();
 
     private boolean selectionMode = false;
@@ -174,6 +176,7 @@ public class GalleryActivity extends AppCompatActivity {
     private boolean autoScrollActive = false;
     private int autoScrollDx = 0, autoScrollDy = 0;
     private final List<GalleryMediaItem> cachedMedia = new ArrayList<>();
+    private boolean cachedMediaSorted = true;
     private final List<GalleryMediaItem> albumMedia = new ArrayList<>();
     private FullscreenAdapter fullscreenAdapter;
     private final List<String> fullscreenMediaPaths = new ArrayList<>();
@@ -183,6 +186,10 @@ public class GalleryActivity extends AppCompatActivity {
     private boolean currentFullscreenPageIsVideo = false;
     private int overlayPendingSeekMs = -1;
     private int savedVideoPositionMs = -1;
+    private float pendingDragX = -1f, pendingDragY = -1f;
+    private boolean dragMoveScheduled = false;
+
+
 
     private final java.util.Set<String> userPausedPaths = new java.util.HashSet<>();
     private String savedVideoPath = null;
@@ -266,6 +273,7 @@ public class GalleryActivity extends AppCompatActivity {
         bindPrivateViews();
         installFastScrollBar();
         buildAdapter();
+        albumLoader = new AlbumLoader(this);
         setupAlbums();
         wireToolbarButtons();
         wireSortMenu();
@@ -553,7 +561,7 @@ public class GalleryActivity extends AppCompatActivity {
     }
 
     private void setupAlbums() {
-        AlbumLoader loader = new AlbumLoader(this);
+        AlbumLoader loader = this.albumLoader;
 
         AlbumAdapter albumAdapter = new AlbumAdapter(this, album -> {
             albumsController.openAlbum(album);
@@ -790,6 +798,8 @@ public class GalleryActivity extends AppCompatActivity {
                     updateTopNavBar();
                 }
 
+                // In GalleryActivity, replace the onMediaChanged body:
+
                 @Override
                 public void onMediaChanged(List<GalleryMediaItem> items, boolean endReached) {
                     if (!isActivityAlive()) return;
@@ -821,6 +831,7 @@ public class GalleryActivity extends AppCompatActivity {
                     mediaEverLoaded = true;
                     repositoryAtEnd = endReached;
                     cachedMedia.clear();
+                    cachedMediaSorted = false;
                     Set<String> favs = loadFavoritePaths();
                     for (GalleryMediaItem it : items) {
                         boolean trashed = it.path != null && it.path.contains(".trashed.");
@@ -835,11 +846,27 @@ public class GalleryActivity extends AppCompatActivity {
                     }
 
                     transientLoading = false;
-                    mtimeCache.clear();
+
+                    // ★ Replace `mtimeCache.clear()` with targeted invalidation.
+                    //   Only re-stat paths we have NOT seen in this session.
+                    //   The MediaStore already gave us correct lastModifiedMillis;
+                    //   we only need filesystem mtime for WhatsApp/injected paths.
+                    pruneMtimeCacheTo(cachedMedia);
+
                     refreshCurrentList();
                     recyclerView.post(() -> {
                         if (pendingInitialPath != null) tryOpenPendingInitialPath();
                     });
+                }
+
+                /** Drop cache entries for paths no longer in `media`; leave the rest alone. */
+                private void pruneMtimeCacheTo(List<GalleryMediaItem> media) {
+                    if (mtimeCache.size() < 128) return;   // small cache — not worth the walk
+                    Set<String> keep = new HashSet<>(media.size());
+                    for (GalleryMediaItem it : media) {
+                        if (it.path != null) keep.add(it.path);
+                    }
+                    mtimeCache.keySet().retainAll(keep);
                 }
 
 
@@ -1264,15 +1291,26 @@ public class GalleryActivity extends AppCompatActivity {
             return false;
         });
 
+
         recyclerView.addOnScrollListener(new RecyclerView.OnScrollListener() {
+            private boolean pending = false;
+            private final Runnable tick = () -> {
+                pending = false;
+                if (!fastScrollDragging) updateFastScrollBar();
+            };
+
             @Override
             public void onScrolled(@NonNull RecyclerView rv, int dx, int dy) {
-                if (!fastScrollDragging) updateFastScrollBar();
+                if (fastScrollDragging) return;
+                if (!pending) {
+                    pending = true;
+                    rv.postOnAnimation(tick);
+                }
             }
 
             @Override
             public void onScrollStateChanged(@NonNull RecyclerView rv, int newState) {
-                updateFastScrollBar();
+                if (!fastScrollDragging) updateFastScrollBar();
             }
         });
     }
@@ -1622,6 +1660,16 @@ public class GalleryActivity extends AppCompatActivity {
             return;
         }
 
+        if (!cachedMediaSorted) {
+            Collections.sort(cachedMedia, (a, b) -> {
+                int c = Long.compare(b.lastModifiedMillis, a.lastModifiedMillis);
+                if (c != 0) return c;
+                String pa = a.path == null ? "" : a.path;
+                String pb = b.path == null ? "" : b.path;
+                return pb.compareTo(pa);
+            });
+            cachedMediaSorted = true;
+        }
         if (currentAlbum != null) {
             if (pendingAlbumLoad != null) {
                 if (loadingSpinner != null) loadingSpinner.setVisibility(View.VISIBLE);
@@ -1726,13 +1774,7 @@ public class GalleryActivity extends AppCompatActivity {
                 }
             }
 
-            for (GalleryMediaItem it : out) {
-                if (it == null || it.path == null) continue;
-                long fileMs = fileMtimeCached(it.path);
-                if (fileMs > it.lastModifiedMillis) {
-                    it.lastModifiedMillis = fileMs;
-                }
-            }
+
             Collections.sort(out, (a, b) -> {
                 int c = Long.compare(b.lastModifiedMillis, a.lastModifiedMillis);
                 if (c != 0) return c;
@@ -1753,9 +1795,9 @@ public class GalleryActivity extends AppCompatActivity {
         for (GalleryMediaItem it : cachedMedia) {
             if (it == null || it.path == null) continue;
             if (it.isTrashed) continue;
-            long fileMs = fileMtimeCached(it.path);
-            if (fileMs > it.lastModifiedMillis) {
-                it.lastModifiedMillis = fileMs;
+            if (it.path.contains("/com.whatsapp/") || it.dateModifiedSeconds <= 0L) {
+                long fileMs = fileMtimeCached(it.path);
+                if (fileMs > it.lastModifiedMillis) it.lastModifiedMillis = fileMs;
             }
         }
         Collections.sort(cachedMedia, (a, b) -> {
@@ -1815,7 +1857,6 @@ public class GalleryActivity extends AppCompatActivity {
         updateSelectionUI();
         showEmptyState();
         updateTopNavBar();
-        updateFastScrollBar();
     }
 
 
@@ -2605,10 +2646,22 @@ public class GalleryActivity extends AppCompatActivity {
     }
 
     private void handleDragMove(RecyclerView rv, float x, float y) {
-        if (Math.abs(x - dragLastX) < 2 && Math.abs(y - dragLastY) < 2) {
-            updateAutoScroll(rv, x, y);
-            return;
+        pendingDragX = x;
+        pendingDragY = y;
+        if (!dragMoveScheduled) {
+            dragMoveScheduled = true;
+            rv.postOnAnimation(() -> {
+                dragMoveScheduled = false;
+                if (!dragSelectActive) return;
+                processDragMove(rv, pendingDragX, pendingDragY);
+            });
         }
+        updateAutoScroll(rv, x, y);
+    }
+
+
+    private void processDragMove(RecyclerView rv, float x, float y) {
+        if (Math.abs(x - dragLastX) < 2 && Math.abs(y - dragLastY) < 2) return;
         dragLastX = x;
         dragLastY = y;
 
@@ -2620,8 +2673,8 @@ public class GalleryActivity extends AppCompatActivity {
                 if (anchorIdx >= 0) applyDragRectangle(anchorIdx, pos);
             }
         }
-        updateAutoScroll(rv, x, y);
     }
+
 
     private void updateAutoScroll(RecyclerView rv, float x, float y) {
         if (rv == null) {
@@ -2758,9 +2811,6 @@ public class GalleryActivity extends AppCompatActivity {
         trashedByPath.put(newPath, binItem);
         addBinPath(newPath);
         trashedIndexDirty = false;
-
-        albumsCacheValid = false;
-        refreshCurrentList();
         scheduleMediaRefresh(MEDIA_REFRESH_DEBOUNCE_MS);
     }
 
@@ -2795,7 +2845,6 @@ public class GalleryActivity extends AppCompatActivity {
             repository.replaceItemPath(oldPath, repl);
         }
 
-        refreshCurrentList();
         scheduleMediaRefresh(MEDIA_REFRESH_DEBOUNCE_MS);
         return true;
     }
@@ -2961,7 +3010,6 @@ public class GalleryActivity extends AppCompatActivity {
                 trashedIndexDirty = false;
                 mtimeCache.clear();
                 clearSelection();
-                refreshCurrentList();
                 scheduleMediaRefresh(MEDIA_REFRESH_DEBOUNCE_MS);
             });
         });
@@ -3026,7 +3074,6 @@ public class GalleryActivity extends AppCompatActivity {
                 trashedIndexDirty = false;
                 mtimeCache.clear();
                 clearSelection();
-                refreshCurrentList();
                 scheduleMediaRefresh(MEDIA_REFRESH_DEBOUNCE_MS);
                 Toast.makeText(this, "Restored " + r
                                 + (f > 0 ? " (" + f + " failed)" : ""),
@@ -4302,6 +4349,7 @@ public class GalleryActivity extends AppCompatActivity {
 
     private void scheduleMediaRefresh(long delayMs) {
         if (!isActivityAlive()) return;
+        if (albumLoader != null) albumLoader.invalidate();
         if (pendingMediaRefresh != null) mediaRefreshHandler.removeCallbacks(pendingMediaRefresh);
         pendingMediaRefresh = () -> {
             albumsCacheValid = false;
