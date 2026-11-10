@@ -94,13 +94,42 @@ public class GalleryAdapter extends RecyclerView.Adapter<GalleryAdapter.ViewHold
         }
     }
 
+
+
     public void submitList(List<GalleryMediaItem> items) {
         List<GalleryMediaItem> immutable = items == null
                 ? Collections.emptyList()
                 : Collections.unmodifiableList(new ArrayList<>(items));
-        forcedEmpty = false;
-        differ.submitList(immutable);
+
+        differ.submitList(immutable, () -> {
+        });
     }
+
+    public List<GalleryMediaItem> getItems() {
+        return differ.getCurrentList();
+    }
+
+    public void clearNow() {
+        differ.submitList(Collections.emptyList());
+    }
+
+    public void publishImmediately(List<GalleryMediaItem> items) {
+        differ.submitList(items == null
+                ? Collections.emptyList()
+                : Collections.unmodifiableList(new ArrayList<>(items)));
+    }
+
+    @Override public int getItemCount() {
+        return differ.getCurrentList().size();
+    }
+
+    @Override public long getItemId(int position) {
+        GalleryMediaItem item = differ.getCurrentList().get(position);
+        return item.id ^ (((long) item.type) << 61);
+    }
+
+
+
 
     public void setSelectedItems(List<String> selected) {
         List<String> oldSelected = this.selectedItems;
@@ -129,7 +158,6 @@ public class GalleryAdapter extends RecyclerView.Adapter<GalleryAdapter.ViewHold
     @Override
     public void onBindViewHolder(@NonNull ViewHolder holder, int position,
                                  @NonNull List<Object> payloads) {
-        if (forcedEmpty) return;
         if (payloads != null && !payloads.isEmpty()) {
             GalleryMediaItem item = differ.getCurrentList().get(position);
             for (Object p : payloads) {
@@ -147,29 +175,6 @@ public class GalleryAdapter extends RecyclerView.Adapter<GalleryAdapter.ViewHold
         holder.bind(item);
     }
 
-    public List<GalleryMediaItem> getItems() {
-        if (forcedEmpty) return Collections.emptyList();
-        return differ.getCurrentList();
-    }
-
-    public void clearNow() {
-        differ.submitList(Collections.emptyList());
-    }
-
-    public void publishImmediately(List<GalleryMediaItem> items) {
-        differ.submitList(items == null
-                ? Collections.emptyList()
-                : Collections.unmodifiableList(new ArrayList<>(items)));
-    }
-
-    @Override public int getItemCount() {
-        return differ.getCurrentList().size();
-    }
-
-    @Override public long getItemId(int position) {
-        GalleryMediaItem item = differ.getCurrentList().get(position);
-        return item.id ^ (((long) item.type) << 61);
-    }
 
     private void updateSelection(ViewHolder holder, GalleryMediaItem item) {
         boolean selectionMode = listener.isSelectionMode();
@@ -262,25 +267,17 @@ public class GalleryAdapter extends RecyclerView.Adapter<GalleryAdapter.ViewHold
         } catch (Exception ignored) {}
     }
 
-    /**
-     * Glide-based thumbnail load. This is the ONLY functional change from
-     * the previous BitmapFactory implementation. Every call site, every
-     * bitmap, every size, every content — identical.
-     *
-     * The ObjectKey signature is (dateModifiedSeconds + path hash) so Glide
-     * can safely reuse the cached bitmap until the file is actually modified.
-     * Disk cache = RESOURCE, so a cold second-launch is instant.
-     */
     private void loadThumbnail(ViewHolder holder, GalleryMediaItem item) {
         final String path = item.path;
-
-        // Placeholder first so the view never shows a stale bitmap.
-        holder.imageView.setImageResource(android.R.drawable.ic_menu_gallery);
+        Glide.with(holder.imageView.getContext()).clear(holder.imageView);
+        holder.imageView.setTag(path.hashCode());
+        holder.imageView.setImageDrawable(null);
 
         RequestOptions opts = new RequestOptions()
                 .diskCacheStrategy(DiskCacheStrategy.RESOURCE)
                 .signature(new ObjectKey(item.dateModifiedSeconds + "_" + path.hashCode()))
-                .override(512, 512);   // fixed decode size → constant memory
+                .override(512, 512)
+                .placeholder(android.R.drawable.ic_menu_gallery);
 
         Glide.with(holder.imageView.getContext())
                 .load(path)
@@ -292,8 +289,11 @@ public class GalleryAdapter extends RecyclerView.Adapter<GalleryAdapter.ViewHold
     @Override
     public void onViewRecycled(@NonNull ViewHolder holder) {
         super.onViewRecycled(holder);
-        // Glide wants the request cleared so it can be re-targeted on the next bind.
-        Glide.with(holder.imageView.getContext()).clear(holder.imageView);
+        holder.imageView.setTag(null);
+        holder.imageView.setImageDrawable(null);
+
+        Context ctx = holder.itemView.getContext();
+        Glide.with(ctx.getApplicationContext()).clear(holder.imageView);
     }
 
     @Override

@@ -92,9 +92,6 @@ public class FullscreenAdapter extends RecyclerView.Adapter<FullscreenAdapter.Vi
         final int boundPosition = position;
         final String path = paths.get(position);
 
-        // If this holder was previously bound to a different position AND it
-        // was the controller's bound view, we must detach it before reuse.
-        // Otherwise the old SurfaceTextureListener can fire on a stale view.
         if (holder.boundPosition != -1 && holder.boundPosition != boundPosition) {
             controller.detachSurface(holder.videoSurface);
         }
@@ -208,23 +205,16 @@ public class FullscreenAdapter extends RecyclerView.Adapter<FullscreenAdapter.Vi
 
     @Override
     public void onViewRecycled(@NonNull ViewHolder holder) {
-        // THE FIX: detach the surface BEFORE clearing visibility. This is
-        // what prevents "BufferQueue has been abandoned" — the SurfaceTexture
-        // no longer has a consumer and the codec stops writing to it.
         controller.detachSurface(holder.videoSurface);
+        holder.imageView.setTag(null);
+        try {
+            holder.imageView.setImageMatrix(new android.graphics.Matrix());
+        } catch (Throwable ignored) {}
+        holder.imageView.setImageDrawable(null);
 
-        Drawable d = holder.imageView.getDrawable();
-        if (d instanceof BitmapDrawable) {
-            Bitmap b = ((BitmapDrawable) d).getBitmap();
-            if (b != null && !b.isRecycled()) {
-                try { b.recycle(); } catch (Exception ignored) {}
-            }
-        }
         holder.videoSurface.setVisibility(View.GONE);
         holder.videoSurface.setOnTouchListener(null);
         holder.imageView.setVisibility(View.GONE);
-        holder.imageView.setImageDrawable(null);
-        holder.imageView.setTag(null);
         holder.progressBar.setVisibility(View.GONE);
         holder.boundPosition = -1;
         super.onViewRecycled(holder);
@@ -233,8 +223,6 @@ public class FullscreenAdapter extends RecyclerView.Adapter<FullscreenAdapter.Vi
     @Override
     public void onDetachedFromRecyclerView(@NonNull RecyclerView recyclerView) {
         super.onDetachedFromRecyclerView(recyclerView);
-        // Do NOT release the player here — notifyDataSetChanged() also
-        // detaches the ViewPager2 inner RV. hardReset() handles teardown.
         executor.shutdownNow();
     }
 

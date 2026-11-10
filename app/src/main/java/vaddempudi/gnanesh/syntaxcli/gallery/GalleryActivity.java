@@ -798,32 +798,14 @@ public class GalleryActivity extends AppCompatActivity {
                     updateTopNavBar();
                 }
 
-                // In GalleryActivity, replace the onMediaChanged body:
-
                 @Override
                 public void onMediaChanged(List<GalleryMediaItem> items, boolean endReached) {
                     if (!isActivityAlive()) return;
-
                     if (albumsController != null
                             && (albumsController.isShowingAlbums() || albumsController.isAlbumOpen())) {
                         return;
                     }
                     if (currentAlbum != null) return;
-
-                    if (pendingAlbumLoad != null) {
-                        boolean albumItemsPresent = false;
-                        for (GalleryMediaItem it : items) {
-                            if (isInAlbum(it, pendingAlbumLoad)) {
-                                albumItemsPresent = true;
-                                break;
-                            }
-                        }
-                        if (!albumItemsPresent && currentAlbum != null) {
-                            if (loadingSpinner != null) loadingSpinner.setVisibility(View.VISIBLE);
-                            return;
-                        }
-                        pendingAlbumLoad = null;
-                    }
 
                     if (items == null) return;
                     if (items.isEmpty() && !cachedMedia.isEmpty()) return;
@@ -841,16 +823,7 @@ public class GalleryActivity extends AppCompatActivity {
                         cachedMedia.add(it);
                     }
 
-                    if (currentFilter == FilterMode.BIN) {
-                        return;
-                    }
-
                     transientLoading = false;
-
-                    // ★ Replace `mtimeCache.clear()` with targeted invalidation.
-                    //   Only re-stat paths we have NOT seen in this session.
-                    //   The MediaStore already gave us correct lastModifiedMillis;
-                    //   we only need filesystem mtime for WhatsApp/injected paths.
                     pruneMtimeCacheTo(cachedMedia);
 
                     refreshCurrentList();
@@ -858,8 +831,6 @@ public class GalleryActivity extends AppCompatActivity {
                         if (pendingInitialPath != null) tryOpenPendingInitialPath();
                     });
                 }
-
-                /** Drop cache entries for paths no longer in `media`; leave the rest alone. */
                 private void pruneMtimeCacheTo(List<GalleryMediaItem> media) {
                     if (mtimeCache.size() < 128) return;   // small cache — not worth the walk
                     Set<String> keep = new HashSet<>(media.size());
@@ -2811,6 +2782,13 @@ public class GalleryActivity extends AppCompatActivity {
         trashedByPath.put(newPath, binItem);
         addBinPath(newPath);
         trashedIndexDirty = false;
+
+        // ★ INSTANT: rebuild Bin / gallery snapshot right now so the list
+        //   updates on the same frame the trash operation completes.
+        if (albumLoader != null) albumLoader.invalidate();
+        refreshCurrentList();
+
+        // Still schedule the debounced MediaStore rescan (WhatsApp/albums).
         scheduleMediaRefresh(MEDIA_REFRESH_DEBOUNCE_MS);
     }
 
@@ -2845,10 +2823,12 @@ public class GalleryActivity extends AppCompatActivity {
             repository.replaceItemPath(oldPath, repl);
         }
 
+        if (albumLoader != null) albumLoader.invalidate();
+        refreshCurrentList();
+
         scheduleMediaRefresh(MEDIA_REFRESH_DEBOUNCE_MS);
         return true;
     }
-
     private File uniqueTrashTarget(File src) {
         String parent = src.getParent();
         String clean = cleanFileName(src.getName());
@@ -3010,6 +2990,8 @@ public class GalleryActivity extends AppCompatActivity {
                 trashedIndexDirty = false;
                 mtimeCache.clear();
                 clearSelection();
+                if (albumLoader != null) albumLoader.invalidate();
+                refreshCurrentList();
                 scheduleMediaRefresh(MEDIA_REFRESH_DEBOUNCE_MS);
             });
         });
@@ -3074,6 +3056,8 @@ public class GalleryActivity extends AppCompatActivity {
                 trashedIndexDirty = false;
                 mtimeCache.clear();
                 clearSelection();
+                if (albumLoader != null) albumLoader.invalidate();
+                refreshCurrentList();
                 scheduleMediaRefresh(MEDIA_REFRESH_DEBOUNCE_MS);
                 Toast.makeText(this, "Restored " + r
                                 + (f > 0 ? " (" + f + " failed)" : ""),
@@ -3118,6 +3102,7 @@ public class GalleryActivity extends AppCompatActivity {
                             trashedIndexDirty = false;
                             mtimeCache.clear();
                             clearSelection();
+                            if (albumLoader != null) albumLoader.invalidate();
                             refreshCurrentList();
                             Toast.makeText(this, "Deleted " + dd
                                             + (ff > 0 ? ", failed " + ff : ""),
@@ -3627,14 +3612,12 @@ public class GalleryActivity extends AppCompatActivity {
         if (pos < 0 || pos >= fullscreenMediaPaths.size()) return;
         final String path = fullscreenMediaPaths.get(pos);
         if (path == null) return;
+
+        // Do the file operation *first* so the UI reacts to the real state.
         GalleryMediaItem target = null;
         for (GalleryMediaItem it : cachedMedia) {
-            if (it.path != null && it.path.equals(path)) {
-                target = it;
-                break;
-            }
+            if (it.path != null && it.path.equals(path)) { target = it; break; }
         }
-
         if (target != null) {
             if (currentFilter == FilterMode.PRIVATE) {
                 File f = new File(target.path);
@@ -3649,12 +3632,14 @@ public class GalleryActivity extends AppCompatActivity {
                     Toast.makeText(this, "Deleted", Toast.LENGTH_SHORT).show();
                 }
             } else {
-                moveToTrash(target);
+                moveToTrash(target);   // instant now
             }
         }
 
+        // ★ Surgical adapter update — do NOT notifyDataSetChanged().
         final int removedIndex = pos;
         fullscreenMediaPaths.remove(removedIndex);
+        fullscreenAdapter.notifyItemRemoved(removedIndex);
 
         if (fullscreenMediaPaths.isEmpty()) {
             closeFullscreenViewer();
@@ -3663,11 +3648,8 @@ public class GalleryActivity extends AppCompatActivity {
             scheduleMediaRefresh(MEDIA_REFRESH_DEBOUNCE_MS);
             return;
         }
-        int newIndex = removedIndex;
-        if (newIndex >= fullscreenMediaPaths.size()) {
-            newIndex = fullscreenMediaPaths.size() - 1;
-        }
 
+        int newIndex = Math.min(removedIndex, fullscreenMediaPaths.size() - 1);
         fullscreenCurrentPosition = newIndex;
         currentFullscreenVideo = null;
         currentFullscreenVideoPosition = -1;
@@ -3675,8 +3657,13 @@ public class GalleryActivity extends AppCompatActivity {
         isOverlayVideoPlaying = false;
         overlayControlsVisible = false;
         overlayPendingSeekMs = -1;
-        fullscreenAdapter.notifyDataSetChanged();
-        fullscreenViewPager.setCurrentItem(newIndex, false);
+
+        // Only move the pager if we actually need to.
+        if (fullscreenViewPager.getCurrentItem() != newIndex) {
+            fullscreenViewPager.setCurrentItem(newIndex, false);
+        } else {
+            fullscreenAdapter.notifyItemChanged(newIndex);
+        }
 
         updateFullscreenInfo(newIndex);
         setFullscreenChromeVisible(true);
@@ -3685,7 +3672,7 @@ public class GalleryActivity extends AppCompatActivity {
         if (isVideoPath(nextPath)) {
             videoControlContainer.setVisibility(View.VISIBLE);
             overlayControlsVisible = true;
-            int finalIndex = newIndex;
+            final int finalIndex = newIndex;
             fullscreenViewPager.post(() -> findAndStartVideoForPosition(finalIndex));
         } else {
             videoControlContainer.setVisibility(View.GONE);
@@ -4355,14 +4342,15 @@ public class GalleryActivity extends AppCompatActivity {
             albumsCacheValid = false;
             trashedIndexDirty = true;
             if (albumsController != null) albumsController.invalidateAlbums();
-            if (repository != null) {
+
+
+            if (repository != null && currentFilter != FilterMode.BIN) {
                 repository.refreshFirstPage();
             }
             pendingMediaRefresh = null;
         };
         mediaRefreshHandler.postDelayed(pendingMediaRefresh, delayMs);
     }
-
     private void wireVolumeBrightness() {
         if (fullscreenOverlay == null) return;
         final AudioManager audioManager =
