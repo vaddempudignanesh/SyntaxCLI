@@ -34,6 +34,12 @@ public class BasicKeyboardView extends View {
     private boolean spaceSwipeFired = false;
 
     private float cDownY = 0f;
+
+    private Bitmap systemWallpaperBitmap = null;
+    private int    systemWallpaperWidthPx  = 0;
+    private int    systemWallpaperHeightPx = 0;
+    private String systemWallpaperSource = null;
+
     private boolean cSwipeArmed = false;
     private boolean cSwipeFired = false;
 
@@ -199,6 +205,8 @@ public class BasicKeyboardView extends View {
     public void setShifted(boolean s) { shifted = s; invalidate(); }
 
     public boolean isSymbols()  { return symbols; }
+
+    private boolean systemWallpaperMode = false;
     public boolean isSymbols2() { return symbols2; }
     public boolean isSymbols3() { return symbols3; }
 
@@ -269,8 +277,27 @@ public class BasicKeyboardView extends View {
         rebuildHitKeys();
         ImeColorStore colors = ImeColorStore.get(getContext());
         if (colors.isWallpaperEnabled() && !colors.hasVideoWallpaper()) {
+            if (colors.hasImageWallpaper()) {
+                wallpaperBitmapPath = null;
+                reloadWallpaperBitmap(colors);
+            } else {
+                reloadSystemWallpaper();
+            }
+        }
+    }
+
+    public void releaseWallpaperBitmaps() {
+        if (wallpaperBitmap != null) {
+            wallpaperBitmap.recycle();
+            wallpaperBitmap = null;
             wallpaperBitmapPath = null;
-            reloadWallpaperBitmap(colors);
+        }
+        if (systemWallpaperBitmap != null) {
+            systemWallpaperBitmap.recycle();
+            systemWallpaperBitmap = null;
+            systemWallpaperSource = null;
+            systemWallpaperWidthPx  = 0;
+            systemWallpaperHeightPx = 0;
         }
     }
 
@@ -337,15 +364,24 @@ public class BasicKeyboardView extends View {
 
         ImeColorStore colors = ImeColorStore.get(getContext());
 
-        boolean videoMode = colors.isWallpaperEnabled() && colors.hasVideoWallpaper();
-        boolean imageMode = colors.isWallpaperEnabled()
+        boolean videoMode      = colors.isWallpaperEnabled() && colors.hasVideoWallpaper();
+        boolean customImageMode = colors.isWallpaperEnabled()
                 && !colors.hasVideoWallpaper()
+                && colors.hasCustomImage()
                 && wallpaperBitmap != null;
 
-        if (imageMode) {
+        // ── Background layer ──────────────────────────────────────
+        // Custom image  → paint the image into this view
+        // System wall.  → paint NOTHING (transparent window shows launcher WP)
+        // Solid color   → paint solid bg
+        if (customImageMode) {
             drawCustomWallpaper(canvas);
         }
+        // NOTE: system wallpaper is intentionally NOT drawn here.
+        //       The IME window is transparent in this mode and the launcher's
+        //       own wallpaper shows through the bottom keyboardHeightPx slice.
 
+        // ── Dim overlay (only when a wallpaper is active) ─────────
         if (colors.isWallpaperEnabled()) {
             int dim = colors.getWallpaperDim();
             if (dim > 0) {
@@ -354,10 +390,14 @@ public class BasicKeyboardView extends View {
                         | (KeyboardConfig.COLOR_WALLPAPER_DIM_FILL & 0x00FFFFFF));
                 canvas.drawRect(0, 0, getWidth(), getHeight(), wallpaperDimPaint);
             }
+            // NOTE: no else-branch fill. In system mode with dim==0 the view
+            // stays fully transparent, so the launcher wallpaper shows through.
         } else {
             wallpaperDimPaint.setColor(colors.getBgColor());
             canvas.drawRect(0, 0, getWidth(), getHeight(), wallpaperDimPaint);
         }
+
+
 
         int textColor = colors.getTextColor();
         int keyAlpha  = colors.getKeyAlpha();
@@ -443,6 +483,65 @@ public class BasicKeyboardView extends View {
         }
     }
 
+    private void drawSystemWallpaper(Canvas canvas) {
+        if (systemWallpaperBitmap == null) return;
+        int vw = getWidth();
+        int vh = getHeight();
+        if (vw <= 0 || vh <= 0) return;
+
+        int bw = systemWallpaperBitmap.getWidth();
+        int bh = systemWallpaperBitmap.getHeight();
+        if (bw <= 0 || bh <= 0) return;
+
+        float scale = Math.max((float) vw / bw, (float) vh / bh);
+        float drawW = bw * scale;
+        float drawH = bh * scale;
+
+        wallpaperDst.set(
+                (vw - drawW) / 2f,
+                (vh - drawH) / 2f,
+                (vw + drawW) / 2f,
+                (vh + drawH) / 2f);
+
+        canvas.drawBitmap(systemWallpaperBitmap, null, wallpaperDst, wallpaperBitmapPaint);
+    }
+
+
+    public void reloadSystemWallpaper() {
+        // We no longer paint the system wallpaper into the view — in system
+        // wallpaper mode the IME window is transparent and the launcher's own
+        // wallpaper shows through the bottom keyboardHeightPx slice.
+        if (systemWallpaperBitmap != null) {
+            systemWallpaperBitmap.recycle();
+            systemWallpaperBitmap = null;
+        }
+        systemWallpaperSource = null;
+        systemWallpaperWidthPx  = 0;
+        systemWallpaperHeightPx = 0;
+        invalidate();
+    }
+
+    private static Bitmap drawableToBitmap(
+            android.graphics.drawable.Drawable d, int reqW, int reqH) {
+        int w = d.getIntrinsicWidth();
+        int h = d.getIntrinsicHeight();
+        if (w <= 0) w = reqW;
+        if (h <= 0) h = reqH;
+
+        // Downsample to roughly the keyboard size, 1× is plenty (RGB_565).
+        int targetW = reqW;
+        int targetH = reqH;
+        float scale = Math.min((float) targetW / w, (float) targetH / h);
+        int drawW = Math.max(1, (int) (w * scale));
+        int drawH = Math.max(1, (int) (h * scale));
+
+        Bitmap out = Bitmap.createBitmap(drawW, drawH, Bitmap.Config.RGB_565);
+        android.graphics.Canvas c = new android.graphics.Canvas(out);
+        d.setBounds(0, 0, drawW, drawH);
+        d.draw(c);
+        return out;
+    }
+
     private void reloadWallpaperBitmap(ImeColorStore colors) {
         String path = colors.getWallpaperImagePath();
         if (path == null || path.isEmpty()) {
@@ -506,19 +605,63 @@ public class BasicKeyboardView extends View {
         canvas.drawBitmap(wallpaperBitmap, null, wallpaperDst, wallpaperBitmapPaint);
     }
 
-    public void refreshWallpaper() {
-        ImeColorStore colors = ImeColorStore.get(getContext());
-        if (colors.isWallpaperEnabled() && !colors.hasVideoWallpaper()) {
-            wallpaperBitmapPath = null;
-            wallpaperBitmap = null;
-            reloadWallpaperBitmap(colors);
-        } else {
-            wallpaperBitmap = null;
-            wallpaperBitmapPath = null;
-        }
+
+    public void setSystemWallpaperMode(boolean enabled) {
+        if (this.systemWallpaperMode == enabled) return;
+        this.systemWallpaperMode = enabled;
         invalidate();
     }
 
+    public boolean isSystemWallpaperMode() {
+        return systemWallpaperMode;
+    }
+
+    public void refreshWallpaper() {
+        ImeColorStore colors = ImeColorStore.get(getContext());
+        if (colors.isWallpaperEnabled() && !colors.hasVideoWallpaper()) {
+            if (colors.hasCustomImage()) {
+                // Custom image path — existing behaviour.
+                systemWallpaperBitmap = null;
+                systemWallpaperSource = null;
+                systemWallpaperWidthPx  = 0;
+                systemWallpaperHeightPx = 0;
+                wallpaperBitmapPath = null;
+                wallpaperBitmap = null;
+                reloadWallpaperBitmap(colors);
+            } else {
+                // System wallpaper — DO NOT load a bitmap. Transparent window
+                // shows the launcher wallpaper behind the keyboard. Loading it
+                // here would only risk drawing it inside the view.
+                wallpaperBitmapPath = null;
+                if (wallpaperBitmap != null) {
+                    wallpaperBitmap.recycle();
+                    wallpaperBitmap = null;
+                }
+                if (systemWallpaperBitmap != null) {
+                    systemWallpaperBitmap.recycle();
+                    systemWallpaperBitmap = null;
+                }
+                systemWallpaperSource = null;
+                systemWallpaperWidthPx  = 0;
+                systemWallpaperHeightPx = 0;
+            }
+        } else {
+            // Video or solid-color mode — no bitmap needed here.
+            if (wallpaperBitmap != null) {
+                wallpaperBitmap.recycle();
+                wallpaperBitmap = null;
+            }
+            wallpaperBitmapPath = null;
+            if (systemWallpaperBitmap != null) {
+                systemWallpaperBitmap.recycle();
+                systemWallpaperBitmap = null;
+            }
+            systemWallpaperSource = null;
+            systemWallpaperWidthPx  = 0;
+            systemWallpaperHeightPx = 0;
+        }
+        invalidate();
+    }
     private static int blend(int dst, int src, float ratio) {
         if (ratio <= 0f) return dst;
         if (ratio >= 1f) return src;

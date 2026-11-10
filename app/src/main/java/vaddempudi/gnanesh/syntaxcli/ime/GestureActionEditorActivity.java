@@ -1254,20 +1254,44 @@ public class GestureActionEditorActivity extends Activity {
             }
         } else if (requestCode == REQ_PICK_VIDEO) {
             try {
-                java.io.File dst = new java.io.File(
-                        getFilesDir(),
-                        "kbd_wallpaper_" + System.currentTimeMillis() + ".mp4");
+                // Stable destination path — overwrite the previous video in place.
+                // This guarantees the IME's fingerprint sees the SAME path but the
+                // file's mtime+length have changed, so it rebuilds correctly. It
+                // also means no orphaned files accumulate.
+                java.io.File dst = new java.io.File(getFilesDir(), "kbd_wallpaper_video.mp4");
+                java.io.File tmp = new java.io.File(getFilesDir(), "kbd_wallpaper_video.mp4.tmp");
+
                 try (java.io.InputStream in = getContentResolver().openInputStream(uri);
-                     java.io.OutputStream out = new java.io.FileOutputStream(dst)) {
+                     java.io.OutputStream out = new java.io.FileOutputStream(tmp)) {
                     if (in == null) throw new java.io.IOException("null stream");
                     byte[] buf = new byte[8192];
                     int n;
                     while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                    out.flush();
+                    if (out instanceof java.io.FileOutputStream) {
+                        try { ((java.io.FileOutputStream) out).getFD().sync(); } catch (Throwable ignored) { }
+                    }
                 }
+
+                // Atomic-ish swap: delete old, rename tmp → dst.
+                if (dst.exists()) dst.delete();
+                if (!tmp.renameTo(dst)) {
+                    // Fallback: copy through.
+                    try (java.io.FileInputStream is = new java.io.FileInputStream(tmp);
+                         java.io.FileOutputStream os = new java.io.FileOutputStream(dst)) {
+                        byte[] buf = new byte[8192];
+                        int n;
+                        while ((n = is.read(buf)) > 0) os.write(buf, 0, n);
+                        os.flush();
+                        try { os.getFD().sync(); } catch (Throwable ignored) { }
+                    }
+                    tmp.delete();
+                }
+
                 pendingWallpaperVideoPath = dst.getAbsolutePath();
                 pendingWallpaperImagePath = null;
                 pendingWallpaperEnabled = true;
-                saveWallpaper();               // already calls broadcastLayoutChanged()
+                saveWallpaper();               // now uses .commit() — durable
                 Toast.makeText(this, "Custom video set", Toast.LENGTH_SHORT).show();
                 recreate();
             } catch (Exception e) {

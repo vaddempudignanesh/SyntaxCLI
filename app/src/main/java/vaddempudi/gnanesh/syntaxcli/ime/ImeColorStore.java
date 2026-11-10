@@ -3,6 +3,8 @@ package vaddempudi.gnanesh.syntaxcli.ime;
 import android.content.Context;
 import android.content.SharedPreferences;
 
+import java.io.File;
+
 public final class ImeColorStore {
 
     private static final String PREFS   = "ime_color_store";
@@ -142,9 +144,25 @@ public final class ImeColorStore {
                 .putInt(K_WP_DIM, wallpaperDim)
                 .putString(K_WP_IMG, imagePath)
                 .putString(K_WP_VID, videoPath)
-                .apply();
+                .commit();
     }
 
+
+    /**
+     * Returns true when a custom image wallpaper is configured AND active.
+     * Mutually exclusive with hasVideoWallpaper().
+     */
+    public boolean hasCustomImage() {
+        // Match this to whatever getter already exists for the image path/uri.
+        // Example:
+        String imgPath = getWallpaperImagePath();   // ← rename to your real getter
+        if (imgPath == null || imgPath.isEmpty()) return false;
+        try {
+            return new File(imgPath).exists();
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
     public float getRowHeightDp()       { return rowHeightDp; }
     public float getRowGapDp()          { return rowGapDp; }
     public float getKeyGapDp()          { return keyGapDp; }
