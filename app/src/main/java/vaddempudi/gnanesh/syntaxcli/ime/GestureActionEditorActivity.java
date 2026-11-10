@@ -187,7 +187,7 @@ public class GestureActionEditorActivity extends Activity {
                                 case "KEY RADIUS": layoutStore.saveKeyCornerRadiusDp(v); break;
                                 case "TAB ROW HEIGHT": layoutStore.saveTabRowHeightDp(v); break;
                             }
-                            broadcastLayoutChanged();          // ← live, every tick
+                            broadcastLayoutChanged();
                         }
                         @Override public void onStartTrackingTouch(SeekBar s) { }
                         @Override public void onStopTrackingTouch(SeekBar s) {
@@ -306,6 +306,7 @@ public class GestureActionEditorActivity extends Activity {
                     pendingTextColor = c;
                     ImeColorStore.get(this).save(pendingTextColor, pendingBgColor);
                     refreshPreviews();
+                    broadcastLayoutChanged();          // ← LIVE
                 });
         themeCard.addView(textRow);
         textSwatch = textRow.findViewWithTag("swatch");
@@ -318,6 +319,7 @@ public class GestureActionEditorActivity extends Activity {
                     pendingBgColor = c;
                     ImeColorStore.get(this).save(pendingTextColor, pendingBgColor);
                     refreshPreviews();
+                    broadcastLayoutChanged();          // ← LIVE
                 });
         themeCard.addView(bgRow);
         bgSwatch = bgRow.findViewWithTag("swatch");
@@ -353,6 +355,7 @@ public class GestureActionEditorActivity extends Activity {
                 pendingKeyAlpha = p;
                 ImeColorStore.get(GestureActionEditorActivity.this).saveKeyAlpha(p);
                 refreshPreviews();
+                broadcastLayoutChanged();
             }
             @Override public void onStartTrackingTouch(SeekBar sb) { }
             @Override public void onStopTrackingTouch(SeekBar sb) { }
@@ -432,6 +435,7 @@ public class GestureActionEditorActivity extends Activity {
                 ImeColorStore.get(GestureActionEditorActivity.this)
                         .saveKeyShrinkIntensity(scale);
                 updateIntensLabel.run();
+                broadcastLayoutChanged();          // ← LIVE
             }
             @Override public void onStartTrackingTouch(SeekBar sb) { }
             @Override public void onStopTrackingTouch(SeekBar sb) { }
@@ -484,6 +488,7 @@ public class GestureActionEditorActivity extends Activity {
                 ImeColorStore.get(GestureActionEditorActivity.this)
                         .saveKeyShrinkDownMs(20L + p);
                 updateSpeedLabel.run();
+                broadcastLayoutChanged();          // ← LIVE
             }
             @Override public void onStartTrackingTouch(SeekBar sb) { }
             @Override public void onStopTrackingTouch(SeekBar sb) { }
@@ -501,6 +506,7 @@ public class GestureActionEditorActivity extends Activity {
             ImeColorStore store = ImeColorStore.get(this);
             store.saveKeyShrinkEnabled(!store.isKeyShrinkEnabled());
             refreshShrink[0].run();
+            broadcastLayoutChanged();          // ← LIVE
         });
         refreshShrink[0].run();
 
@@ -624,6 +630,7 @@ public class GestureActionEditorActivity extends Activity {
                 pendingWallpaperDim = p;
                 saveWallpaper();
                 refreshPreviews();
+                broadcastLayoutChanged();          // ← LIVE
             }
             @Override public void onStartTrackingTouch(SeekBar sb) { }
             @Override public void onStopTrackingTouch(SeekBar sb) { }
@@ -711,6 +718,7 @@ public class GestureActionEditorActivity extends Activity {
             extraInput.setText(numCfg.getExtraChar());
             Toast.makeText(this, "Extra char saved: " + numCfg.getExtraChar(),
                     Toast.LENGTH_SHORT).show();
+            broadcastLayoutChanged();          // ← LIVE
         });
         LinearLayout.LayoutParams ea = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -768,6 +776,7 @@ public class GestureActionEditorActivity extends Activity {
             }
             numCfg.setDigitOrder(s);
             Toast.makeText(this, "Digit order saved", Toast.LENGTH_SHORT).show();
+            broadcastLayoutChanged();          // ← LIVE
         });
         LinearLayout.LayoutParams oa = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -800,6 +809,7 @@ public class GestureActionEditorActivity extends Activity {
         reverseToggle.setOnClickListener(v -> {
             numCfg.setReverseRows(!numCfg.isReverseRows());
             refreshReverse.run();
+            broadcastLayoutChanged();          // ← LIVE
         });
         add.setTextColor(GREEN);
         add.setBackgroundColor(BG);
@@ -848,6 +858,7 @@ public class GestureActionEditorActivity extends Activity {
                 pendingWallpaperDim,
                 pendingWallpaperImagePath,
                 pendingWallpaperVideoPath);
+        broadcastLayoutChanged();          // ← LIVE (drives wallpaper on/off + image/video hot-swap)
     }
 
 
@@ -1234,7 +1245,7 @@ public class GestureActionEditorActivity extends Activity {
                 pendingWallpaperImagePath = dst.getAbsolutePath();
                 pendingWallpaperVideoPath = null;
                 pendingWallpaperEnabled = true;
-                saveWallpaper();
+                saveWallpaper();               // already calls broadcastLayoutChanged()
                 Toast.makeText(this, "Custom image set", Toast.LENGTH_SHORT).show();
                 recreate();
             } catch (Exception e) {
@@ -1256,7 +1267,7 @@ public class GestureActionEditorActivity extends Activity {
                 pendingWallpaperVideoPath = dst.getAbsolutePath();
                 pendingWallpaperImagePath = null;
                 pendingWallpaperEnabled = true;
-                saveWallpaper();
+                saveWallpaper();               // already calls broadcastLayoutChanged()
                 Toast.makeText(this, "Custom video set", Toast.LENGTH_SHORT).show();
                 recreate();
             } catch (Exception e) {
@@ -1331,6 +1342,7 @@ public class GestureActionEditorActivity extends Activity {
             del.setOnClickListener(v -> {
                 GestureActionStore.get(this).remove(a.id);
                 renderList();
+                broadcastLayoutChanged();          // ← LIVE — IME re-reads action store
             });
             buttons.addView(del);
 
@@ -1493,22 +1505,14 @@ public class GestureActionEditorActivity extends Activity {
     }
 
     private void broadcastLayoutChanged() {
-        ImeColorStore s = ImeColorStore.get(this);
+        // Capture the ENTIRE current state from all three stores.
         LiveLayoutBridge.LayoutSnapshot snap =
-                new LiveLayoutBridge.LayoutSnapshot(
-                        s.getRowHeightDp(),
-                        s.getRowGapDp(),
-                        s.getKeyGapDp(),
-                        s.getKeyCornerRadiusDp(),
-                        s.getTabRowHeightDp(),
-                        System.currentTimeMillis());
+                LiveLayoutBridge.LayoutSnapshot.capture(this);
 
         // Direct call into the service's public entry point.
-        // (Writes the live channel file; applied by the IME process within ~180ms.)
         BasicImeService.pushLiveLayout(this, snap);
 
-        // Keep the legacy broadcast too — harmless, and lets an older
-        // service build in the same APK react until it's rebuilt.
+        // Legacy broadcast — harmless, older builds still react.
         try {
             Intent i = new Intent(BasicImeService.ACTION_LAYOUT_CHANGED);
             i.setPackage(getPackageName());
@@ -1751,6 +1755,7 @@ public class GestureActionEditorActivity extends Activity {
                 }
                 renderList();
                 dlg.dismiss();
+                broadcastLayoutChanged();          // ← LIVE — IME re-reads action store
             });
         });
         dlg.show();

@@ -175,8 +175,8 @@ public final class ImeColorStore {
         tabRowHeightDp = clamp(dp, 20f, 80f);
         prefs.edit().putFloat(K_TAB_H, tabRowHeightDp).apply();
     }
+// In ImeColorStore.java — replace the existing applySnapshot + applySnapshotInternal
 
-    // ── Live in-memory update (no prefs write) ────────────────
     public void applySnapshot(LiveLayoutBridge.LayoutSnapshot s) {
         applySnapshotInternal(s);
     }
@@ -188,7 +188,21 @@ public final class ImeColorStore {
         keyGapDp          = clamp(s.keyGapDp,        0f,  20f);
         keyCornerRadiusDp = clamp(s.keyRadiusDp,     0f,  20f);
         tabRowHeightDp    = clamp(s.tabRowHeightDp, 20f,  80f);
+
+        textColor           = s.textColor;
+        bgColor             = s.bgColor;
+        keyAlpha            = Math.max(0, Math.min(255, s.keyAlpha));
+        keyShrinkEnabled    = s.keyShrinkEnabled;
+        keyShrinkIntensity  = Math.max(0.5f, Math.min(1.0f, s.keyShrinkIntensity));
+        keyShrinkDownMs     = Math.max(20L, Math.min(200L, s.keyShrinkDownMs));
+
+        wallpaperEnabled    = s.wallpaperEnabled;
+        wallpaperDim        = Math.max(0, Math.min(100, s.wallpaperDim));
+        wallpaperImagePath  = s.wallpaperImagePath;
+        wallpaperVideoPath  = s.wallpaperVideoPath;
     }
+
+    
 
     private static float clamp(float v, float lo, float hi) {
         if (v < lo) return lo;

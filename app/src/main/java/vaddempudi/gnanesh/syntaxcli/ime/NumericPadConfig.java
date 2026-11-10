@@ -31,6 +31,11 @@ public final class NumericPadConfig {
     public static final String DEFAULT_CHAR  = ",";
     public static final String DEFAULT_ORDER = "7894561230";
 
+    // Add these fields + override the getters:
+    private volatile String  liveExtraChar  = null;
+    private volatile String  liveDigitOrder = null;
+    private volatile Boolean liveReverseRows = null;
+
     private static volatile NumericPadConfig INSTANCE;
     private static final Object LOCK = new Object();
 
@@ -50,11 +55,7 @@ public final class NumericPadConfig {
         return INSTANCE;
     }
 
-    public String getExtraChar() {
-        String s = prefs.getString(K_CHAR, DEFAULT_CHAR);
-        if (s == null || s.isEmpty()) return DEFAULT_CHAR;
-        return s;
-    }
+
 
     public void setExtraChar(String c) {
         if (c == null) c = DEFAULT_CHAR;
@@ -64,20 +65,47 @@ public final class NumericPadConfig {
         prefs.edit().putString(K_CHAR, c).apply();
     }
 
-    public String getDigitOrder() {
-        String s = prefs.getString(K_ORDER, DEFAULT_ORDER);
-        if (!isValidOrder(s)) return DEFAULT_ORDER;
-        return s;
-    }
 
     public void setDigitOrder(String order) {
         if (!isValidOrder(order)) return;
         prefs.edit().putString(K_ORDER, order).apply();
     }
 
+    /** Apply a live snapshot without touching prefs. */
+    public void applySnapshot(String extraChar, String digitOrder, boolean reverseRows) {
+        if (extraChar != null) {
+            String c = extraChar.trim();
+            if (c.isEmpty()) c = DEFAULT_CHAR;
+            if (c.length() > 1) c = c.substring(0, 1);
+            this.liveExtraChar = c;
+        } else {
+            this.liveExtraChar = null;
+        }
+        this.liveDigitOrder = isValidOrder(digitOrder) ? digitOrder : null;
+        this.liveReverseRows = reverseRows;
+    }
+
+
+
+    public String getExtraChar() {
+        if (liveExtraChar != null) return liveExtraChar;
+        String s = prefs.getString(K_CHAR, DEFAULT_CHAR);
+        if (s == null || s.isEmpty()) return DEFAULT_CHAR;
+        return s;
+    }
+
+    public String getDigitOrder() {
+        if (liveDigitOrder != null) return liveDigitOrder;
+        String s = prefs.getString(K_ORDER, DEFAULT_ORDER);
+        if (!isValidOrder(s)) return DEFAULT_ORDER;
+        return s;
+    }
+
     public boolean isReverseRows() {
+        if (liveReverseRows != null) return liveReverseRows;
         return prefs.getBoolean(K_REV, false);
     }
+
 
     public void setReverseRows(boolean v) {
         prefs.edit().putBoolean(K_REV, v).apply();

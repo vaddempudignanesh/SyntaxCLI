@@ -734,7 +734,7 @@ public class BasicImeService extends InputMethodService
                     }
                 }
             } catch (Throwable ignored) { }
-            liveLayoutHandler.postDelayed(this, 180L);
+            liveLayoutHandler.postDelayed(this, 90L);
         }
     };
 
@@ -759,33 +759,42 @@ public class BasicImeService extends InputMethodService
         }
     }
 
-    /** Apply a snapshot to the live keyboard view and re-lock the frame. */
+    /** Apply a full snapshot to the live keyboard view and re-lock the frame. */
     private void applyLayoutLiveFromSnapshot(LiveLayoutBridge.LayoutSnapshot snap) {
         if (snap == null) return;
 
+        // Numeric pad config — live override
+        NumericPadConfig.get(this).applySnapshot(
+                snap.numericExtraChar, snap.numericDigitOrder, snap.numericReverseRows);
+
+        // Keyboard view — colors, alpha, shrink, wallpaper, layout
         if (keyboardView != null) {
-            keyboardView.rebuildFromStore();       // re-reads ImeColorStore
+            keyboardView.rebuildFromStore();   // re-reads ImeColorStore + NumericPadConfig
+            keyboardView.refreshWallpaper();   // re-loads image/video wallpaper bitmap
         }
-        if (emojiPanel != null) {
-            emojiPanel.refreshFromPrefs();
-        }
-        if (clipboardPanel != null) {
-            clipboardPanel.requestLayout();
-        }
+
+        if (emojiPanel != null)       emojiPanel.refreshFromPrefs();
+        if (clipboardPanel != null)   clipboardPanel.requestLayout();
         if (rootContainer != null) {
             rootContainer.requestLayout();
             rootContainer.invalidate();
         }
 
-        keyboardView.post(() -> {
-            try {
-                measureKeyboard();
-                applyKeyboardFrameLock();
-                rebuildWallpaperLayers();
-            } catch (Throwable t) {
-                XLog.e("IME", "applyLayoutLiveFromSnapshot post failed", t);
-            }
-        });
+        // Window background — wallpaper mode vs solid
+        applyWallpaperWindowSettings();
+
+        // Re-measure + re-lock + reload wallpaper layers (video too)
+        if (keyboardView != null) {
+            keyboardView.post(() -> {
+                try {
+                    measureKeyboard();
+                    applyKeyboardFrameLock();
+                    rebuildWallpaperLayers();
+                } catch (Throwable t) {
+                    XLog.e("IME", "applyLayoutLiveFromSnapshot post failed", t);
+                }
+            });
+        }
     }
 
     @Override

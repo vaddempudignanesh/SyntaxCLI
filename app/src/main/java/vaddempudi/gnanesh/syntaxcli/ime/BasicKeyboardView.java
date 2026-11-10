@@ -896,8 +896,11 @@ public class BasicKeyboardView extends View {
         invalidate();
     }
 
-    /** Re-read ImeColorStore into the layout and re-measure. */
+    // In BasicKeyboardView
     public void rebuildFromStore() {
+        if (numeric) {
+            layout.rebuildNumericPage(getContext());
+        }
         rebuildHitKeys();
         requestLayout();
         invalidate();
