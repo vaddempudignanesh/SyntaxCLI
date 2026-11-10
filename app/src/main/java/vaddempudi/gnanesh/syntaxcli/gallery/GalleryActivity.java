@@ -3473,6 +3473,8 @@ public class GalleryActivity extends AppCompatActivity {
                 videoHandler.removeCallbacks(overlayProgressRunnable);
                 overlayPendingSeekMs = -1;
                 lastSeekTargetMs = -1;
+                stopCurrentVideo();
+
                 fullscreenCurrentPosition = position;
 
                 String path = (position >= 0 && position < fullscreenMediaPaths.size())
@@ -3492,6 +3494,13 @@ public class GalleryActivity extends AppCompatActivity {
                     if (videoControlContainer != null)
                         videoControlContainer.setVisibility(View.GONE);
                     overlayControlsVisible = false;
+                    // ★ FIX: also make sure the shared controller is silent for images.
+                    if (fullscreenAdapter != null) {
+                        try {
+                            HardwareVideoController shared = fullscreenAdapter.getController(0);
+                            if (shared != null) shared.pauseForPageChange();
+                        } catch (Exception ignored) {}
+                    }
                 }
 
                 updateFullscreenInfo(position);
@@ -3502,14 +3511,44 @@ public class GalleryActivity extends AppCompatActivity {
                         if (fullscreenCurrentPosition != position) return;
                         findAndStartVideoForPosition(position);
                         fullscreenViewPager.postDelayed(() -> {
-                            if (fullscreenCurrentPosition == position) {
-                                syncOverlayPlayPauseIcon();
-                            }
+                            if (fullscreenCurrentPosition == position) syncOverlayPlayPauseIcon();
                         }, 300L);
                     });
                 }
             }
         });
+    }
+
+    /**
+     * Pause any video currently playing in the fullscreen viewer.
+     *
+     * Pauses:
+     *   1. The controller we hold a direct reference to (currentFullscreenVideo).
+     *   2. The shared controller owned by FullscreenAdapter — this is the one
+     *      that actually owns the codec/audio track and is what leaks audio
+     *      across swipes if we only pause (1).
+     *
+     * Safe to call when nothing is playing.
+     */
+    private void stopCurrentVideo() {
+        // 1) The direct reference.
+        if (currentFullscreenVideo != null) {
+            try { currentFullscreenVideo.pause(); } catch (Exception ignored) {}
+            currentFullscreenVideo = null;
+        }
+        currentFullscreenVideoPosition = -1;
+
+        // 2) The adapter's shared controller — this is the critical one.
+        if (fullscreenAdapter != null) {
+            try {
+                HardwareVideoController shared = fullscreenAdapter.getController(0);
+                if (shared != null) shared.pauseForPageChange();
+            } catch (Exception ignored) {}
+        }
+
+        // 3) Stop the progress ticker so it does not fight with a paused player.
+        videoHandler.removeCallbacks(overlayProgressRunnable);
+        isOverlayVideoPlaying = false;
     }
 
     private void resetVideoUi() {
@@ -3814,6 +3853,12 @@ public class GalleryActivity extends AppCompatActivity {
         }
         if (fullscreenAdapter != null) {
             fullscreenAdapter.pauseForClose();
+        }
+        if (fullscreenAdapter != null) {
+            try {
+                HardwareVideoController shared = fullscreenAdapter.getController(0);
+                if (shared != null) shared.pauseForPageChange();
+            } catch (Exception ignored) {}
         }
         currentFullscreenVideo = null;
         currentFullscreenVideoPosition = -1;
@@ -4355,6 +4400,13 @@ public class GalleryActivity extends AppCompatActivity {
         super.onPause();
         if (currentFullscreenVideo != null && currentFullscreenVideo.isPlaying()) {
             currentFullscreenVideo.pauseForLifecycle();
+        }
+        // ★ Ensure the adapter's shared controller is silenced on background.
+        if (fullscreenAdapter != null) {
+            try {
+                HardwareVideoController shared = fullscreenAdapter.getController(0);
+                if (shared != null) shared.pauseForPageChange();
+            } catch (Exception ignored) {}
         }
         videoHandler.removeCallbacks(overlayProgressRunnable);
         videoHandler.removeCallbacks(overlayHideControlsRunnable);

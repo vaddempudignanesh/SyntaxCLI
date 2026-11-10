@@ -273,6 +273,9 @@ public class HardwareVideoController {
     private void applyMediaItem(String path, boolean startWhenReady) {
         if (player == null) return;
         try {
+            // ★ KILL any residual audio from the previous media item
+            player.setVolume(1f);
+
             MediaItem item = path.startsWith("content://")
                     ? MediaItem.fromUri(Uri.parse(path))
                     : MediaItem.fromUri(Uri.fromFile(new File(path)));
@@ -337,6 +340,27 @@ public class HardwareVideoController {
     }
 
     public String getVideoPath() { return pendingPath; }
+
+    // HardwareVideoController.java — add this method
+    /** Pause playback immediately, drop audio, and keep the player alive
+     *  so the next showPath() can reuse it without a codec restart. */
+    public void pauseForPageChange() {
+        if (player != null) {
+            try { player.pause(); } catch (Exception ignored) {}
+            // Belt-and-braces: also mute the audio track immediately so any
+            // in-flight decoder flush cannot leak a fraction of a second of audio.
+            try { player.setVolume(0f); } catch (Exception ignored) {}
+        }
+        userPaused = true;
+        pendingStartWhenReady = false;
+    }
+
+    /** Restore the normal volume when the next video is actually about to play. */
+    public void resetVolumeForPlay() {
+        if (player != null) {
+            try { player.setVolume(1f); } catch (Exception ignored) {}
+        }
+    }
 
     public void setOnPreparedListener(PreparedCallback cb) {
         this.onPrepared = cb;

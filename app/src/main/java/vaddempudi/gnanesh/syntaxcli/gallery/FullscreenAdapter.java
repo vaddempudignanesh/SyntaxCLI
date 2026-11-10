@@ -124,6 +124,8 @@ public class FullscreenAdapter extends RecyclerView.Adapter<FullscreenAdapter.Vi
                 controller.setOnErrorListener(err ->
                         android.util.Log.e("gallery-tui", "shared onError pos=" + boundPosition, err));
 
+                controller.pauseForPageChange();
+
                 controller.showPath(path, holder.videoSurface, true);
                 if (controller.isPreparedNow()) holder.progressBar.setVisibility(View.GONE);
             } else {
@@ -205,6 +207,9 @@ public class FullscreenAdapter extends RecyclerView.Adapter<FullscreenAdapter.Vi
 
     @Override
     public void onViewRecycled(@NonNull ViewHolder holder) {
+        if (holder.boundPosition == activePosition) {
+            controller.pauseForPageChange();
+        }
         controller.detachSurface(holder.videoSurface);
         holder.imageView.setTag(null);
         try {
