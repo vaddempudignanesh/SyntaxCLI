@@ -814,12 +814,30 @@ public class GalleryActivity extends AppCompatActivity {
                     repositoryAtEnd = endReached;
                     cachedMedia.clear();
                     cachedMediaSorted = false;
+
                     Set<String> favs = loadFavoritePaths();
+                    final Set<String> binPaths = loadBinPaths();
+                    final boolean haveBin = !binPaths.isEmpty();
+
                     for (GalleryMediaItem it : items) {
-                        boolean trashed = it.path != null && it.path.contains(".trashed.");
+                        if (it == null) continue;
+
+                        // Priority of truth:
+                        //   1. it.isTrashed — pre-marked by GalleryRepository from disk
+                        //   2. .trashed. substring in the on-disk name
+                        //   3. membership in the PREF_BIN_PATHS registry
+                        boolean trashed = it.isTrashed;
+                        if (!trashed && it.path != null) {
+                            trashed = it.path.indexOf(".trashed.") >= 0;
+                        }
+                        if (!trashed && haveBin && it.path != null) {
+                            trashed = binPaths.contains(it.path);
+                        }
                         it.isTrashed = trashed;
-                        it.isFavorite = it.isFavorite
-                                || (it.path != null && favs.contains(it.path));
+
+                        if (it.path != null) {
+                            it.isFavorite = it.isFavorite || favs.contains(it.path);
+                        }
                         cachedMedia.add(it);
                     }
 
@@ -831,8 +849,9 @@ public class GalleryActivity extends AppCompatActivity {
                         if (pendingInitialPath != null) tryOpenPendingInitialPath();
                     });
                 }
+
                 private void pruneMtimeCacheTo(List<GalleryMediaItem> media) {
-                    if (mtimeCache.size() < 128) return;   // small cache — not worth the walk
+                    if (mtimeCache.size() < 128) return;
                     Set<String> keep = new HashSet<>(media.size());
                     for (GalleryMediaItem it : media) {
                         if (it.path != null) keep.add(it.path);
@@ -1109,7 +1128,7 @@ public class GalleryActivity extends AppCompatActivity {
             btnInfoSelected.setOnClickListener(v -> showSelectedItemInfo());
         if (btnFavoriteSelected != null)
             btnFavoriteSelected.setOnClickListener(v -> addSelectedToFavorites());
-        installPrivateMoveAction();   // ← ADD THIS LINE
+        installPrivateMoveAction();
     }
 
 
@@ -1137,7 +1156,6 @@ public class GalleryActivity extends AppCompatActivity {
 
         final List<String> paths = new ArrayList<>(selectedItems);
 
-        // ★ Sum bytes for the progress bar.
         long totalBytes = 0;
         for (String p : paths) {
             File f = new File(p);
@@ -1216,7 +1234,6 @@ public class GalleryActivity extends AppCompatActivity {
         int barWidthPx = Math.round(6 * getResources().getDisplayMetrics().density);
         int marginPx = Math.round(6 * getResources().getDisplayMetrics().density);
 
-        // Track — a thin transparent column, only used to receive touches.
         fastScrollTrack = new android.widget.FrameLayout(this);
         android.widget.FrameLayout.LayoutParams tlp =
                 new android.widget.FrameLayout.LayoutParams(
@@ -1228,7 +1245,7 @@ public class GalleryActivity extends AppCompatActivity {
         fastScrollTrack.setVisibility(View.GONE);
         content.addView(fastScrollTrack);
         fastScrollTrack.post(this::updateFastScrollBar);
-        // Thumb — the visible pill.
+
         fastScrollThumb = new android.widget.FrameLayout(this);
         android.graphics.drawable.GradientDrawable pill =
                 new android.graphics.drawable.GradientDrawable();
@@ -1261,7 +1278,6 @@ public class GalleryActivity extends AppCompatActivity {
             }
             return false;
         });
-
 
         recyclerView.addOnScrollListener(new RecyclerView.OnScrollListener() {
             private boolean pending = false;
@@ -1401,19 +1417,39 @@ public class GalleryActivity extends AppCompatActivity {
         if (prefs == null) return;
         StringBuilder sb = new StringBuilder();
         for (String p : paths) sb.append(p).append('\n');
-        prefs.edit().putString(PREF_BIN_PATHS, sb.toString()).apply();
+        prefs.edit().putString(PREF_BIN_PATHS, sb.toString()).commit();
+    }
+
+    private static String unTrashPath(String path) {
+        int slash = path.lastIndexOf('/');
+        if (slash < 0) return null;
+        String dir  = path.substring(0, slash);
+        String name = path.substring(slash + 1);
+        if (!name.startsWith(".trashed.")) return null;
+        return dir + "/" + name.substring(9);
     }
 
     private void addBinPath(String path) {
         if (path == null) return;
         Set<String> set = loadBinPaths();
         if (set.add(path)) saveBinPaths(set);
+        String clean = unTrashPath(path);
+        if (clean != null && set.add(clean)) saveBinPaths(set);
     }
 
     private void removeBinPath(String path) {
         if (path == null) return;
         Set<String> set = loadBinPaths();
-        if (set.remove(path)) saveBinPaths(set);
+        boolean changed = set.remove(path);
+        String clean = unTrashPath(path);
+        if (clean != null && set.remove(clean)) changed = true;
+        int slash = path.lastIndexOf('/');
+        if (slash >= 0) {
+            String dir  = path.substring(0, slash);
+            String name = path.substring(slash + 1);
+            if (set.remove(dir + "/.trashed." + name)) changed = true;
+        }
+        if (changed) saveBinPaths(set);
     }
 
     private List<GalleryMediaItem> buildBinListFromRegistry() {
@@ -1549,14 +1585,12 @@ public class GalleryActivity extends AppCompatActivity {
     private void tryOpenPendingInitialPath() {
         if (pendingInitialPath == null) return;
 
-
         if (screenAdapter == null || screenAdapter.getItemCount() == 0) {
             pendingOpenAfterLoad = true;
             return;
         }
 
         String path = pendingInitialPath;
-
 
         List<GalleryMediaItem> current = screenAdapter.getItems();
         boolean present = false;
@@ -1587,7 +1621,6 @@ public class GalleryActivity extends AppCompatActivity {
             merged.add(mi);
             merged.addAll(current);
 
-
             screenAdapter.submitList(merged);
             current = merged;
         }
@@ -1604,25 +1637,55 @@ public class GalleryActivity extends AppCompatActivity {
         recyclerView.post(() -> openFullscreenViewer(openPath));
     }
 
+
     private void notifyMediaStoreDeleted(List<String> oldPaths) {
         if (oldPaths == null || oldPaths.isEmpty()) return;
-        try {
-            for (String p : oldPaths) {
-                if (p == null) continue;
-                try {
-                    getContentResolver().delete(
-                            MediaStore.Files.getContentUri("external"),
-                            MediaStore.MediaColumns.DATA + "=?",
-                            new String[]{p});
-                } catch (Exception ignored) {
-                }
+
+        Set<String> pathsToRemove = new HashSet<>();
+
+        for (String path : oldPaths) {
+            if (path == null) continue;
+
+            pathsToRemove.add(path);
+
+            int slash = path.lastIndexOf('/');
+            if (slash <= 0) continue;
+
+            String dir = path.substring(0, slash);
+            String name = path.substring(slash + 1);
+
+            String cleanName = name.startsWith(".trashed.")
+                    ? name.substring(9)
+                    : name;
+
+            // Remove both original and trashed MediaStore paths.
+            pathsToRemove.add(dir + "/" + cleanName);
+            pathsToRemove.add(dir + "/.trashed." + cleanName);
+        }
+
+        for (String path : pathsToRemove) {
+            try {
+                getContentResolver().delete(
+                        MediaStore.Files.getContentUri("external"),
+                        MediaStore.MediaColumns.DATA + "=?",
+                        new String[]{path}
+                );
+            } catch (Exception ignored) {
             }
-            MediaScannerConnection.scanFile(
-                    this, oldPaths.toArray(new String[0]), null, null);
+        }
+
+        try {
+            if (!pathsToRemove.isEmpty()) {
+                MediaScannerConnection.scanFile(
+                        this,
+                        pathsToRemove.toArray(new String[0]),
+                        null,
+                        null
+                );
+            }
         } catch (Exception ignored) {
         }
     }
-
 
     private void refreshCurrentList() {
         if (!isActivityAlive()) return;
@@ -1780,6 +1843,9 @@ public class GalleryActivity extends AppCompatActivity {
         });
         final List<GalleryMediaItem> filtered = new ArrayList<>();
         Set<String> favs = null;
+        final Set<String> binPathsSnapshot =
+                (currentFilter == FilterMode.BIN) ? null : loadBinPaths();
+        final boolean haveBin = binPathsSnapshot != null && !binPathsSnapshot.isEmpty();
         if (currentFilter == FilterMode.FAVORITES) favs = loadFavoritePaths();
 
         for (GalleryMediaItem item : cachedMedia) {
@@ -1800,7 +1866,13 @@ public class GalleryActivity extends AppCompatActivity {
                 }
             }
 
-            boolean trashed = item.path.contains(".trashed.");
+            // Priority of truth:
+            //   1. item.isTrashed — may already be set by the repository (disk check)
+            //   2. .trashed. substring
+            //   3. binPathsSnapshot membership
+            boolean trashed = item.isTrashed;
+            if (!trashed) trashed = item.path.indexOf(".trashed.") >= 0;
+            if (!trashed && haveBin) trashed = binPathsSnapshot.contains(item.path);
             item.isTrashed = trashed;
 
             switch (currentFilter) {
@@ -1880,7 +1952,6 @@ public class GalleryActivity extends AppCompatActivity {
         boolean isPrivate = currentFilter == FilterMode.PRIVATE;
         boolean isSelection = selectionMode && !isBin && !isPrivate;
 
-        // Default: hide everything, then turn on the right one.
         if (bottomBar != null) bottomBar.setVisibility(View.GONE);
         if (selectionBar != null) selectionBar.setVisibility(View.GONE);
         if (binBottomBar != null) binBottomBar.setVisibility(View.GONE);
@@ -2783,12 +2854,9 @@ public class GalleryActivity extends AppCompatActivity {
         addBinPath(newPath);
         trashedIndexDirty = false;
 
-        // ★ INSTANT: rebuild Bin / gallery snapshot right now so the list
-        //   updates on the same frame the trash operation completes.
         if (albumLoader != null) albumLoader.invalidate();
         refreshCurrentList();
 
-        // Still schedule the debounced MediaStore rescan (WhatsApp/albums).
         scheduleMediaRefresh(MEDIA_REFRESH_DEBOUNCE_MS);
     }
 
@@ -2829,6 +2897,7 @@ public class GalleryActivity extends AppCompatActivity {
         scheduleMediaRefresh(MEDIA_REFRESH_DEBOUNCE_MS);
         return true;
     }
+
     private File uniqueTrashTarget(File src) {
         String parent = src.getParent();
         String clean = cleanFileName(src.getName());
@@ -3066,49 +3135,102 @@ public class GalleryActivity extends AppCompatActivity {
         });
     }
 
+
     private void deletePermanentlySelectedItems() {
         if (selectedItems.isEmpty()) return;
+
         final List<String> paths = new ArrayList<>(selectedItems);
 
         new AlertDialog.Builder(this)
                 .setTitle("Delete Permanently")
                 .setMessage("Delete " + paths.size() + " item(s)? Cannot be undone.")
                 .setPositiveButton("Delete", (d, w) -> {
-                    final Toast t = Toast.makeText(this, "Deleting…", Toast.LENGTH_SHORT);
+
+                    final Toast t = Toast.makeText(
+                            this, "Deleting…", Toast.LENGTH_SHORT);
                     t.show();
+
                     executor.execute(() -> {
-                        int deleted = 0, failed = 0;
+
+                        int deleted = 0;
+                        int failed = 0;
+
+                        List<String> deletedPaths = new ArrayList<>();
+
                         for (String path : paths) {
-                            File f = new File(path);
-                            boolean ok = !f.exists() || f.delete();
-                            if (ok) deleted++;
-                            else failed++;
+                            if (path == null) {
+                                failed++;
+                                continue;
+                            }
+
+                            File file = new File(path);
+
+                            boolean ok = !file.exists() || file.delete();
+
+                            if (ok) {
+                                deleted++;
+                                deletedPaths.add(path);
+                            } else {
+                                failed++;
+                            }
                         }
-                        final int dd = deleted, ff = failed;
+
+                        // Remove stale MediaStore entries on the worker thread.
+                        if (!deletedPaths.isEmpty()) {
+                            notifyMediaStoreDeleted(deletedPaths);
+
+                            // Prune SQLite cache before another Activity
+                            // instance can read the old records.
+                            if (repository != null) {
+                                repository.removePathsFromIndexCache(deletedPaths);
+                            }
+                        }
+
+                        final int dd = deleted;
+                        final int ff = failed;
+
                         runOnUiThread(() -> {
                             t.cancel();
+
                             if (!isActivityAlive()) return;
 
-                            for (String path : paths) {
-                                for (int i = cachedMedia.size() - 1; i >= 0; i--) {
-                                    if (cachedMedia.get(i).path.equals(path)) {
+                            // Only remove successfully deleted files.
+                            for (String path : deletedPaths) {
+
+                                for (int i = cachedMedia.size() - 1;
+                                     i >= 0; i--) {
+
+                                    GalleryMediaItem item = cachedMedia.get(i);
+
+                                    if (path.equals(item.path)) {
                                         cachedMedia.remove(i);
-                                        break;
                                     }
                                 }
+
                                 trashedByPath.remove(path);
                                 removeBinPath(path);
                             }
+
                             trashedIndexDirty = false;
                             mtimeCache.clear();
+
                             clearSelection();
-                            if (albumLoader != null) albumLoader.invalidate();
+
+                            if (albumLoader != null) {
+                                albumLoader.invalidate();
+                            }
+
                             refreshCurrentList();
-                            Toast.makeText(this, "Deleted " + dd
-                                            + (ff > 0 ? ", failed " + ff : ""),
-                                    Toast.LENGTH_SHORT).show();
+
+                            Toast.makeText(
+                                    this,
+                                    "Deleted " + dd +
+                                            (ff > 0 ? ", " + ff + " failed" : ""),
+                                    Toast.LENGTH_SHORT
+                            ).show();
                         });
                     });
+
                 })
                 .setNegativeButton("Cancel", null)
                 .show();
@@ -3389,6 +3511,7 @@ public class GalleryActivity extends AppCompatActivity {
             }
         });
     }
+
     private void resetVideoUi() {
         if (btnCenterPlayPause != null) {
             btnCenterPlayPause.setImageResource(android.R.drawable.ic_media_play);
@@ -3397,6 +3520,7 @@ public class GalleryActivity extends AppCompatActivity {
         if (videoTimeTotal != null) videoTimeTotal.setText("00:00");
         if (videoSeekBar != null) videoSeekBar.setProgress(0);
     }
+
     private void wireFullscreenControls() {
         if (fsBtnBin != null) fsBtnBin.setOnClickListener(v -> {
             deleteCurrentFromViewer();
@@ -3613,7 +3737,6 @@ public class GalleryActivity extends AppCompatActivity {
         final String path = fullscreenMediaPaths.get(pos);
         if (path == null) return;
 
-        // Do the file operation *first* so the UI reacts to the real state.
         GalleryMediaItem target = null;
         for (GalleryMediaItem it : cachedMedia) {
             if (it.path != null && it.path.equals(path)) { target = it; break; }
@@ -3632,11 +3755,10 @@ public class GalleryActivity extends AppCompatActivity {
                     Toast.makeText(this, "Deleted", Toast.LENGTH_SHORT).show();
                 }
             } else {
-                moveToTrash(target);   // instant now
+                moveToTrash(target);
             }
         }
 
-        // ★ Surgical adapter update — do NOT notifyDataSetChanged().
         final int removedIndex = pos;
         fullscreenMediaPaths.remove(removedIndex);
         fullscreenAdapter.notifyItemRemoved(removedIndex);
@@ -3658,7 +3780,6 @@ public class GalleryActivity extends AppCompatActivity {
         overlayControlsVisible = false;
         overlayPendingSeekMs = -1;
 
-        // Only move the pager if we actually need to.
         if (fullscreenViewPager.getCurrentItem() != newIndex) {
             fullscreenViewPager.setCurrentItem(newIndex, false);
         } else {
@@ -3732,6 +3853,7 @@ public class GalleryActivity extends AppCompatActivity {
         }
         savedGridScrollPosition = -1;
     }
+
     private void updateFullscreenInfo(int position) {
         if (position < 0 || position >= fullscreenMediaPaths.size()) return;
         String path = fullscreenMediaPaths.get(position);
@@ -3787,7 +3909,7 @@ public class GalleryActivity extends AppCompatActivity {
                 View child = rv.getChildAt(i);
                 RecyclerView.ViewHolder vh = rv.getChildViewHolder(child);
                 if (vh == null || vh.getBindingAdapterPosition() != targetPosition) continue;
-                TextureView surface = child.findViewById(R.id.fullscreen_video);   // ← TextureView
+                TextureView surface = child.findViewById(R.id.fullscreen_video);
                 if (surface == null) continue;
                 if (surface.getVisibility() != View.VISIBLE) surface.setVisibility(View.VISIBLE);
 
@@ -3894,11 +4016,11 @@ public class GalleryActivity extends AppCompatActivity {
             }
         } catch (Exception ignored) { }
     }
+
     private void syncOverlayPlayPauseIcon() {
         boolean playing = false;
         if (currentFullscreenVideo != null) {
             try {
-
                 playing = currentFullscreenVideo.isPlaying();
             } catch (Exception ignored) {
             }
@@ -3919,7 +4041,6 @@ public class GalleryActivity extends AppCompatActivity {
         int actual = (int) Math.max(0L, currentFullscreenVideo.getSafePosition());
 
         int base = Math.max(actual, lastSeekTargetMs >= 0 ? lastSeekTargetMs : 0);
-
         int target = Math.max(0, Math.min(base + deltaMs, dur));
 
         lastSeekTargetMs = target;
@@ -3983,7 +4104,6 @@ public class GalleryActivity extends AppCompatActivity {
                 btnCenterPlayPause.setImageResource(android.R.drawable.ic_media_play);
             videoHandler.removeCallbacks(overlayProgressRunnable);
         } else {
-
             currentFullscreenVideo.start();
             isOverlayVideoPlaying = true;
             if (path != null) userPausedPaths.remove(path);
@@ -4026,11 +4146,9 @@ public class GalleryActivity extends AppCompatActivity {
         if (cur < 0) cur = 0;
         if (cur > dur) cur = dur;
 
-
         if (overlayPendingSeekMs >= 0 && overlayPendingSeekMs <= dur) {
             cur = overlayPendingSeekMs;
         } else {
-
             if (lastSeekTargetMs >= 0
                     && Math.abs(cur - lastSeekTargetMs) <= 500) {
                 lastSeekTargetMs = -1;
@@ -4090,7 +4208,7 @@ public class GalleryActivity extends AppCompatActivity {
             getWindow().setAttributes(lp);
             overlayAlpha = 1f - (effectiveBrightness / HARDWARE_FLOOR);
             if (overlayAlpha < 0f) overlayAlpha = 0f;
-            if (overlayAlpha > 0.98f) overlayAlpha = 0.98f;   // keep 2% visible
+            if (overlayAlpha > 0.98f) overlayAlpha = 0.98f;
         }
 
         ensureBrightnessOverlay();
@@ -4200,7 +4318,6 @@ public class GalleryActivity extends AppCompatActivity {
                         WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
                 getWindow().setAttributes(getWindow().getAttributes());
             }
-
         }
         if (currentFullscreenVideo != null) {
             fullscreenViewPager.post(() -> {
@@ -4242,9 +4359,9 @@ public class GalleryActivity extends AppCompatActivity {
         videoHandler.removeCallbacks(overlayProgressRunnable);
         videoHandler.removeCallbacks(overlayHideControlsRunnable);
     }
+
     @Override
     public void onBackPressed() {
-        // 1. Fullscreen viewer open -> close it.
         if (fullscreenOverlay != null && fullscreenOverlay.getVisibility() == View.VISIBLE) {
             try {
                 closeFullscreenViewer();
@@ -4254,7 +4371,6 @@ public class GalleryActivity extends AppCompatActivity {
             if (brightnessDimOverlay != null) brightnessDimOverlay.setVisibility(View.GONE);
             return;
         }
-
 
         if (albumsController != null
                 && (albumsController.isAlbumOpen() || albumsController.isShowingAlbums())) {
@@ -4278,6 +4394,7 @@ public class GalleryActivity extends AppCompatActivity {
         }
         super.onDestroy();
     }
+
     private String formatTime(int ms) {
         if (ms < 0) ms = 0;
         int totalSec = ms / 1000;
@@ -4343,7 +4460,6 @@ public class GalleryActivity extends AppCompatActivity {
             trashedIndexDirty = true;
             if (albumsController != null) albumsController.invalidateAlbums();
 
-
             if (repository != null && currentFilter != FilterMode.BIN) {
                 repository.refreshFirstPage();
             }
@@ -4351,6 +4467,7 @@ public class GalleryActivity extends AppCompatActivity {
         };
         mediaRefreshHandler.postDelayed(pendingMediaRefresh, delayMs);
     }
+
     private void wireVolumeBrightness() {
         if (fullscreenOverlay == null) return;
         final AudioManager audioManager =
@@ -4460,7 +4577,6 @@ public class GalleryActivity extends AppCompatActivity {
                         }
 
                         if (changed) {
-                            // No LoudnessEnhancer anymore — just clamp to system max.
                             int sysVol = Math.min(maxVol, Math.max(0, appliedVolume[0]));
                             try {
                                 audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, sysVol, 0);
@@ -4525,6 +4641,4 @@ public class GalleryActivity extends AppCompatActivity {
         fullscreenOverlay.setOnTouchListener(handler);
         this.volumeBrightnessHandler = handler;
     }
-
-
 }

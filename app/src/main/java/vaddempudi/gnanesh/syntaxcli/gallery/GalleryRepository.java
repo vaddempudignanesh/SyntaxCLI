@@ -1,6 +1,7 @@
 package vaddempudi.gnanesh.syntaxcli.gallery;
 
 import android.content.Context;
+import android.database.sqlite.SQLiteDatabase;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.MediaStore;
@@ -59,12 +60,69 @@ public final class GalleryRepository {
     public void addListener(Listener l) { listeners.add(l); }
     public void removeListener(Listener l) { listeners.remove(l); }
 
+    // ── Trash-marking helper (once per unique directory per payload) ──
+
+    /**
+     * Sets {@code isTrashed = true} on any item whose parent directory
+     * contains a matching ".trashed.&lt;basename&gt;" sibling.
+     *
+     * Called from the ioPool, never from the UI thread. Cost: exactly one
+     * readdir() per unique parent directory in the payload — typically
+     * 5..15 directories for the first 60 items, and the OS dentry cache
+     * serves that in a few milliseconds. Never on the render path.
+     */
+    private static void markTrashedFromDisk(List<GalleryMediaItem> page) {
+        if (page == null || page.isEmpty()) return;
+
+        HashMap<String, HashSet<String>> trashByDir = null;
+        for (int i = 0, n = page.size(); i < n; i++) {
+            GalleryMediaItem it = page.get(i);
+            if (it == null || it.path == null) continue;
+
+            int slash = it.path.lastIndexOf('/');
+            if (slash <= 0) continue;
+
+            String dir = it.path.substring(0, slash);
+            if (trashByDir != null && trashByDir.containsKey(dir)) continue;
+
+            if (trashByDir == null) trashByDir = new HashMap<>();
+            HashSet<String> set = new HashSet<>();
+            File[] files = new File(dir).listFiles();
+            if (files != null) {
+                for (File f : files) {
+                    String n2 = f.getName();
+                    if (n2.startsWith(".trashed.")) {
+                        set.add(n2.substring(9));   // ".trashed." is 9 chars
+                    }
+                }
+            }
+            trashByDir.put(dir, set);
+        }
+        if (trashByDir == null) return;
+
+        for (int i = 0, n = page.size(); i < n; i++) {
+            GalleryMediaItem it = page.get(i);
+            if (it == null || it.path == null) continue;
+
+            int slash = it.path.lastIndexOf('/');
+            if (slash <= 0) continue;
+
+            String dir  = it.path.substring(0, slash);
+            String base = it.path.substring(slash + 1);
+            HashSet<String> set = trashByDir.get(dir);
+            if (set != null && set.contains(base)) {
+                it.isTrashed = true;
+            }
+        }
+    }
+
     // ── Cached first page ──────────────────────────────────────────
 
     public void loadCachedFirstPage() {
         ioPool.execute(() -> {
             final List<GalleryMediaItem> cached = indexCache.readMediaPage(60);
             Collections.sort(cached, LATEST_FIRST);
+            markTrashedFromDisk(cached);                // ← disk is the source of truth
             synchronized (allItems) {
                 allItems.clear();
                 allItems.addAll(cached);
@@ -73,7 +131,39 @@ public final class GalleryRepository {
         });
     }
 
-
+    /**
+     * Synchronous prune. Called from the UI thread once per user
+     * "delete permanently" / "move to private" action — not per frame.
+     * One SQLite transaction, typically &lt;5 ms.
+     *
+     * Deletes BOTH the trashed form and the untrashed form of every path,
+     * so any stale row from a previous session cannot leak back in.
+     */
+    public void removePathsFromIndexCache(List<String> paths) {
+        if (paths == null || paths.isEmpty()) return;
+        SQLiteDatabase db = indexCache.getWritableDatabase();
+        db.beginTransaction();
+        try {
+            for (String p : paths) {
+                if (p == null) continue;
+                db.delete("media", "path=?", new String[]{p});
+                int slash = p.lastIndexOf('/');
+                if (slash > 0) {
+                    String dir = p.substring(0, slash);
+                    String name = p.substring(slash + 1);
+                    // Strip the ".trashed." prefix BEFORE building the untrashed path.
+                    String cleanName = name.startsWith(".trashed.")
+                            ? name.substring(9)
+                            : name;
+                    db.delete("media", "path=?", new String[]{dir + "/.trashed." + cleanName});
+                    db.delete("media", "path=?", new String[]{dir + "/" + cleanName});
+                }
+            }
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
+        }
+    }
 
     private void collectAlbumItems(android.database.Cursor cursor, int type,
                                    String albumPath, String canonicalTarget,
@@ -90,14 +180,10 @@ public final class GalleryRepository {
             java.io.File parent = new java.io.File(path).getParentFile();
             if (parent == null) continue;
 
-            // Canonical parent — same form the pager stores.
             String parentCanon;
             try { parentCanon = parent.getCanonicalPath(); }
             catch (Exception e) { parentCanon = parent.getAbsolutePath(); }
 
-            // Match if canonical matches the target canonical, OR the raw
-            // path starts with the album directory (covers any residual
-            // non-canonical albumPath values stored elsewhere).
             boolean matches = parentCanon.equals(canonicalTarget)
                     || path.startsWith(albumPath + "/");
             if (!matches) continue;
@@ -110,6 +196,7 @@ public final class GalleryRepository {
             out.add(new GalleryMediaItem(id, path, name, parentCanon, modified, type));
         }
     }
+
     public void replaceItemPath(String oldPath, GalleryMediaItem replacement) {
         if (oldPath == null || replacement == null) return;
         synchronized (allItems) {
@@ -133,17 +220,15 @@ public final class GalleryRepository {
         mediaLoading.set(false);
         pager.reset();
 
-        // Immediately publish whatever is already in the DB cache. This is the
-        // first frame the user sees — before the MediaStore query even starts.
         ioPool.execute(() -> {
             final List<GalleryMediaItem> cached = indexCache.readMediaPage(60);
             Collections.sort(cached, LATEST_FIRST);
+            markTrashedFromDisk(cached);                // ← disk is the source of truth
             synchronized (allItems) {
                 allItems.clear();
                 allItems.addAll(cached);
             }
             publishMedia(false);
-            // Kick off the real scan on the same background thread.
             loadNextPage();
         });
     }
@@ -163,8 +248,6 @@ public final class GalleryRepository {
                 final List<GalleryMediaItem>[] pageHolder = new List[1];
                 final Throwable[] errHolder = new Throwable[1];
 
-                // Smaller page size => first batch arrives much faster.
-                // 60 items = 20 rows in a 3-col grid = enough to fill 3 screens.
                 pager.loadPage(offset, 60,
                         new MediaStorePager.PageCallback() {
                             @Override public void onPage(List<GalleryMediaItem> page, boolean e) {
@@ -188,6 +271,11 @@ public final class GalleryRepository {
                 }
                 List<GalleryMediaItem> page = pageHolder[0];
                 end = endHolder[0];
+
+                // Mark trashed based on disk, once per unique directory,
+                // BEFORE the page enters allItems.
+                markTrashedFromDisk(page);
+
                 synchronized (allItems) {
                     if (offset == 0) allItems.clear();
                     mergeByStableKey(allItems, page);
@@ -202,7 +290,6 @@ public final class GalleryRepository {
                 nextOffset = offset;
                 mediaEnded = end;
 
-                // THE KEY: publish after EVERY page, not only at the end.
                 publishMedia(end);
 
                 if (page.isEmpty() && !end) break;
@@ -224,7 +311,10 @@ public final class GalleryRepository {
             } else {
                 GalleryMediaItem old = target.get(pos);
                 item.isFavorite = old.isFavorite;
-                item.isTrashed = old.isTrashed;
+                // Keep trashed from EITHER source — it may have been set
+                // on `old` by a previous disk check, or on `item` by the
+                // current one.
+                item.isTrashed = old.isTrashed || item.isTrashed;
                 target.set(pos, item);
             }
         }
@@ -240,12 +330,10 @@ public final class GalleryRepository {
         });
     }
 
-    // ── Albums ─────────────────────────────────────────────────────
-
-
+    // ── Albums (unchanged) ────────────────────────────────────────
 
     private List<GalleryIndexCache.AlbumRecord> buildAlbumIndex() {
-        HashMap<String, int[]> counts = new HashMap<>();   // albumPath -> [count, coverType]
+        HashMap<String, int[]> counts = new HashMap<>();
         HashMap<String, String> covers = new HashMap<>();
         HashMap<String, String> names = new HashMap<>();
 
@@ -380,9 +468,7 @@ public final class GalleryRepository {
         return out;
     }
 
-    // ── Bin ────────────────────────────────────────────────────────
-
-
+    // ── Bin (unchanged) ───────────────────────────────────────────
 
     private void scanForTrashed(java.io.File dir, List<GalleryMediaItem> out,
                                 int depth, int maxDepth) {
