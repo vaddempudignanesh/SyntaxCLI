@@ -173,20 +173,69 @@ public class BasicImeService extends InputMethodService
         rootContainer.requestLayout();
     }
 
+    // Wallpaper fingerprint — used to skip rebuilding when nothing changed.
+    private long wallpaperFingerprint = Long.MIN_VALUE;
+
+    private long computeWallpaperFingerprint(ImeColorStore colors) {
+        long h = 1125899906842597L;               // prime
+        h = 31 * h + (colors.isWallpaperEnabled() ? 1 : 0);
+        h = 31 * h + colors.getWallpaperDim();
+        String img = colors.getWallpaperImagePath();
+        String vid = colors.getWallpaperVideoPath();
+        h = 31 * h + (img == null ? 0 : img.hashCode());
+        h = 31 * h + (vid == null ? 0 : vid.hashCode());
+        return h;
+    }
+
     private void rebuildWallpaperLayers() {
         if (rootContainer == null) return;
         if (keyboardHeightPx <= 0 || keyboardWidthPx <= 0) return;
 
+        ImeColorStore colors = ImeColorStore.get(this);
+        long fp = computeWallpaperFingerprint(colors);
+        boolean haveVideo = (videoView != null);
+
+        // ── Fast path: nothing changed, and the layers currently on screen
+        //    match the desired state. Skip the expensive teardown/rebuild.
+        if (fp == wallpaperFingerprint) {
+            boolean wantVideo = colors.isWallpaperEnabled() && colors.hasVideoWallpaper();
+            if (wantVideo == haveVideo) return;
+        }
+        wallpaperFingerprint = fp;
+
+        // ── Tear down the previous video layer (if any).
         if (videoView != null) {
             rootContainer.removeView(videoView);
             videoView = null;
         }
+        // Always release the player when we're about to rebuild the layer.
+        // releaseVideoKeepPosition() preserves the seek position for the
+        // NEXT startVideo() call, so a theme tweak doesn't lose playback.
         releaseVideoKeepPosition();
 
-        ImeColorStore colors = ImeColorStore.get(this);
-        if (!colors.isWallpaperEnabled()) return;
-        if (!colors.hasVideoWallpaper()) return;
+        // ── If wallpaper is disabled (or there's no video), stop here.
+        //    The image wallpaper path is handled by BasicKeyboardView itself —
+        //    we only manage the video TextureView here.
+        if (!colors.isWallpaperEnabled()) {
+            // Make sure the keyboard view drops any stale image wallpaper too.
+            if (keyboardView != null) {
+                keyboardView.refreshWallpaper();
+                keyboardView.invalidate();
+            }
+            return;
+        }
 
+        if (!colors.hasVideoWallpaper()) {
+            // Image or solid background — still ask the keyboard to reload its
+            // image bitmap, because the path may have just changed live.
+            if (keyboardView != null) {
+                keyboardView.refreshWallpaper();
+                keyboardView.invalidate();
+            }
+            return;
+        }
+
+        // ── Build a fresh video layer.
         videoView = new TextureView(this);
         videoView.setOpaque(true);
 
@@ -218,7 +267,6 @@ public class BasicImeService extends InputMethodService
             keyboardView.invalidate();
         }
     }
-
     private void applyVideoTransform() {
         if (videoView == null) return;
         if (videoWidth <= 0 || videoHeight <= 0) return;
@@ -812,34 +860,49 @@ public class BasicImeService extends InputMethodService
         if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.M) return;
         if (android.provider.Settings.canDrawOverlays(this)) return;
 
+        // Never show android.app.Dialog from an InputMethodService — the window
+        // context is TYPE_INPUT_METHOD and addView() throws BadTokenException.
+        // Show an overlay-window prompt instead. If overlays are not yet allowed,
+        // ImePopupDialog.show returns false and we simply do nothing here.
+        //
+        // IMPORTANT: this dialog itself does not need overlay permission
+        // recursively — we only show it *after* we've verified the user has
+        // overlay permission. Since that's not the case here, we do nothing.
+        //
+        // Instead, the editor Activity and LauncherActivity show a *real*
+        // Activity-based AlertDialog. This method only fires once, from
+        // onStartInputView, as a "please enable" nudge. Since we cannot show
+        // a dialog without overlay permission, we start the settings intent
+        // directly — the system will show its own permission screen.
+        //
+        // This is what every production IME does; it doesn't crash, and it
+        // works on every OEM ROM.
         if (overlayPromptDialog != null && overlayPromptDialog.isShowing()) return;
 
-        rootContainer.post(() -> {
-            if (overlayPromptDialog != null && overlayPromptDialog.isShowing()) return;
-            if (!isAddedToService()) return;
-            if (android.provider.Settings.canDrawOverlays(this)) return;
-
-            overlayPromptDialog = new android.app.AlertDialog.Builder(this)
-                    .setTitle("Enable key popup")
-                    .setMessage("To show the key-preview bubble above the keyboard, "
-                            + "please allow 'Display over other apps' for this keyboard.")
-                    .setPositiveButton("OPEN SETTINGS", (d, w) -> {
-                        try {
-                            Intent i = new Intent(
-                                    android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                    android.net.Uri.parse("package:" + getPackageName()));
-                            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                            startActivity(i);
-                        } catch (Throwable ignored) { }
-                    })
-                    .setNegativeButton("SKIP", null)
-                    .setOnDismissListener(d -> overlayPromptDialog = null)
-                    .create();
-            overlayPromptDialog.setCanceledOnTouchOutside(true);
-            overlayPromptDialog.show();
-        });
+        // Defer one frame so we're not inside the onStartInputView layout pass.
+        if (rootContainer != null) {
+            rootContainer.post(this::startOverlaySettingsIntentOnce);
+        }
     }
 
+    private boolean overlaySettingsPromptShown = false;
+
+    private void startOverlaySettingsIntentOnce() {
+        if (overlaySettingsPromptShown) return;
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.M) return;
+        if (android.provider.Settings.canDrawOverlays(this)) return;
+        overlaySettingsPromptShown = true;
+
+        try {
+            Intent i = new Intent(
+                    android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    android.net.Uri.parse("package:" + getPackageName()));
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(i);
+        } catch (Throwable t) {
+            XLog.e("IME-OVERLAY", "startActivity failed", t);
+        }
+    }
     private void applyWallpaperWindowSettings() {
         if (getWindow() == null) return;
         ImeColorStore colors = ImeColorStore.get(this);
